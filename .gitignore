@@ -144,6 +144,8 @@ docker/plugins
 !plugins/README.md
 !plugins/addresscomplete
 !plugins/googlegeocoding
+
+# Bamboi custom plugins (tracked in this fork, mounted via KARRIO_PLUGINS)
 !plugins/monta
 
 # Meta-repo private directories

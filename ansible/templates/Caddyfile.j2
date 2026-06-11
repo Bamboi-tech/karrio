@@ -1,0 +1,31 @@
+# Managed by Ansible (templates/Caddyfile.j2) — do not edit on the VM.
+{
+    email {{ letsencrypt_email }}
+}
+
+(common_headers) {
+    encode gzip
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        -Server
+    }
+}
+
+{{ domains.api }} {
+    import common_headers
+    route {
+        file_server /static/* {
+            root /var/www/karrio
+        }
+        reverse_proxy api:5002 {
+            header_up X-Forwarded-Proto https
+        }
+    }
+}
+
+{{ domains.app }} {
+    import common_headers
+    reverse_proxy dashboard:3002 {
+        header_up X-Forwarded-Proto https
+    }
+}

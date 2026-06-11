@@ -1,0 +1,20 @@
+---
+# Configure or update host swap (idempotent). Safe to re-run on staging/production.
+#
+#   cd ansible
+#   ansible-playbook configure-vm-swap.yaml -e env=staging
+#   ansible-playbook configure-vm-swap.yaml -e env=production
+#
+# Also runs automatically from google-vm.yaml (after /data mount).
+
+- name: Configure VM swap file
+  hosts: "{{ env | default('staging') }}"
+  become: true
+  vars_files:
+    - vars/vm_swap.yaml
+  pre_tasks:
+    - name: Load vars
+      ansible.builtin.include_vars: "vars/{{ env | default('staging') }}.yaml"
+  tasks:
+    - name: Configure host swap on data disk
+      ansible.builtin.import_tasks: tasks/vm_swap.yml

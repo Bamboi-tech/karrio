@@ -1,0 +1,141 @@
+# Inline docker compose definition for the Karrio stack (project name: karrio).
+# Adapted from docker/docker-compose.hobby.yml in this repo:
+# - api/dashboard ports are NOT published on the host; only Caddy (80/443) is
+#   reachable, so the GCP firewall + Caddy are the single entrypoint.
+# - images are custom builds from this fork (Artifact Registry); plugins
+#   (incl. monta) are baked into the server image by docker/api/Dockerfile.
+# - named volumes live under Docker's data-root, which google-vm.yaml moves
+#   to the persistent /data disk.
+compose:
+  services:
+    api:
+      image: "{{ karrio_server_image }}:{{ karrio_tag }}"
+      restart: unless-stopped
+      pull_policy: "{{ pull_policy }}"
+      depends_on:
+        db:
+          condition: service_healthy
+          required: true
+        redis:
+          condition: service_started
+          required: true
+      environment:
+        USE_HTTPS: "True" # Required when DEBUG_MODE is False (TLS terminated by Caddy)
+        DEBUG_MODE: "False"
+        DETACHED_WORKER: "True"
+        SECRET_KEY: "{{ secret_key }}"
+        REDIS_HOST: redis
+        REDIS_PORT: "6379"
+        DATABASE_HOST: db
+        DATABASE_PORT: "5432"
+        DATABASE_NAME: "{{ database_name }}"
+        DATABASE_ENGINE: postgresql_psycopg2
+        DATABASE_USERNAME: "{{ database_username }}"
+        DATABASE_PASSWORD: "{{ database_password }}"
+        ENABLE_ALL_PLUGINS_BY_DEFAULT: "True"
+      volumes:
+        - type: volume
+          source: karrio-static
+          target: /karrio/static
+
+    worker:
+      image: "{{ karrio_server_image }}:{{ karrio_tag }}"
+      restart: unless-stopped
+      pull_policy: "{{ pull_policy }}"
+      command: ["/bin/bash", "./worker"]
+      depends_on:
+        db:
+          condition: service_healthy
+          required: true
+        redis:
+          condition: service_started
+          required: true
+        api:
+          condition: service_started
+          required: true
+      environment:
+        DEBUG_MODE: "False"
+        SECRET_KEY: "{{ secret_key }}"
+        REDIS_HOST: redis
+        REDIS_PORT: "6379"
+        DATABASE_HOST: db
+        DATABASE_PORT: "5432"
+        DATABASE_NAME: "{{ database_name }}"
+        DATABASE_ENGINE: postgresql_psycopg2
+        DATABASE_USERNAME: "{{ database_username }}"
+        DATABASE_PASSWORD: "{{ database_password }}"
+        ENABLE_ALL_PLUGINS_BY_DEFAULT: "True"
+
+    dashboard:
+      image: "{{ karrio_dashboard_image }}:{{ karrio_tag }}"
+      restart: unless-stopped
+      pull_policy: "{{ pull_policy }}"
+      depends_on:
+        api:
+          condition: service_started
+          required: true
+      environment:
+        NEXTAUTH_SECRET: "{{ jwt_secret }}"
+        DASHBOARD_PORT: "3002"
+        NEXT_PUBLIC_DASHBOARD_URL: "https://{{ domains.app }}"
+        NEXT_PUBLIC_KARRIO_PUBLIC_URL: "https://{{ domains.api }}"
+
+    caddy:
+      image: "{{ caddy_image }}"
+      restart: unless-stopped
+      ports:
+        - "80:80"
+        - "443:443"
+      depends_on:
+        api:
+          condition: service_started
+          required: true
+        dashboard:
+          condition: service_started
+          required: true
+      volumes:
+        - type: bind
+          source: /home/karrio/Caddyfile
+          target: /etc/caddy/Caddyfile
+          read_only: true
+        - type: volume
+          source: karrio-static
+          target: /var/www/karrio/static
+        - type: volume
+          source: caddy-data
+          target: /data
+
+    db:
+      image: "{{ postgres_image }}"
+      restart: unless-stopped
+      environment:
+        POSTGRES_DB: "{{ database_name }}"
+        POSTGRES_USER: "{{ database_username }}"
+        POSTGRES_PASSWORD: "{{ database_password }}"
+        PGDATA: /var/lib/postgresql/data/karrio
+      healthcheck:
+        test:
+          - CMD-SHELL
+          - pg_isready -U {{ database_username }} -d {{ database_name }}
+        interval: 10s
+        timeout: 5s
+        retries: 5
+        start_period: 30s
+      volumes:
+        - type: volume
+          source: postgres-data
+          target: /var/lib/postgresql/data
+
+    redis:
+      image: "{{ redis_image }}"
+      restart: unless-stopped
+      volumes:
+        - type: volume
+          source: redis-data
+          target: /data
+
+  volumes:
+    karrio-static: {}
+    postgres-data: {}
+    redis-data: {}
+    caddy-data: {}

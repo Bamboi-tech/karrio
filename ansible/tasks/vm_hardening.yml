@@ -1,0 +1,148 @@
+---
+# One-shot OS hardening for GCP Ubuntu VMs running Docker/Traefik.
+# Re-run with -e force_hardening=true to apply again.
+
+- name: Check whether hardening marker exists
+  ansible.builtin.stat:
+    path: "{{ vm_hardening_marker_path }}"
+  register: vm_hardening_marker
+
+- name: Skip hardening when marker is present (unless forced)
+  ansible.builtin.meta: end_host
+  when:
+    - vm_hardening_marker.stat.exists
+    - not (force_hardening | default(false) | bool)
+
+- name: Install hardening packages
+  ansible.builtin.apt:
+    name:
+      - fail2ban
+      - ufw
+      - unattended-upgrades
+      - apt-listchanges
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Enable automatic security updates
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    mode: "0644"
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+      APT::Periodic::AutocleanInterval "7";
+
+# Ubuntu's default 50unattended-upgrades already limits Allowed-Origins to
+# security; apt conf blocks append rather than replace, so we don't redefine it.
+- name: Tune unattended upgrades behaviour
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/50unattended-upgrades-hardening
+    mode: "0644"
+    content: |
+      Unattended-Upgrade::Remove-Unused-Dependencies "true";
+      Unattended-Upgrade::Automatic-Reboot "false";
+
+- name: Deploy SSH hardening drop-in
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/99-ansible-hardening.conf
+    mode: "0644"
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin no
+      PubkeyAuthentication yes
+      X11Forwarding no
+      MaxAuthTries 3
+      ClientAliveInterval 300
+      ClientAliveCountMax 2
+      AllowUsers {{ vm_hardening_ssh_allow_users | join(' ') }}
+  notify: Restart ssh
+
+- name: Validate sshd configuration
+  ansible.builtin.command: sshd -t
+  changed_when: false
+
+- name: Deploy fail2ban sshd jail
+  ansible.builtin.copy:
+    dest: /etc/fail2ban/jail.d/99-ansible-hardening.local
+    mode: "0644"
+    content: |
+      [sshd]
+      enabled = true
+      port = ssh
+      filter = sshd
+      backend = systemd
+      maxretry = 5
+      findtime = 600
+      bantime = 3600
+  notify: Restart fail2ban
+
+- name: Ensure fail2ban is enabled
+  ansible.builtin.service:
+    name: fail2ban
+    state: started
+    enabled: true
+
+- name: Set UFW default outgoing policy
+  community.general.ufw:
+    direction: outgoing
+    policy: allow
+
+- name: Set UFW default incoming policy
+  community.general.ufw:
+    direction: incoming
+    policy: deny
+
+- name: Allow required inbound ports through UFW
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port }}"
+    proto: "{{ item.proto }}"
+  loop: >-
+    {{
+      [
+        {'port': '22', 'proto': 'tcp'},
+        {'port': '80', 'proto': 'tcp'},
+        {'port': '443', 'proto': 'tcp'}
+      ] + (vm_hardening_ufw_extra_allow | default([]))
+    }}
+
+- name: Enable UFW
+  community.general.ufw:
+    state: enabled
+
+- name: Deploy kernel network hardening sysctl
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/99-ansible-hardening.conf
+    mode: "0644"
+    content: |
+      net.ipv4.tcp_syncookies = 1
+      net.ipv4.conf.all.rp_filter = 1
+      net.ipv4.conf.default.rp_filter = 1
+      net.ipv4.conf.all.accept_redirects = 0
+      net.ipv4.conf.default.accept_redirects = 0
+      net.ipv4.conf.all.send_redirects = 0
+      net.ipv4.conf.default.send_redirects = 0
+      net.ipv4.icmp_echo_ignore_broadcasts = 1
+  notify: Apply sysctl
+
+- name: Disable common unused legacy services when present
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop:
+    - telnet
+    - rsh
+  failed_when: false
+
+- name: Write hardening completion marker
+  ansible.builtin.copy:
+    dest: "{{ vm_hardening_marker_path }}"
+    mode: "0644"
+    content: |
+      version={{ vm_hardening_marker_version }}
+      applied_at={{ ansible_date_time.iso8601 }}
+      host={{ inventory_hostname }}
+      env={{ env | default('unknown') }}

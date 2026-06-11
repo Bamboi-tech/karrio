@@ -1,0 +1,5 @@
+.vault_pass
+.cache_ggshield
+# This fork is PUBLIC — never commit vault files, even encrypted.
+# Keep them local; GitHub Actions writes them from environment secrets.
+vault/

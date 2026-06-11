@@ -1,0 +1,8 @@
+# Host swap file (on /data disk). Applied by tasks/vm_swap.yml.
+# Disable on a host with: -e vm_swap_enabled=false
+
+vm_swap_enabled: true
+vm_swap_file_path: /data/swapfile
+vm_swap_file_size_mb: 4096
+# Prefer RAM for app workloads; swap is for OOM spikes during bench build / deploy.
+vm_swap_swappiness: 10

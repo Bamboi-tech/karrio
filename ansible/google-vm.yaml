@@ -1,0 +1,206 @@
+# Provision/deploy the Karrio stack on a Google VM.
+#
+#   cd ansible
+#   ansible-playbook google-vm.yaml -e env=staging
+#   ansible-playbook google-vm.yaml -e env=production
+#
+# The Karrio version is pinned via karrio_tag in vars/<env>.yaml
+# (override one-off with -e karrio_tag=<tag>).
+- name: Run Karrio with inline v2 compose
+  hosts: "{{ env | default('staging') }}"
+  become: true
+  vars_files:
+    - vars/karrio-compose.yaml
+    - vars/vm_swap.yaml
+  roles:
+    - role: "nickjj.docker"
+      tags: ["docker"]
+  pre_tasks:
+    - name: Load vars
+      include_vars: "vars/{{ env | default('staging') }}.yaml"
+    - name: Load env vault
+      include_vars: "vault/env/{{ env | default('staging') }}.yaml"
+
+    - name: Require karrio_tag
+      ansible.builtin.assert:
+        that:
+          - karrio_tag is defined
+          - karrio_tag | length > 0
+        fail_msg: >-
+          karrio_tag must be set in vars/<env>.yaml (or passed with
+          -e karrio_tag=<tag>). Run the "Build Karrio Images" workflow and use
+          the tag it prints (e.g. 2026.1.31-ab12cd3). Keep staging and
+          production on the same tag.
+
+    # ============================================
+    # Mount external data disk
+    # ============================================
+    - name: Check if data disk is formatted
+      ansible.builtin.command: blkid /dev/sdb
+      register: blkid_result
+      failed_when: false
+      changed_when: false
+
+    - name: Format data disk (ext4)
+      community.general.filesystem:
+        fstype: ext4
+        dev: /dev/sdb
+      when: blkid_result.rc != 0
+
+    - name: Create mount point
+      ansible.builtin.file:
+        path: /data
+        state: directory
+        mode: "0755"
+
+    - name: Mount data disk
+      ansible.posix.mount:
+        path: /data
+        src: /dev/sdb
+        fstype: ext4
+        state: mounted
+        opts: defaults,nofail
+
+    - name: Create Docker data directory on external disk
+      ansible.builtin.file:
+        path: /data/docker
+        state: directory
+        mode: "0711"
+
+    - name: Create karrio home directory on external disk
+      ansible.builtin.file:
+        path: /data/karrio
+        state: directory
+        mode: "0755"
+
+    - name: Ensure /etc/docker directory exists
+      ansible.builtin.file:
+        path: /etc/docker
+        state: directory
+        mode: "0755"
+
+    - name: Configure host swap on data disk
+      ansible.builtin.import_tasks: tasks/vm_swap.yml
+
+  tasks:
+    # ============================================
+    # Docker & Containerd Data Migration
+    # ============================================
+    - name: Stop Docker and Containerd
+      ansible.builtin.service:
+        name: "{{ item }}"
+        state: stopped
+      loop:
+        - docker
+        - containerd
+      ignore_errors: true
+
+    - name: Create containerd directory on external disk
+      ansible.builtin.file:
+        path: /data/containerd
+        state: directory
+        mode: "0711"
+
+    - name: Check if /var/lib/containerd exists
+      ansible.builtin.stat:
+        path: /var/lib/containerd
+      register: containerd_stat
+
+    - name: Move existing containerd data to /data
+      ansible.builtin.shell: |
+        mv /var/lib/containerd/* /data/containerd/
+        rm -rf /var/lib/containerd
+      when: containerd_stat.stat.exists and containerd_stat.stat.isdir and not containerd_stat.stat.islnk
+
+    - name: Symlink /var/lib/containerd to /data/containerd
+      ansible.builtin.file:
+        src: /data/containerd
+        dest: /var/lib/containerd
+        state: link
+        force: yes
+
+    # Must run after nickjj.docker - role overwrites daemon.json
+    - name: Configure Docker to use external disk (data-root)
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        content: |
+          {
+            "data-root": "/data/docker",
+            "log-driver": "journald",
+            "features": {
+              "buildkit": true
+            }
+          }
+        mode: "0644"
+
+    - name: Start Docker and Containerd
+      ansible.builtin.service:
+        name: "{{ item }}"
+        state: started
+      loop:
+        - containerd
+        - docker
+
+    # ============================================
+    # Karrio home: /data/karrio symlinked to /home/karrio
+    # ============================================
+    - name: Check if /home/karrio is a directory (not symlink)
+      ansible.builtin.stat:
+        path: /home/karrio
+      register: home_karrio_stat
+
+    - name: Migrate existing /home/karrio content to /data/karrio
+      ansible.builtin.shell: |
+        cp -a /home/karrio/. /data/karrio/ 2>/dev/null || true
+      when: home_karrio_stat.stat.exists and home_karrio_stat.stat.isdir and not home_karrio_stat.stat.islnk
+
+    - name: Remove old /home/karrio directory
+      ansible.builtin.file:
+        path: /home/karrio
+        state: absent
+      when: home_karrio_stat.stat.exists and home_karrio_stat.stat.isdir and not home_karrio_stat.stat.islnk
+
+    - name: Create symlink /home/karrio -> /data/karrio
+      ansible.builtin.file:
+        src: /data/karrio
+        dest: /home/karrio
+        state: link
+        force: yes
+
+    # ============================================
+    # Deploy Caddyfile
+    # ============================================
+    - name: Render Caddyfile
+      ansible.builtin.template:
+        src: templates/Caddyfile.j2
+        dest: /home/karrio/Caddyfile
+        mode: "0644"
+
+    # ============================================
+    # Run the stack (custom images from Artifact Registry;
+    # plugins incl. monta are baked into the server image)
+    # ============================================
+    - name: Authenticate Docker to Google Artifact Registry
+      ansible.builtin.shell: |
+        gcloud auth configure-docker europe-north2-docker.pkg.dev --quiet
+      changed_when: false
+    - name: Run docker compose v2
+      community.docker.docker_compose_v2:
+        project_name: karrio
+        definition: "{{ compose }}"
+      register: output
+
+    - name: Assert that the api container is running
+      ansible.builtin.assert:
+        that:
+          - "api_container.State == 'running'"
+      vars:
+        api_container: >-
+          {{ output.containers | selectattr('Service', 'equalto', 'api') | first }}
+
+    - name: Deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "Dashboard: https://{{ domains.app }}"
+          - "API:       https://{{ domains.api }}"
+          - "First boot creates the default login admin@example.com / demo — change it immediately."

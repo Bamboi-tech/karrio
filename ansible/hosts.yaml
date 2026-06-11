@@ -1,0 +1,13 @@
+# Fill in the static IPs from `terraform output static_ip` per environment,
+# then create a matching host_vars/<ip>.yaml (copy host_vars/EXAMPLE.yaml).
+staging:
+    hosts:
+        # bamboi-karrio-staging-vm static ip
+        # 0.0.0.0:
+        34.51.152.232:
+
+production:
+    hosts:
+        # bamboi-karrio-production-vm static ip
+        # 0.0.0.0:
+        34.51.191.222:

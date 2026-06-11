@@ -1,0 +1,89 @@
+---
+# Copy the production Karrio database to staging (staging data is REPLACED).
+#
+#   cd ansible
+#   ansible-playbook prod-to-stage-karrio.yaml -e staging_confirm=CONFIRM
+#
+# Dumps prod postgres, fetches it via the control machine, restores it into
+# the staging db container, then restarts the staging stack.
+- name: Dump production database
+  hosts: production
+  become: true
+  gather_facts: true
+  vars:
+    db_container: karrio-db-1
+    dump_remote: /tmp/karrio-prod-to-stage.sql.gz
+    dump_local: /tmp/karrio-prod-to-stage.sql.gz
+  pre_tasks:
+    - name: Require explicit confirmation
+      ansible.builtin.assert:
+        that:
+          - (staging_confirm | default('')) == 'CONFIRM'
+        fail_msg: "This replaces the STAGING database. Re-run with -e staging_confirm=CONFIRM."
+    - name: Load vars
+      ansible.builtin.include_vars: "vars/production.yaml"
+    - name: Load env vault
+      ansible.builtin.include_vars: "vault/env/production.yaml"
+  tasks:
+    - name: Dump production database
+      ansible.builtin.shell:
+        cmd: >-
+          docker exec {{ db_container }}
+          pg_dump -U {{ database_username }} -d {{ database_name }} --no-owner --clean --if-exists
+          | gzip > {{ dump_remote }}
+
+    - name: Fetch dump to control machine
+      ansible.builtin.fetch:
+        src: "{{ dump_remote }}"
+        dest: "{{ dump_local }}"
+        flat: true
+
+    - name: Remove dump from production VM
+      ansible.builtin.file:
+        path: "{{ dump_remote }}"
+        state: absent
+
+- name: Restore dump into staging
+  hosts: staging
+  become: true
+  gather_facts: false
+  vars:
+    db_container: karrio-db-1
+    dump_remote: /tmp/karrio-prod-to-stage.sql.gz
+    dump_local: /tmp/karrio-prod-to-stage.sql.gz
+  pre_tasks:
+    - name: Load vars
+      ansible.builtin.include_vars: "vars/staging.yaml"
+    - name: Load env vault
+      ansible.builtin.include_vars: "vault/env/staging.yaml"
+  tasks:
+    - name: Copy dump to staging VM
+      ansible.builtin.copy:
+        src: "{{ dump_local }}"
+        dest: "{{ dump_remote }}"
+        mode: "0600"
+
+    - name: Stop api/worker/dashboard during restore
+      ansible.builtin.command: docker stop karrio-api-1 karrio-worker-1 karrio-dashboard-1
+
+    - name: Restore dump into staging database
+      ansible.builtin.shell:
+        cmd: >-
+          gunzip -c {{ dump_remote }}
+          | docker exec -i {{ db_container }}
+          psql -U {{ database_username }} -d {{ database_name }}
+
+    - name: Start api/worker/dashboard
+      ansible.builtin.command: docker start karrio-api-1 karrio-worker-1 karrio-dashboard-1
+
+    - name: Remove dump from staging VM
+      ansible.builtin.file:
+        path: "{{ dump_remote }}"
+        state: absent
+
+    - name: Remove dump from control machine
+      ansible.builtin.file:
+        path: "{{ dump_local }}"
+        state: absent
+      delegate_to: localhost
+      become: false

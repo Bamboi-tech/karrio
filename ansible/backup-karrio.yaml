@@ -1,0 +1,45 @@
+---
+# Backup the Karrio postgres database and upload to GCS.
+#
+#   cd ansible
+#   ansible-playbook backup-karrio.yaml -e env=production
+#   ansible-playbook backup-karrio.yaml -e env=staging
+#
+# Requires the GCS bucket to exist:
+#   gcloud storage buckets create gs://bamboi-karrio-backups --location=europe-north2
+- name: Backup Karrio database and upload to GCS
+  hosts: "{{ env | default('production') }}"
+  become: true
+  gather_facts: true
+  vars:
+    db_container: karrio-db-1
+    backup_dir: /tmp/karrio-backups
+    gcs_bucket: "gs://bamboi-karrio-backups"
+  pre_tasks:
+    - name: Load vars
+      ansible.builtin.include_vars: "vars/{{ env | default('staging') }}.yaml"
+    - name: Load env vault
+      ansible.builtin.include_vars: "vault/env/{{ env | default('staging') }}.yaml"
+
+  tasks:
+    - name: Create backup directory on VM
+      ansible.builtin.file:
+        path: "{{ backup_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Dump database from container
+      ansible.builtin.shell:
+        cmd: >-
+          docker exec {{ db_container }}
+          pg_dump -U {{ database_username }} -d {{ database_name }} --no-owner
+          | gzip > {{ backup_dir }}/karrio-{{ env | default('staging') }}-{{ ansible_date_time.iso8601_basic_short }}.sql.gz
+
+    - name: Upload backup to GCS bucket
+      ansible.builtin.shell:
+        cmd: "gcloud storage cp {{ backup_dir }}/*.sql.gz {{ gcs_bucket }}/{{ env | default('staging') }}/{{ ansible_date_time.date }}/"
+
+    - name: Clean up backup directory on VM
+      ansible.builtin.file:
+        path: "{{ backup_dir }}"
+        state: absent

@@ -1,0 +1,23 @@
+# Copy this file to staging/terraform.tfvars and production/terraform.tfvars
+# and fill in your values. *.tfvars files are gitignored by default.
+
+project_id = "your-gcp-project-id"
+region     = "europe-north2"
+zone       = "europe-north2-a"
+
+environment = "staging" # staging or production
+vm_memory   = 4         # 4 (e2-medium), 8 (e2-standard-2) or 16 (e2-standard-4)
+disk_size   = 30
+
+vm_name        = "bamboi-karrio-staging-vm"
+static_ip_name = "bamboi-karrio-staging-static-ip"
+
+# First time: leave existing_static_ip_name commented out to create a new IP
+# existing_static_ip_name = null
+
+# After first apply, reuse the existing IP so DNS records stay stable:
+# existing_static_ip_name = "bamboi-karrio-staging-static-ip"
+
+# SSH public key (format: "ubuntu:ssh-rsa AAAAB3NzaC1yc2E... user@host")
+# Get with: cat ~/.ssh/id_rsa.pub
+ssh_public_key = "ubuntu:YOUR_SSH_PUBLIC_KEY_HERE"

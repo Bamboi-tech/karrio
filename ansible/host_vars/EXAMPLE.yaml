@@ -1,0 +1,5 @@
+# Copy to host_vars/<static-ip>.yaml for each VM (one file per host in hosts.yaml).
+---
+ansible_ssh_user: ubuntu
+env: staging # staging or production
+ansible_python_interpreter: /usr/bin/python3

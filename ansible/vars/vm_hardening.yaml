@@ -1,0 +1,12 @@
+---
+# OS hardening defaults (override with -e on the CLI if needed).
+vm_hardening_marker_path: /var/lib/ansible-vm-hardening-v1.complete
+vm_hardening_marker_version: "1"
+
+# SSH logins permitted after hardening (ansible connects as ubuntu).
+vm_hardening_ssh_allow_users:
+  - ubuntu
+
+# Optional extra UFW allow rules: list of { port, proto }.
+# Example: [{ port: "8080", proto: "tcp" }]
+vm_hardening_ufw_extra_allow: []

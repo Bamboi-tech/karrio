@@ -1,0 +1,60 @@
+---
+# Audit Docker disk usage and optionally prune unused images (never volumes).
+#
+# Usage:
+#   cd ansible
+#   ansible-playbook docker-image-prune.yaml -e env=staging -e prune=false
+#   ansible-playbook docker-image-prune.yaml -e env=staging -e prune=true
+#   ansible-playbook docker-image-prune.yaml -e env=production -e prune=true -e production_confirm=CONFIRM
+#
+# prune: true|false (or "true"/"false" strings). When false, report only.
+# production_confirm: must be CONFIRM when env=production and prune=true.
+- name: Audit and prune unused Docker images
+  hosts: "{{ env | default('staging') }}"
+  become: true
+  gather_facts: false
+  vars:
+    prune_enabled: "{{ prune | default(false) | bool }}"
+  pre_tasks:
+    - name: Load environment vars
+      ansible.builtin.include_vars: "vars/{{ env | default('staging') }}.yaml"
+
+    - name: Require CONFIRM for production prune
+      ansible.builtin.assert:
+        that:
+          - env | default('staging') != 'production' or not prune_enabled or (production_confirm | default('')) == 'CONFIRM'
+        fail_msg: >-
+          Production image prune requires explicit confirmation:
+          -e production_confirm=CONFIRM together with -e prune=true.
+
+  tasks:
+    - name: Docker system disk usage (before)
+      ansible.builtin.command: docker system df
+      register: docker_df_before
+      changed_when: false
+
+    - name: Host filesystem usage (before)
+      ansible.builtin.command: df -h / /data
+      register: host_df_before
+      changed_when: false
+      failed_when: false
+
+    - name: Report disk usage before
+      ansible.builtin.debug:
+        msg: "{{ docker_df_before.stdout_lines + host_df_before.stdout_lines }}"
+
+    - name: Prune unused images (no volumes, no containers)
+      ansible.builtin.command: docker image prune -a -f
+      register: image_prune
+      when: prune_enabled
+
+    - name: Docker system disk usage (after)
+      ansible.builtin.command: docker system df
+      register: docker_df_after
+      changed_when: false
+      when: prune_enabled
+
+    - name: Report prune result
+      ansible.builtin.debug:
+        msg: "{{ (image_prune.stdout_lines | default([])) + (docker_df_after.stdout_lines | default([])) }}"
+      when: prune_enabled

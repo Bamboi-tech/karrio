@@ -1,0 +1,164 @@
+# Build custom Karrio server + dashboard images from this fork and push them
+# to Artifact Registry (repo managed by terraform/artifact_registry.tf).
+#
+# Both images are tagged <VERSION>-<short-sha> (e.g. 2026.1.31-ab12cd3) plus
+# `latest` and an optional custom tag. Deploy a build by passing the tag to the
+# "Update Karrio (Ansible)" workflow or pinning it in ansible/vars/<env>.yaml.
+#
+# Required repo secret:
+#   GCP_SA_KEY — JSON key of github-actions-gar@bamboi-tech.iam.gserviceaccount.com
+#                (same secret as erpnext-chatwoot's build workflows)
+name: Build Karrio Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      custom_tag:
+        description: "Optional additional image tag (e.g. monta-hotfix)"
+        required: false
+        default: ""
+      push:
+        description: "Push images to registry"
+        required: false
+        default: true
+        type: boolean
+
+env:
+  REGISTRY: europe-north2-docker.pkg.dev
+  REPOSITORY: bamboi-tech/bamboi-karrio
+
+jobs:
+  server-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      DOCKER_BUILDKIT: 1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Checkout community submodule
+        run: git submodule update --init community
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Compute image tag
+        id: tag
+        run: |
+          VERSION=$(cat ./apps/api/karrio/server/VERSION)
+          TAG="${VERSION}-${GITHUB_SHA::7}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "### karrio-server image" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`${{ env.REGISTRY }}/${{ env.REPOSITORY }}/karrio-server:${TAG}\`" >> "$GITHUB_STEP_SUMMARY"
+
+      # Same pre-build steps as upstream's karrio-build workflow:
+      # the server image serves karrio.js and the embeddable elements as static files
+      - name: Build JS client
+        run: |
+          docker run --rm -v ${PWD}:/local openapitools/openapi-generator-cli generate \
+            -i /local/schemas/openapi.yml \
+            -g typescript-fetch \
+            -o /local/packages/karriojs/api/generated \
+            --additional-properties=typescriptThreePlus=true \
+            --additional-properties=modelPropertyNaming=snake_case \
+            --additional-properties=useSingleRequestParameter=true
+
+          cd packages/karriojs
+          npm install
+          npx gulp build --output "${GITHUB_WORKSPACE}/apps/api/karrio/server/static/karrio/js/karrio.js"
+
+      - name: Build embeddable elements
+        run: |
+          cd packages/elements
+          npm install
+          npm run build
+
+          ELEMENTS_STATIC="${GITHUB_WORKSPACE}/apps/api/karrio/server/static/karrio/elements"
+          mkdir -p "${ELEMENTS_STATIC}" "${ELEMENTS_STATIC}/chunks"
+          cp dist/elements.js dist/globals.css "${ELEMENTS_STATIC}/"
+          cp dist/ratesheet.js dist/ratesheet.html "${ELEMENTS_STATIC}/"
+          cp dist/devtools.js dist/devtools.css dist/devtools.html "${ELEMENTS_STATIC}/"
+          cp dist/template-editor.js dist/template-editor.html "${ELEMENTS_STATIC}/"
+          cp dist/connections.js dist/connections.html "${ELEMENTS_STATIC}/"
+          [ -d dist/chunks ] && cp dist/chunks/* "${ELEMENTS_STATIC}/chunks/"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
+
+      # Builds karrio/server:<tag> locally (plugins/ incl. monta are baked in
+      # by docker/api/Dockerfile)
+      - name: Build karrio server image
+        run: ./bin/build-server-image-from-source ${{ steps.tag.outputs.tag }}
+
+      - name: Tag and push to Artifact Registry
+        if: ${{ inputs.push }}
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.REPOSITORY }}/karrio-server"
+          TAG="${{ steps.tag.outputs.tag }}"
+          docker tag "karrio/server:${TAG}" "${IMAGE}:${TAG}"
+          docker tag "karrio/server:${TAG}" "${IMAGE}:latest"
+          docker push "${IMAGE}:${TAG}"
+          docker push "${IMAGE}:latest"
+          if [ -n "${{ inputs.custom_tag }}" ]; then
+            docker tag "karrio/server:${TAG}" "${IMAGE}:${{ inputs.custom_tag }}"
+            docker push "${IMAGE}:${{ inputs.custom_tag }}"
+          fi
+
+  dashboard-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      DOCKER_BUILDKIT: 1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute image tag
+        id: tag
+        run: |
+          VERSION=$(cat ./apps/api/karrio/server/VERSION)
+          TAG="${VERSION}-${GITHUB_SHA::7}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "### karrio-dashboard image" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`${{ env.REGISTRY }}/${{ env.REPOSITORY }}/karrio-dashboard:${TAG}\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
+
+      - name: Build karrio dashboard image
+        env:
+          KARRIO_IMAGE: ${{ env.REGISTRY }}/${{ env.REPOSITORY }}/karrio-dashboard
+          SOURCE: https://github.com/Bamboi-tech/karrio
+        run: ./bin/build-dashboard-image ${{ steps.tag.outputs.tag }}
+
+      - name: Push to Artifact Registry
+        if: ${{ inputs.push }}
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.REPOSITORY }}/karrio-dashboard"
+          TAG="${{ steps.tag.outputs.tag }}"
+          docker tag "${IMAGE}:${TAG}" "${IMAGE}:latest"
+          docker push "${IMAGE}:${TAG}"
+          docker push "${IMAGE}:latest"
+          if [ -n "${{ inputs.custom_tag }}" ]; then
+            docker tag "${IMAGE}:${TAG}" "${IMAGE}:${{ inputs.custom_tag }}"
+            docker push "${IMAGE}:${{ inputs.custom_tag }}"
+          fi

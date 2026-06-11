@@ -1,0 +1,18 @@
+domains:
+  app: stage-karrio-app.bamboi.eu
+  api: stage-karrio-api.bamboi.eu
+letsencrypt_email: tools@bamboi.eu
+
+# Custom image tag from the "Build Karrio Images" workflow (e.g. 2026.1.31-ab12cd3).
+# Keep staging and production on the SAME tag. Empty = deploy fails fast with a hint.
+karrio_tag: ""
+karrio_server_image: europe-north2-docker.pkg.dev/bamboi-tech/bamboi-karrio/karrio-server
+karrio_dashboard_image: europe-north2-docker.pkg.dev/bamboi-tech/bamboi-karrio/karrio-dashboard
+caddy_image: caddy:2.8.4
+postgres_image: postgres:16
+redis_image: redis:7
+pull_policy: if_not_present
+
+# Database (non-secret parts; password lives in vault/env/staging.yaml)
+database_name: karrio
+database_username: karrio

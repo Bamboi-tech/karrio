@@ -1,0 +1,109 @@
+# Idempotent swap file on the data disk. Requires /data (or parent of vm_swap_file_path) to exist.
+# Vars: ansible/vars/vm_swap.yaml (vm_swap_enabled, vm_swap_file_path, vm_swap_file_size_mb, vm_swap_swappiness)
+
+- name: Skip swap configuration when disabled
+  ansible.builtin.debug:
+    msg: "vm_swap_enabled=false; not configuring swap"
+  when: not (vm_swap_enabled | default(true) | bool)
+
+- name: Ensure swap file parent directory exists
+  ansible.builtin.file:
+    path: "{{ vm_swap_file_path | dirname }}"
+    state: directory
+    mode: "0755"
+  when: vm_swap_enabled | default(true) | bool
+
+- name: Stat swap file
+  ansible.builtin.stat:
+    path: "{{ vm_swap_file_path }}"
+  register: vm_swap_file_stat
+  when: vm_swap_enabled | default(true) | bool
+
+- name: Check whether swap file is already formatted
+  ansible.builtin.command:
+    cmd: blkid -o value -s TYPE {{ vm_swap_file_path }}
+  register: vm_swap_blkid
+  changed_when: false
+  failed_when: false
+  when:
+    - vm_swap_enabled | default(true) | bool
+    - vm_swap_file_stat.stat.exists | default(false)
+
+- name: Allocate swap file on disk
+  ansible.builtin.command:
+    cmd: fallocate -l {{ vm_swap_file_size_mb }}M {{ vm_swap_file_path }}
+  when:
+    - vm_swap_enabled | default(true) | bool
+    - not (vm_swap_file_stat.stat.exists | default(false))
+
+- name: Set swap file permissions
+  ansible.builtin.file:
+    path: "{{ vm_swap_file_path }}"
+    mode: "0600"
+    owner: root
+    group: root
+  when: vm_swap_enabled | default(true) | bool
+
+- name: Format swap file
+  ansible.builtin.command:
+    cmd: mkswap {{ vm_swap_file_path }}
+  register: vm_swap_mkswap
+  changed_when: "'Setting up swapspace' in vm_swap_mkswap.stdout"
+  when:
+    - vm_swap_enabled | default(true) | bool
+    - not (vm_swap_file_stat.stat.exists | default(false)) or vm_swap_blkid.rc != 0 or (vm_swap_blkid.stdout | default('')) != 'swap'
+
+- name: Re-check swap file type after format
+  ansible.builtin.command:
+    cmd: blkid -o value -s TYPE {{ vm_swap_file_path }}
+  register: vm_swap_blkid_after
+  changed_when: false
+  failed_when: vm_swap_blkid_after.stdout != 'swap'
+  when: vm_swap_enabled | default(true) | bool
+
+- name: List active swap devices
+  ansible.builtin.command:
+    cmd: swapon --show=NAME --noheadings
+  register: vm_swap_active
+  changed_when: false
+  when: vm_swap_enabled | default(true) | bool
+
+- name: Enable swap file now
+  ansible.builtin.command:
+    cmd: swapon {{ vm_swap_file_path }}
+  when:
+    - vm_swap_enabled | default(true) | bool
+    - vm_swap_file_path not in (vm_swap_active.stdout_lines | default([]) | map('trim') | list)
+
+- name: Persist swap file in fstab
+  ansible.posix.mount:
+    path: none
+    src: "{{ vm_swap_file_path }}"
+    fstype: swap
+    opts: sw
+    passno: 0
+    dump: 0
+    state: present
+  when: vm_swap_enabled | default(true) | bool
+
+- name: Set vm.swappiness
+  ansible.posix.sysctl:
+    name: vm.swappiness
+    value: "{{ vm_swap_swappiness | string }}"
+    sysctl_set: true
+    state: present
+    reload: true
+  when:
+    - vm_swap_enabled | default(true) | bool
+    - vm_swap_swappiness is defined
+
+- name: Show active swap
+  ansible.builtin.command: swapon --show
+  register: vm_swap_show
+  changed_when: false
+  when: vm_swap_enabled | default(true) | bool
+
+- name: Swap summary
+  ansible.builtin.debug:
+    msg: "{{ vm_swap_show.stdout_lines | default([]) }}"
+  when: vm_swap_enabled | default(true) | bool

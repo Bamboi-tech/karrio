@@ -1,0 +1,71 @@
+# Nightly backup of the production Karrio database to GCS
+# (bucket bamboi-karrio-backups is managed by terraform/storage.tf; the VM's
+# service account uploads, so no GCP credentials are needed here).
+#
+# Uses the "production" GitHub environment secrets:
+#   ANSIBLE_VAULT_ENV_FILE, ANSIBLE_VAULT_PASSWORD, SSH_PRIVATE_KEY
+name: Backup Karrio
+
+on:
+  schedule:
+    - cron: "30 0 * * *"
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ansible
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Ansible, collections, and roles
+        run: |
+          pip install ansible
+          ansible-galaxy install -r requirements.yaml
+
+      - name: Write Ansible vault password
+        env:
+          ANSIBLE_VAULT_PASSWORD: ${{ secrets.ANSIBLE_VAULT_PASSWORD }}
+        run: |
+          echo "$ANSIBLE_VAULT_PASSWORD" > .vault_pass
+          chmod 600 .vault_pass
+
+      # vault/ is gitignored (public fork) — materialize the encrypted vault file from the environment secret
+      - name: Write Ansible vault env file
+        env:
+          ANSIBLE_VAULT_ENV_FILE: ${{ secrets.ANSIBLE_VAULT_ENV_FILE }}
+        run: |
+          mkdir -p vault/env
+          printf '%s\n' "$ANSIBLE_VAULT_ENV_FILE" > vault/env/production.yaml
+          chmod 600 vault/env/production.yaml
+
+      - name: Install SSH key for Ansible
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: Run backup playbook
+        run: |
+          ansible-playbook backup-karrio.yaml \
+            --private-key ~/.ssh/id_ed25519 \
+            -e env=production
+
+      - name: Remove vault password and vault file
+        if: always()
+        run: rm -f .vault_pass vault/env/production.yaml

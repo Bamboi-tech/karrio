@@ -1,0 +1,10 @@
+{
+  "Id": 123456789,
+  "WebshopOrderId": "SAL-ORD-2026-00001",
+  "TypeCode": "SHIPPED",
+  "TypeId": 7,
+  "Description": "Order shipped via DHL",
+  "Occured": "2026-06-10T15:00:00Z",
+  "Created": "2026-06-10T15:00:05Z",
+  "EorderID": 123456
+}

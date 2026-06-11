@@ -1,0 +1,8 @@
+{
+  "OrderInvalidReasons": [
+    {
+      "Code": 12,
+      "Message": "DeliveryAddress.PostalCode is invalid for country NL"
+    }
+  ]
+}

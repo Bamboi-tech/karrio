@@ -1,0 +1,13 @@
+SCHEMAS=./schemas
+LIB_MODULES=./karrio/schemas/monta
+find "${LIB_MODULES}" -name "*.py" -exec rm -r {} \;
+touch "${LIB_MODULES}/__init__.py"
+
+kcli codegen generate "${SCHEMAS}/error_response.json" "${LIB_MODULES}/error_response.py"
+kcli codegen generate "${SCHEMAS}/order_request.json" "${LIB_MODULES}/order_request.py"
+kcli codegen generate "${SCHEMAS}/order_response.json" "${LIB_MODULES}/order_response.py"
+kcli codegen generate "${SCHEMAS}/collo_request.json" "${LIB_MODULES}/collo_request.py"
+kcli codegen generate "${SCHEMAS}/collo_response.json" "${LIB_MODULES}/collo_response.py"
+kcli codegen generate "${SCHEMAS}/shipping_label_response.json" "${LIB_MODULES}/shipping_label_response.py"
+kcli codegen generate "${SCHEMAS}/return_label_response.json" "${LIB_MODULES}/return_label_response.py"
+kcli codegen generate "${SCHEMAS}/order_event_response.json" "${LIB_MODULES}/order_event_response.py"

@@ -1,0 +1,21 @@
+{
+  "Number": 1,
+  "WeightGrammes": 1500,
+  "LengthMm": 400,
+  "WidthMm": 300,
+  "HeightMm": 200,
+  "TrackAndTraceCode": "3SABCD0123456789",
+  "TrackAndTraceLink": "https://tracking.example.com/3SABCD0123456789",
+  "DeliveryStatusDescription": "Shipped",
+  "DeliveryStatusCode": "SHIPPED",
+  "DeliveryStatusUpdated": "2026-06-10T15:00:00Z",
+  "PackageDescription": "Box 1 of 2",
+  "IsParent": false,
+  "ParentNumber": 0,
+  "Products": [
+    {
+      "Sku": "SKU-001",
+      "Quantity": 2
+    }
+  ]
+}

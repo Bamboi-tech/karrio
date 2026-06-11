@@ -1,0 +1,11 @@
+{
+  "ShipperDescription": "PostNL",
+  "TrackAndTraceCode": "3SRETURN0123456789",
+  "TrackAndTraceLink": "https://tracking.example.com/3SRETURN0123456789",
+  "Created": "2026-06-10T15:05:00Z",
+  "DeliveryStatusCode": "CREATED",
+  "DeliveryStatusDescription": "Label created",
+  "DeliveryStatusChangedUtc": "2026-06-10T15:05:00Z",
+  "EnRouteUtc": "2026-06-12T09:00:00Z",
+  "DeliveredUtc": "2026-06-13T11:00:00Z"
+}

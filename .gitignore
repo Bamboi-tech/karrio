@@ -144,6 +144,7 @@ docker/plugins
 !plugins/README.md
 !plugins/addresscomplete
 !plugins/googlegeocoding
+!plugins/monta
 
 # Meta-repo private directories
 meta/private/

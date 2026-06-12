@@ -167,7 +167,19 @@ function PasswordChangeForm({ onSuccess }: PasswordChangeFormProps) {
       });
       onSuccess?.();
     } catch (error: any) {
-      setErrors(error);
+      const validation =
+        (error?.data?.errors || (Array.isArray(error) ? error : []))
+          .find((err: any) => err?.validation)?.validation || {};
+      const fieldErrors = Object.fromEntries(
+        Object.entries(validation).map(([field, messages]: [string, any]) => [
+          field,
+          Array.isArray(messages) ? messages.join(" ") : String(messages),
+        ]),
+      );
+      setErrors(fieldErrors);
+      if (Object.keys(fieldErrors).length === 0) {
+        notify({ type: NotificationType.error, message: error });
+      }
     } finally {
       setLoading(false);
     }

@@ -266,9 +266,7 @@ export function AccountSettings() {
     });
   };
 
-  // Define options for selects
-  const CURRENCY_OPTIONS = ['USD', 'EUR', 'CAD', 'GBP', 'AUD', 'JPY'];
-  const COUNTRY_OPTIONS = ['US', 'CA', 'GB', 'DE', 'FR', 'AU', 'JP'];
+  // Define options for selects (currency/country come from @karrio/types enums)
   const LABEL_TYPE_OPTIONS = ['PDF', 'ZPL', 'PNG'];
   const WEIGHT_UNIT_OPTIONS = ['KG', 'LB'];
   const DIMENSION_UNIT_OPTIONS = ['CM', 'IN'];

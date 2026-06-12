@@ -16,3 +16,9 @@ pull_policy: if_not_present
 # Database (non-secret parts; password lives in vault/env/staging.yaml)
 database_name: karrio
 database_username: karrio
+
+# Email via Mailgun EU (credential lives in vault/env/staging.yaml)
+email_host: smtp.eu.mailgun.org
+email_port: "587"
+email_use_tls: "True"
+email_from_address: noreply@bamboi.eu

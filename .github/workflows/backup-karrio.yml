@@ -2,8 +2,9 @@
 # (bucket bamboi-karrio-backups is managed by terraform/storage.tf; the VM's
 # service account uploads, so no GCP credentials are needed here).
 #
-# Uses the "production" GitHub environment secrets:
-#   ANSIBLE_VAULT_ENV_FILE, ANSIBLE_VAULT_PASSWORD, SSH_PRIVATE_KEY
+# Uses the "production-backup" GitHub environment (no required reviewers, so the
+# nightly schedule runs unattended) with secret ANSIBLE_VAULT_ENV_FILE, plus the
+# repo-level secrets ANSIBLE_VAULT_PASSWORD and SSH_PRIVATE_KEY.
 name: Backup Karrio
 
 on:
@@ -15,7 +16,7 @@ jobs:
   backup:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    environment: production
+    environment: production-backup
     permissions:
       contents: read
     defaults:

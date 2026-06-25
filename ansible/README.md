@@ -78,13 +78,13 @@ gh secret set ANSIBLE_VAULT_ENV_FILE --env production --repo Bamboi-tech/karrio 
 
 - **Build Karrio Images** (`workflow_dispatch`): builds `karrio-server` + `karrio-dashboard` from this fork and pushes them to Artifact Registry, tagged `<VERSION>-<short-sha>` (+ `latest` and an optional custom tag).
 - **Update Karrio (Ansible)** (`workflow_dispatch`): choose `staging` or `production` and optionally a `karrio_tag` (empty = the tag pinned in `vars/<env>.yaml`). Runs `google-vm.yaml`.
-- **Backup Karrio** (nightly at 00:30 UTC + `workflow_dispatch`): runs `backup-karrio.yaml` against production.
+- **Backup Karrio** (nightly at 00:30 UTC + `workflow_dispatch`): runs `backup-karrio.yaml` against production. Uses the **`production-backup`** environment (no required reviewers) so the schedule runs unattended — the `production` environment's reviewer gate would otherwise hang the nightly run.
 
-One-time GitHub setup (repo **Settings → Environments**, create `staging` and `production`):
+One-time GitHub setup (repo **Settings → Environments**, create `staging`, `production`, and `production-backup`):
 
 | Secret | Scope | Value |
 | --- | --- | --- |
-| `ANSIBLE_VAULT_ENV_FILE` | per environment | content of the encrypted `vault/env/<env>.yaml` |
+| `ANSIBLE_VAULT_ENV_FILE` | per environment (`staging`, `production`, `production-backup`) | content of the encrypted `vault/env/<env>.yaml` (`production-backup` uses the `production` file) |
 | `ANSIBLE_VAULT_PASSWORD` | repo-level | the `.vault_pass` value |
 | `SSH_PRIVATE_KEY` | repo-level | private key matching terraform's `ssh_public_key` |
 | `GCP_SA_KEY` | repo-level | JSON key of `github-actions-gar@bamboi-tech.iam.gserviceaccount.com` (same as erpnext-chatwoot's build secret) |
@@ -94,9 +94,10 @@ gh secret set ANSIBLE_VAULT_PASSWORD --repo Bamboi-tech/karrio < .vault_pass
 gh secret set SSH_PRIVATE_KEY --repo Bamboi-tech/karrio < ~/.ssh/id_rsa
 gh secret set ANSIBLE_VAULT_ENV_FILE --env staging    --repo Bamboi-tech/karrio < vault/env/staging.yaml
 gh secret set ANSIBLE_VAULT_ENV_FILE --env production --repo Bamboi-tech/karrio < vault/env/production.yaml
+gh secret set ANSIBLE_VAULT_ENV_FILE --env production-backup --repo Bamboi-tech/karrio < vault/env/production.yaml
 ```
 
-(Environments must exist before `gh secret set --env` works — create them in the UI first. Optionally add a required reviewer on `production`.)
+(Environments must exist before `gh secret set --env` works — create them in the UI first. Optionally add a required reviewer on `production`. Keep `production-backup` **without** reviewers so the nightly backup runs unattended.)
 
 ## Host swap (OOM headroom on e2-medium)
 

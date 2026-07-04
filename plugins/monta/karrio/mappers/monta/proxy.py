@@ -42,7 +42,7 @@ class Proxy(proxy.Proxy):
             on_error=provider_utils.error_decoder,
         )
 
-        if (lib.to_dict(response) or {}).get("HttpStatus") == 404:
+        if self._order_not_found(lib.to_dict(response) or {}):
             response = lib.request(
                 url=f"{self.settings.server_url}/order",
                 data=order,
@@ -53,6 +53,22 @@ class Proxy(proxy.Proxy):
             )
 
         return lib.Deserializable(response, lib.to_dict)
+
+    @staticmethod
+    def _order_not_found(response: dict) -> bool:
+        """True when the PUT targeted an order Monta does not know yet.
+
+        Monta signals this either as a plain 404 or as an
+        OrderInvalidReasonsResponse (HTTP 400) with reason Code 23
+        ("No orders found for webshop order id").
+        """
+        if response.get("HttpStatus") == 404:
+            return True
+        return any(
+            str(reason.get("Code")) == "23"
+            or "no orders found" in (reason.get("Message") or "").lower()
+            for reason in response.get("OrderInvalidReasons") or []
+        )
 
     def create_shipment(self, request: lib.Serializable) -> lib.Deserializable[str]:
         """Packing phase chain: register colli, create the shipping labels

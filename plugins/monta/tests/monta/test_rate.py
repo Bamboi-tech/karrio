@@ -42,6 +42,20 @@ class TestMontaRating(unittest.TestCase):
             )
             self.assertEqual(mock.call_args_list[1][1]["method"], "POST")
 
+    def test_get_rates_falls_back_on_unknown_webshop_order_reason(self):
+        # Live Monta answers a PUT for an unknown order with HTTP 400 +
+        # OrderInvalidReasons Code 23, not a plain 404.
+        with patch("karrio.mappers.monta.proxy.lib.request") as mock:
+            mock.side_effect = [UnknownOrderReasonResponse, OrderResponse]
+            karrio.Rating.fetch(self.RateRequest).from_(gateway)
+
+            self.assertEqual(mock.call_count, 2)
+            self.assertEqual(
+                mock.call_args_list[1][1]["url"],
+                f"{gateway.settings.server_url}/order",
+            )
+            self.assertEqual(mock.call_args_list[1][1]["method"], "POST")
+
     def test_parse_rate_response(self):
         with patch("karrio.mappers.monta.proxy.lib.request") as mock:
             mock.return_value = OrderResponse
@@ -157,6 +171,14 @@ OrderResponse = """{
 """
 
 NotFoundResponse = """{"HttpStatus": 404, "Message": "Order not found"}"""
+
+UnknownOrderReasonResponse = """{
+    "HttpStatus": 400,
+    "OrderInvalidReasons": [
+        {"Code": 23, "Message": "No orders found for webshop order id"}
+    ]
+}
+"""
 
 InvalidOrderResponse = """{
     "OrderInvalidReasons": [

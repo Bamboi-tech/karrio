@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   server-tests:
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -31,7 +31,7 @@ jobs:
           ./bin/run-server-tests -v
 
   platform-ci:
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
 
     steps:
       - uses: actions/checkout@v4
@@ -54,7 +54,7 @@ jobs:
           npm run build -w ee/apps/platform
 
   web-ci:
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
 
     steps:
       - uses: actions/checkout@v4

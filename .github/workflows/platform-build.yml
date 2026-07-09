@@ -7,7 +7,7 @@ on:
 
 jobs:
   changes:
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
     outputs:
       version: ${{ steps.changes.outputs.version }}
     steps:
@@ -23,7 +23,7 @@ jobs:
   platform-server-build:
     needs: changes
     if: ${{ needs.changes.outputs.version == 'true' || github.event_name == 'workflow_dispatch' }}
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -88,7 +88,7 @@ jobs:
 
   platform-ecr-publish:
     needs: platform-server-build
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -118,7 +118,7 @@ jobs:
 
   platform-infra-deploy:
     needs: [platform-server-build, platform-ecr-publish]
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
     environment: production
     steps:
       - uses: actions/checkout@v4

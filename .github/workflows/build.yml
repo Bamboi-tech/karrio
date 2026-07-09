@@ -7,7 +7,7 @@ on:
 
 jobs:
   changes:
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
     outputs:
       version: ${{ steps.changes.outputs.version }}
     steps:
@@ -31,7 +31,7 @@ jobs:
     # See bin/build-and-release-packages for details.
     needs: changes
     if: ${{ needs.changes.outputs.version == 'true' || github.event_name == 'workflow_dispatch' }}
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
     permissions:
       contents: read
       id-token: write
@@ -73,7 +73,7 @@ jobs:
   server-build:
     needs: changes
     if: ${{ needs.changes.outputs.version == 'true' || github.event_name == 'workflow_dispatch' }}
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -152,7 +152,7 @@ jobs:
   dashboard-build:
     needs: changes
     if: ${{ needs.changes.outputs.version == 'true' || github.event_name == 'workflow_dispatch' }}
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -186,7 +186,7 @@ jobs:
     # Create a GitHub release after all builds complete successfully
     # This job is idempotent - it will skip if the release already exists
     needs: [python-packages, server-build, dashboard-build]
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
     permissions:
       contents: write
 

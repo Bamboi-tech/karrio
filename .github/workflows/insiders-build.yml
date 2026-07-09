@@ -7,7 +7,7 @@ on:
 
 jobs:
   changes:
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
     outputs:
       version: ${{ steps.changes.outputs.version }}
     steps:
@@ -23,7 +23,7 @@ jobs:
   insiders-wheels:
     needs: changes
     if: ${{ needs.changes.outputs.version == 'true' || github.event_name == 'workflow_dispatch' }}
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -77,7 +77,7 @@ jobs:
   insiders-server-build:
     needs: changes
     if: ${{ needs.changes.outputs.version == 'true' || github.event_name == 'workflow_dispatch' }}
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -142,7 +142,7 @@ jobs:
   insiders-dashboard-build:
     needs: changes
     if: ${{ needs.changes.outputs.version == 'true' || github.event_name == 'workflow_dispatch' }}
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
     permissions:
       contents: read
       packages: write

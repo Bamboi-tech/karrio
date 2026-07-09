@@ -25,7 +25,7 @@ on:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
     timeout-minutes: 60
     environment: ${{ inputs.env }}
     permissions:

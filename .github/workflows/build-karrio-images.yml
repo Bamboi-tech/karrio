@@ -29,7 +29,7 @@ env:
 
 jobs:
   server-build:
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
     timeout-minutes: 90
     permissions:
       contents: read
@@ -116,7 +116,7 @@ jobs:
           fi
 
   dashboard-build:
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
     timeout-minutes: 60
     permissions:
       contents: read

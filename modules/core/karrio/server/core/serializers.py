@@ -1600,6 +1600,15 @@ class ShippingRequest(ShippingData):
 
 
 class ShipmentData(ShippingData):
+    fetch_rates = serializers.BooleanField(
+        required=False,
+        default=True,
+        write_only=True,
+        help_text=(
+            "Whether carrier rates should be requested while creating the draft. "
+            "Set to false to create a review-only draft without contacting carriers."
+        ),
+    )
     service = serializers.CharField(
         required=False,
         allow_blank=False,

@@ -1041,6 +1041,7 @@ class PartialShipmentMutation(utils.BaseMutation):
         try:
             id = input["id"]
             shipment = manager.Shipment.access_by(info.context.request).get(id=id)
+            previous_recipient = lib.to_dict(shipment.recipient)
             manager_serializers.can_mutate_shipment(
                 shipment, update=True, payload=input
             )
@@ -1048,11 +1049,38 @@ class PartialShipmentMutation(utils.BaseMutation):
             manager_serializers.ShipmentSerializer.map(
                 shipment,
                 context=info.context.request,
-                data=process_dictionaries_mutations(["options"], input, shipment),
+                data=process_dictionaries_mutations(
+                    [
+                        "options",
+                        "recipient",
+                        "shipper",
+                        "return_address",
+                        "billing_address",
+                    ],
+                    input,
+                    shipment,
+                ),
             ).save()
 
             # refetch the shipment to get the updated state with signals processed
             update = manager.Shipment.access_by(info.context.request).get(id=id)
+            if (
+                "recipient" in input
+                and previous_recipient != lib.to_dict(update.recipient)
+            ):
+                if (update.metadata or {}).get("sales_order"):
+                    update.meta = {
+                        **(update.meta or {}),
+                        "address_sync_pending": True,
+                    }
+                    update.rates = []
+                    update.selected_rate = None
+                    update.save(update_fields=["meta", "rates", "selected_rate"])
+                _notify_recipient_updated(
+                    update,
+                    previous_recipient=previous_recipient,
+                    request=info.context.request,
+                )
 
             return PartialShipmentMutation(errors=None, shipment=update)  # type:ignore
         except Exception as e:
@@ -1060,6 +1088,42 @@ class PartialShipmentMutation(utils.BaseMutation):
                 "Shipment mutation failed", shipment_id=input.get("id"), error=str(e)
             )
             raise e
+
+
+def _notify_recipient_updated(
+    shipment: manager.Shipment, previous_recipient: dict, request
+) -> None:
+    """Publish an authenticated operator correction to subscribed systems.
+
+    A recipient edit is materially different from ordinary draft maintenance:
+    upstream order systems may need to update their source record before a
+    carrier is contacted. The event is emitted only after the draft update has
+    succeeded and carries both sides for audit/debugging.
+    """
+    from karrio.server.events import tasks
+    from karrio.server.events.serializers import EventTypes
+
+    context = {
+        "user_id": request.user.id,
+        "test_mode": shipment.test_mode,
+        "org_id": lib.failsafe(
+            lambda: shipment.org.first().id if hasattr(shipment, "org") else None
+        ),
+    }
+    if settings.MULTI_ORGANIZATIONS and context["org_id"] is None:
+        return
+
+    data = {
+        **manager_serializers.Shipment(shipment).data,
+        "previous_recipient": previous_recipient,
+    }
+    tasks.notify_webhooks(
+        EventTypes.shipment_recipient_updated.value,
+        data,
+        shipment.updated_at,
+        context,
+        schema=settings.schema,
+    )
 
 
 @strawberry.type

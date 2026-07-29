@@ -10,6 +10,7 @@ class EventTypes(lib.StrEnum):
     shipment_out_for_delivery = "shipment_out_for_delivery"
     shipment_needs_attention = "shipment_needs_attention"
     shipment_delivery_failed = "shipment_delivery_failed"
+    shipment_recipient_updated = "shipment_recipient_updated"
     tracker_created = "tracker_created"
     tracker_updated = "tracker_updated"
     pickup_scheduled = "pickup_scheduled"

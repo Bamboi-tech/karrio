@@ -5,11 +5,12 @@ import {
   useUploadRecordMutation,
   useUploadRecords,
 } from "@karrio/hooks/upload-record";
-import { CustomsType, NotificationType, ParcelType, MetadataObjectTypeEnum } from "@karrio/types";
+import { AddressType, CustomsType, NotificationType, ParcelType, MetadataObjectTypeEnum, UpdateAddressInput } from "@karrio/types";
 import { CustomsInfoDescription } from "@karrio/ui/components/customs-info-description";
 import { ShipmentsStatusBadge } from "@karrio/ui/components/shipments-status-badge";
 import { CommodityDescription } from "@karrio/ui/components/commodity-description";
 import { AddressDescription } from "@karrio/ui/components/address-description";
+import { AddressEditDialog } from "@karrio/ui/components/address-edit-dialog";
 import { ParcelDescription } from "@karrio/ui/components/parcel-description";
 import { ActivityTimeline } from "@karrio/ui/components/activity-timeline";
 import { useShipment, useShipmentMutation } from "@karrio/hooks/shipment";
@@ -139,6 +140,27 @@ export const ShipmentComponent = ({
       setSelectValue("other");
     } catch (message: any) {
       notifier.notify({ type: NotificationType.error, message });
+    }
+  };
+
+  const correctRecipientAddress = async (address: AddressType) => {
+    try {
+      const recipientId = address.id || shipment?.recipient?.id;
+      if (!recipientId) {
+        throw new Error("The shipment recipient address could not be resolved.");
+      }
+
+      await updateShipment.mutateAsync({
+        id: entity_id,
+        recipient: { ...address, id: recipientId } as UpdateAddressInput,
+      });
+      notifier.notify({
+        type: NotificationType.success,
+        message: "Address saved. ERPNext validation and Shopify synchronization have started.",
+      });
+    } catch (message: any) {
+      notifier.notify({ type: NotificationType.error, message });
+      throw message;
     }
   };
 
@@ -575,9 +597,27 @@ export const ShipmentComponent = ({
                 <div className="space-y-3">
                   {/* Shipping To section */}
                   <div className="text-base py-1">
-                    <p className="text-base font-semibold tracking-wide my-2">
-                      Shipped To
-                    </p>
+                    <div className="flex items-center justify-between gap-3 my-2">
+                      <p className="text-base font-semibold tracking-wide">
+                        Shipped To
+                      </p>
+                      {shipment.status === "draft" && Boolean(shipment.metadata?.sales_order) && (
+                        <AddressEditDialog
+                          header="Correct delivery address"
+                          description="The delivery location and phone will be validated in ERPNext, synchronized to Shopify, and only then released to the carrier."
+                          mode="delivery"
+                          shipment={shipment as any}
+                          address={shipment.recipient}
+                          onSubmit={correctRecipientAddress}
+                          trigger={
+                            <Button variant="outline" size="sm">
+                              <i className="fas fa-pen mr-2 text-xs"></i>
+                              Correct address
+                            </Button>
+                          }
+                        />
+                      )}
+                    </div>
 
                     <AddressDescription address={shipment.recipient} />
                   </div>

@@ -314,6 +314,7 @@ export function WebhooksView() {
     { value: EventTypes.shipment_purchased, label: "Shipment Purchased" },
     { value: EventTypes.shipment_cancelled, label: "Shipment Cancelled" },
     { value: EventTypes.shipment_fulfilled, label: "Shipment Fulfilled" },
+    { value: "shipment_recipient_updated" as EventTypes, label: "Shipment Recipient Updated" },
     { value: EventTypes.tracker_created, label: "Tracker Created" },
     { value: EventTypes.tracker_updated, label: "Tracker Updated" },
   ];

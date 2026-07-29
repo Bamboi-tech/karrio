@@ -80,6 +80,7 @@ interface AddressFormProps {
   showSubmitButton?: boolean;
   submitButtonText?: string;
   disabled?: boolean;
+  mode?: "full" | "delivery";
   className?: string;
 }
 
@@ -121,6 +122,7 @@ export const AddressForm = React.forwardRef<AddressFormRef, AddressFormProps>(({
   showSubmitButton = true,
   submitButtonText = "Save Address",
   disabled = false,
+  mode = "full",
   className = "",
 }, ref) => {
   const { references } = useAPIMetadata();
@@ -264,7 +266,7 @@ export const AddressForm = React.forwardRef<AddressFormRef, AddressFormProps>(({
     <Form {...form}>
       <form onSubmit={form.handleSubmit(handleSubmit)} className={`space-y-3 ${className}`}>
         {/* Contact Person - full width with template autocomplete */}
-        <div className="space-y-1">
+        <div className={`space-y-1 ${mode === "full" ? "" : "hidden"}`}>
           <AddressCombobox
             name="person_name"
             label="Contact Person"
@@ -283,7 +285,7 @@ export const AddressForm = React.forwardRef<AddressFormRef, AddressFormProps>(({
           control={form.control}
           name="company_name"
           render={({ field }) => (
-            <FormItem className="space-y-1">
+            <FormItem className={`space-y-1 ${mode === "full" ? "" : "hidden"}`}>
               <FormLabel className="text-xs">Company</FormLabel>
               <FormControl>
                 <Input
@@ -447,13 +449,13 @@ export const AddressForm = React.forwardRef<AddressFormRef, AddressFormProps>(({
           />
         </div>
 
-        {/* Email + Phone - 2 columns */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {/* Contact fields */}
+        <div className={`grid grid-cols-1 ${mode === "full" ? "md:grid-cols-2" : ""} gap-3`}>
           <FormField
             control={form.control}
             name="email"
             render={({ field }) => (
-              <FormItem className="space-y-1">
+              <FormItem className={`space-y-1 ${mode === "full" ? "" : "hidden"}`}>
                 <FormLabel className="text-xs">Email</FormLabel>
                 <FormControl>
                   <Input
@@ -497,7 +499,7 @@ export const AddressForm = React.forwardRef<AddressFormRef, AddressFormProps>(({
           control={form.control}
           name="residential"
           render={({ field }) => (
-            <FormItem className="flex items-center space-x-2 pt-2">
+            <FormItem className={`flex items-center space-x-2 pt-2 ${mode === "full" ? "" : "hidden"}`}>
               <FormControl>
                 <Checkbox
                   id="residential"
@@ -512,7 +514,11 @@ export const AddressForm = React.forwardRef<AddressFormRef, AddressFormProps>(({
         />
 
         {/* Advanced Fields */}
-        <Collapsible open={advancedExpanded} onOpenChange={setAdvancedExpanded}>
+        <Collapsible
+          open={advancedExpanded}
+          onOpenChange={setAdvancedExpanded}
+          className={mode === "full" ? "" : "hidden"}
+        >
           <CollapsibleTrigger asChild>
             <Button
               type="button"

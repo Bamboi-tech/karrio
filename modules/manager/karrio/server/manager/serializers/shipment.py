@@ -823,6 +823,24 @@ def can_mutate_shipment(
     purchase: bool = False,
     payload: dict = None,
 ):
+    address_sync_pending = bool(
+        (shipment.meta or {}).get("address_sync_pending")
+    )
+    is_recipient_correction = bool(payload and "recipient" in payload)
+    if (
+        address_sync_pending
+        and (update or purchase)
+        and not is_recipient_correction
+    ):
+        raise exceptions.APIException(
+            (
+                "The recipient correction is awaiting ERP validation and "
+                "cannot be rated or purchased yet"
+            ),
+            code="address_sync_pending",
+            status_code=status.HTTP_409_CONFLICT,
+        )
+
     if update and [*(payload or {}).keys()] == ["metadata"]:
         return
 

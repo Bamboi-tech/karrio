@@ -1,8 +1,10 @@
+import copy
 import json
 from unittest.mock import ANY, patch
 from django.urls import reverse
 from rest_framework import status
 from karrio.core.models import RateDetails, ChargeDetails
+from karrio.server.core.exceptions import APIException
 from karrio.server.graph.tests.base import GraphTestCase, Result
 import karrio.server.manager.models as manager
 
@@ -92,6 +94,7 @@ class TestPartialShipmentMutation(GraphTestCase):
                 "data": {
                     "id": shipment_id,
                     "shipper": {
+                        "id": self.shipment["shipper"]["id"],
                         "company_name": "Updated Corp Inc.",
                         "email": "updated@example.com",
                         "phone_number": "555-123-4567",
@@ -107,44 +110,136 @@ class TestPartialShipmentMutation(GraphTestCase):
         """Test updating random fields within recipient address"""
         shipment_id = self.shipment["id"]
 
-        response = self.query(
-            """
-            mutation partial_shipment_update($data: PartialShipmentMutationInput!) {
-              partial_shipment_update(input: $data) {
-                shipment {
-                  id
-                  recipient {
-                    id
-                    company_name
-                    person_name
-                    address_line1
-                    city
-                    state_code
-                    residential
+        with patch("karrio.server.events.tasks.notify_webhooks") as notify:
+            response = self.query(
+                """
+                mutation partial_shipment_update($data: PartialShipmentMutationInput!) {
+                  partial_shipment_update(input: $data) {
+                    shipment {
+                      id
+                      recipient {
+                        id
+                        company_name
+                        person_name
+                        address_line1
+                        city
+                        state_code
+                        residential
+                      }
+                    }
+                    errors {
+                      field
+                      messages
+                    }
                   }
                 }
-                errors {
-                  field
-                  messages
-                }
-              }
-            }
-            """,
-            operation_name="partial_shipment_update",
-            variables={
-                "data": {
-                    "id": shipment_id,
-                    "recipient": {
-                        "person_name": "John Updated",
-                        "address_line1": "456 Updated St",
-                        "residential": True,
-                    },
-                }
-            },
-        )
+                """,
+                operation_name="partial_shipment_update",
+                variables={
+                    "data": {
+                        "id": shipment_id,
+                        "recipient": {
+                            "id": self.shipment["recipient"]["id"],
+                            "person_name": "John Updated",
+                            "address_line1": "456 Updated St",
+                            "residential": True,
+                        },
+                    }
+                },
+            )
 
         self.assertResponseNoErrors(response)
         self.assertDictEqual(response.data, RECIPIENT_UPDATE_RESPONSE)
+        self.assertEqual(
+            notify.call_args.args[0],
+            "shipment_recipient_updated",
+        )
+        event_data = notify.call_args.args[1]
+        self.assertEqual(event_data["id"], shipment_id)
+        self.assertEqual(
+            event_data["recipient"]["address_line1"],
+            "456 Updated St",
+        )
+        self.assertEqual(
+            event_data["previous_recipient"]["address_line1"],
+            "125 Church St",
+        )
+
+    def test_partial_update_without_recipient_does_not_emit_address_event(self):
+        shipment_id = self.shipment["id"]
+
+        with patch("karrio.server.events.tasks.notify_webhooks") as notify:
+            response = self.query(
+                """
+                mutation partial_shipment_update($data: PartialShipmentMutationInput!) {
+                  partial_shipment_update(input: $data) {
+                    shipment {
+                      id
+                      reference
+                    }
+                    errors {
+                      field
+                      messages
+                    }
+                  }
+                }
+                """,
+                operation_name="partial_shipment_update",
+                variables={
+                    "data": {
+                        "id": shipment_id,
+                        "reference": "NO-ADDRESS-CHANGE",
+                    }
+                },
+            )
+
+        self.assertResponseNoErrors(response)
+        notify.assert_not_called()
+
+    def test_erp_managed_recipient_update_locks_rates_until_sync(self):
+        shipment_id = self.shipment["id"]
+        manager.Shipment.objects.filter(id=shipment_id).update(
+            metadata={"sales_order": "SO-TEST"}
+        )
+
+        with patch("karrio.server.events.tasks.notify_webhooks"):
+            response = self.query(
+                """
+                mutation partial_shipment_update($data: PartialShipmentMutationInput!) {
+                  partial_shipment_update(input: $data) {
+                    shipment {
+                      id
+                      rates { id }
+                    }
+                    errors {
+                      field
+                      messages
+                    }
+                  }
+                }
+                """,
+                operation_name="partial_shipment_update",
+                variables={
+                    "data": {
+                        "id": shipment_id,
+                        "recipient": {
+                            "id": self.shipment["recipient"]["id"],
+                            "address_line1": "Validated later 12",
+                        },
+                    }
+                },
+            )
+
+        self.assertResponseNoErrors(response)
+        shipment = manager.Shipment.objects.get(id=shipment_id)
+        self.assertTrue(shipment.meta["address_sync_pending"])
+        self.assertListEqual(shipment.rates, [])
+        self.assertIsNone(shipment.selected_rate)
+        with self.assertRaises(APIException) as context:
+            from karrio.server.manager.serializers import can_mutate_shipment
+
+            can_mutate_shipment(shipment, purchase=True, update=True)
+        self.assertIn("awaiting ERP validation", str(context.exception))
 
     def test_partial_update_payment_and_metadata(self):
         """Test updating payment information and metadata"""
@@ -217,6 +312,7 @@ class TestPartialShipmentMutation(GraphTestCase):
                     "id": shipment_id,
                     "parcels": [
                         {
+                            "id": self.shipment["parcels"][0]["id"],
                             "weight": 2.5,
                             "weight_unit": "LB",
                             "description": "Updated parcel description",
@@ -294,8 +390,11 @@ class TestPartialShipmentMutation(GraphTestCase):
         shipment_id = self.shipment["id"]
 
         # Set the shipment ID dynamically in the test data
-        full_update_data = FULL_UPDATE_DATA.copy()
+        full_update_data = copy.deepcopy(FULL_UPDATE_DATA)
         full_update_data["data"]["id"] = shipment_id
+        full_update_data["data"]["shipper"]["id"] = self.shipment["shipper"]["id"]
+        full_update_data["data"]["recipient"]["id"] = self.shipment["recipient"]["id"]
+        full_update_data["data"]["parcels"][0]["id"] = self.shipment["parcels"][0]["id"]
 
         response = self.query(
             """
@@ -413,7 +512,12 @@ FULL_UPDATE_DATA = {
             "email": "recipient@fullupdate.com",
         },
         "parcels": [
-            {"weight": 3.0, "weight_unit": "KG", "description": "Full update parcel"}
+            {
+                "id": None,  # Will be set dynamically in the test
+                "weight": 3.0,
+                "weight_unit": "KG",
+                "description": "Full update parcel",
+            }
         ],
         "payment": {"paid_by": "third_party", "currency": "USD"},
         "options": {"insurance": 250, "priority": "express"},
@@ -450,7 +554,7 @@ SHIPPER_UPDATE_RESPONSE = {
                     "id": ANY,
                     "company_name": "Updated Corp Inc.",
                     "person_name": "Jane Doe",
-                    "phone_number": "555-123-4567",
+                    "phone_number": "+1 555-123-4567",
                     "email": "updated@example.com",
                     "city": "Vancouver",
                     "postal_code": "V6M2V9",
@@ -510,14 +614,6 @@ PARCEL_UPDATE_RESPONSE = {
                 "parcels": [
                     {
                         "id": ANY,
-                        "weight": 1.0,
-                        "weight_unit": "KG",
-                        "package_preset": "canadapost_corrugated_small_box",
-                        "description": None,
-                        "reference_number": ANY,
-                    },
-                    {
-                        "id": ANY,
                         "weight": 2.5,
                         "weight_unit": "LB",
                         "package_preset": "canadapost_corrugated_medium_box",
@@ -569,11 +665,6 @@ FULL_UPDATE_SIMULATION_RESPONSE = {
                     "email": "recipient@fullupdate.com",
                 },
                 "parcels": [
-                    {
-                        "weight": 1.0,
-                        "weight_unit": "KG",
-                        "description": None,
-                    },
                     {
                         "weight": 3.0,
                         "weight_unit": "KG",

@@ -18,6 +18,8 @@ export interface AddressEditDialogProps {
   address: AddressType | ShipmentType["recipient"] | ShipmentType["shipper"];
   onSubmit: (address: AddressType) => Promise<any>;
   trigger: React.ReactElement;
+  mode?: "full" | "delivery";
+  description?: string;
 }
 
 export const AddressEditDialog = ({
@@ -26,6 +28,8 @@ export const AddressEditDialog = ({
   shipment,
   address,
   onSubmit,
+  mode = "full",
+  description,
 }: AddressEditDialogProps): JSX.Element => {
   const { references } = useAPIMetadata();
   const [isOpen, setIsOpen] = useState(false);
@@ -104,6 +108,9 @@ export const AddressEditDialog = ({
             <DialogTitle className="text-lg font-semibold">
               {header || "Edit address"}
             </DialogTitle>
+            {description && (
+              <p className="text-sm text-muted-foreground">{description}</p>
+            )}
           </DialogHeader>
           
           <div className="flex-1 overflow-y-auto mt-4 pb-6 px-4">
@@ -113,6 +120,7 @@ export const AddressEditDialog = ({
               onChange={handleChange}
               onSubmit={handleSubmit}
               showSubmitButton={false}
+              mode={mode}
             />
           </div>
 

@@ -180,8 +180,8 @@ export default function Page(pageProps: any) {
     // Address drafts held for correction carry the ERP's Google verdict in
     // their metadata. Rendered as its own column so the operator sees the whole
     // "needs a corrected address" worklist in one pass over the Draft view.
-    const renderAddressReview = (metadata: unknown) => {
-      const review = getAddressReview(metadata);
+    const renderAddressReview = (metadata: unknown, meta: unknown) => {
+      const review = getAddressReview(metadata, meta);
       if (!review) return <span className="text-gray-300">-</span>;
       return (
         <div style={{ lineHeight: "16px", maxWidth: "220px" }}>
@@ -189,6 +189,11 @@ export default function Page(pageProps: any) {
             status={review.status}
             title={review.note || ""}
           />
+          {review.pending && (
+            <p className="text-gray-500 font-medium mt-1">
+              re-checking with Google
+            </p>
+          )}
           {review.suggestion && (
             <p
               className="text-gray-500 font-medium text-ellipsis mt-1"
@@ -524,7 +529,7 @@ export default function Page(pageProps: any) {
                       className="address items-center text-xs"
                       onClick={() => previewShipment(shipment.id)}
                     >
-                      {renderAddressReview(shipment.metadata)}
+                      {renderAddressReview(shipment.metadata, shipment.meta)}
                     </TableCell>
                     <TableCell
                       className="rate items-center text-xs text-gray-600"

@@ -11,27 +11,46 @@ export const ADDRESS_REVIEW_FLAG = "address_review_required";
 export const ADDRESS_STATUS_KEY = "address_validation_status";
 export const ADDRESS_NOTE_KEY = "address_validation_note";
 export const ADDRESS_SUGGESTION_KEY = "address_suggestion";
+// Set on `meta` (not `metadata`) by the recipient mutation the moment an
+// operator saves a corrected address, and gone once the ERP has re-validated
+// and rebuilt the draft.
+export const ADDRESS_SYNC_PENDING_KEY = "address_sync_pending";
+
+export const PENDING_STATUS = "validating";
 
 export interface AddressReview {
   status: string;
   note?: string;
   suggestion?: string;
+  // A saved correction is on its way through ERP validation. The stored verdict
+  // still describes the *previous* address, so it must not be shown.
+  pending: boolean;
 }
 
-// `metadata` is an untyped JSON scalar on the GraphQL schema, so every key is
-// narrowed here rather than trusted by the callers.
-export function getAddressReview(metadata: unknown): AddressReview | null {
+// `metadata`/`meta` are untyped JSON scalars on the GraphQL schema, so every
+// key is narrowed here rather than trusted by the callers.
+export function getAddressReview(
+  metadata: unknown,
+  meta?: unknown,
+): AddressReview | null {
+  const pending = Boolean(
+    ((meta || {}) as Record<string, unknown>)[ADDRESS_SYNC_PENDING_KEY],
+  );
   const values = (metadata || {}) as Record<string, unknown>;
   const status = values[ADDRESS_STATUS_KEY];
-  if (typeof status !== "string" || status.length === 0) return null;
+  const hasStatus = typeof status === "string" && status.length > 0;
+
+  if (!hasStatus && !pending) return null;
+  if (pending) return { status: PENDING_STATUS, pending: true };
 
   const note = values[ADDRESS_NOTE_KEY];
   const suggestion = values[ADDRESS_SUGGESTION_KEY];
 
   return {
-    status,
+    status: status as string,
     note: typeof note === "string" ? note : undefined,
     suggestion: typeof suggestion === "string" ? suggestion : undefined,
+    pending: false,
   };
 }
 
@@ -50,6 +69,7 @@ export const AddressValidationBadge = ({
       suspect: "bg-yellow-50 text-yellow-600",
       unchecked: "bg-gray-50 text-gray-500",
       valid: "bg-green-50 text-green-500",
+      [PENDING_STATUS]: "bg-blue-50 text-blue-500",
     };
 
     return (

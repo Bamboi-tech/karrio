@@ -59,7 +59,7 @@ export const ShipmentComponent = ({
     query: { data: { shipment } = {}, ...query },
   } = useShipment(entity_id);
   const trackerId = shipment?.tracker_id;
-  const addressReview = getAddressReview(shipment?.metadata);
+  const addressReview = getAddressReview(shipment?.metadata, shipment?.meta);
   const { query: trackerLogs } = useLogs(trackerId ? { entity_id: trackerId } : { entity_id: "__none__" });
   const { query: trackerEvents } = useEvents(trackerId ? { entity_id: trackerId } : { entity_id: "__none__" });
 
@@ -633,6 +633,14 @@ export const ShipmentComponent = ({
                     </div>
 
                     <AddressDescription address={shipment.recipient} />
+
+                    {addressReview?.pending && (
+                      <div className="mt-2 rounded border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-900">
+                        This correction is being re-validated in ERPNext and
+                        synchronized to Shopify. The verdict below updates once
+                        that completes.
+                      </div>
+                    )}
 
                     {addressReview?.suggestion && (
                       <div className="mt-2 rounded border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm">

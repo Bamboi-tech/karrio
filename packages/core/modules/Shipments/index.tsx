@@ -41,6 +41,10 @@ import { Skeleton } from "@karrio/ui/components/ui/skeleton";
 import { Loader2 } from "lucide-react";
 import { CarrierImage } from "@karrio/ui/core/components/carrier-image";
 import { ShipmentsStatusBadge } from "@karrio/ui/components/shipments-status-badge";
+import {
+  AddressValidationBadge,
+  getAddressReview,
+} from "@karrio/ui/components/address-validation-badge";
 import { useAPIMetadata } from "@karrio/hooks/api-metadata";
 import { useLoader } from "@karrio/ui/core/components/loader";
 import { AppLink } from "@karrio/ui/core/components/app-link";
@@ -173,7 +177,30 @@ export default function Page(pageProps: any) {
           _.id === (rate?.meta as any)?.carrier_connection_id ||
           _.carrier_id === rate?.carrier_id,
       );
-    
+    // Address drafts held for correction carry the ERP's Google verdict in
+    // their metadata. Rendered as its own column so the operator sees the whole
+    // "needs a corrected address" worklist in one pass over the Draft view.
+    const renderAddressReview = (metadata: unknown) => {
+      const review = getAddressReview(metadata);
+      if (!review) return <span className="text-gray-300">-</span>;
+      return (
+        <div style={{ lineHeight: "16px", maxWidth: "220px" }}>
+          <AddressValidationBadge
+            status={review.status}
+            title={review.note || ""}
+          />
+          {review.suggestion && (
+            <p
+              className="text-gray-500 font-medium text-ellipsis mt-1"
+              title={review.suggestion}
+            >
+              Google: {review.suggestion}
+            </p>
+          )}
+        </div>
+      );
+    };
+
     // Define filter options for the cards
     const getFilterOptions = () => [
       {
@@ -295,7 +322,7 @@ export default function Page(pageProps: any) {
                   </TableHead>
 
                   {selection.length > 0 && (
-                    <TableHead className="p-2" colSpan={7}>
+                    <TableHead className="p-2" colSpan={8}>
                       <div className="flex items-center gap-2 flex-wrap">
                         <Button
                           variant="outline"
@@ -353,6 +380,9 @@ export default function Page(pageProps: any) {
                       <TableHead className="status items-center"></TableHead>
                       <TableHead className="recipient text-xs items-center">
                         RECIPIENT
+                      </TableHead>
+                      <TableHead className="address text-xs items-center">
+                        ADDRESS
                       </TableHead>
                       <TableHead className="rate text-xs items-center">
                         RATE
@@ -489,6 +519,12 @@ export default function Page(pageProps: any) {
                             ].filter(Boolean).join(", ")}
                           </p>
                         </div>
+                    </TableCell>
+                    <TableCell
+                      className="address items-center text-xs"
+                      onClick={() => previewShipment(shipment.id)}
+                    >
+                      {renderAddressReview(shipment.metadata)}
                     </TableCell>
                     <TableCell
                       className="rate items-center text-xs text-gray-600"

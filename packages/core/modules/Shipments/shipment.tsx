@@ -11,6 +11,10 @@ import { ShipmentsStatusBadge } from "@karrio/ui/components/shipments-status-bad
 import { CommodityDescription } from "@karrio/ui/components/commodity-description";
 import { AddressDescription } from "@karrio/ui/components/address-description";
 import { AddressEditDialog } from "@karrio/ui/components/address-edit-dialog";
+import {
+  AddressValidationBadge,
+  getAddressReview,
+} from "@karrio/ui/components/address-validation-badge";
 import { ParcelDescription } from "@karrio/ui/components/parcel-description";
 import { ActivityTimeline } from "@karrio/ui/components/activity-timeline";
 import { useShipment, useShipmentMutation } from "@karrio/hooks/shipment";
@@ -55,6 +59,7 @@ export const ShipmentComponent = ({
     query: { data: { shipment } = {}, ...query },
   } = useShipment(entity_id);
   const trackerId = shipment?.tracker_id;
+  const addressReview = getAddressReview(shipment?.metadata);
   const { query: trackerLogs } = useLogs(trackerId ? { entity_id: trackerId } : { entity_id: "__none__" });
   const { query: trackerEvents } = useEvents(trackerId ? { entity_id: trackerId } : { entity_id: "__none__" });
 
@@ -598,9 +603,17 @@ export const ShipmentComponent = ({
                   {/* Shipping To section */}
                   <div className="text-base py-1">
                     <div className="flex items-center justify-between gap-3 my-2">
-                      <p className="text-base font-semibold tracking-wide">
-                        Shipped To
-                      </p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-base font-semibold tracking-wide">
+                          Shipped To
+                        </p>
+                        {addressReview && (
+                          <AddressValidationBadge
+                            status={addressReview.status}
+                            title={addressReview.note || ""}
+                          />
+                        )}
+                      </div>
                       {shipment.status === "draft" && Boolean(shipment.metadata?.sales_order) && (
                         <AddressEditDialog
                           header="Correct delivery address"
@@ -620,6 +633,22 @@ export const ShipmentComponent = ({
                     </div>
 
                     <AddressDescription address={shipment.recipient} />
+
+                    {addressReview?.suggestion && (
+                      <div className="mt-2 rounded border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm">
+                        <p className="font-semibold text-yellow-800">
+                          Google suggests
+                        </p>
+                        <p className="text-yellow-900">
+                          {addressReview.suggestion}
+                        </p>
+                        {addressReview.note && (
+                          <p className="text-xs text-yellow-700 mt-1">
+                            {addressReview.note}
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {/* Shipped From section */}

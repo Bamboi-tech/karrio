@@ -24,6 +24,12 @@ ARG NEXT_PUBLIC_DASHBOARD_VERSION
 ENV NEXT_PUBLIC_DASHBOARD_VERSION=${NEXT_PUBLIC_DASHBOARD_VERSION}
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# Node sizes the old-space heap from the memory it detects, which lands around
+# 2 GB in this build container — right at what the webpack build needs, so it
+# started dying with "Reached heap limit" on some runs and surviving on others.
+# Pin a real ceiling instead of leaving it to chance.
+ENV NODE_OPTIONS=--max-old-space-size=4096
+
 RUN npm run build -w apps/dashboard
 
 # ── Stage 4: runner ──────────────────────────────────────────────

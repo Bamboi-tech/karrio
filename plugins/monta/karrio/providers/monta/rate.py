@@ -7,7 +7,7 @@ Karrio's rating call is therefore repurposed as the **order registration
 phase**: `rate_request` builds the Monta order payload, the proxy upserts it
 (`PUT /order/{webshoporderid}` falling back to `POST /order`), and Monta's
 address verification runs at that moment. A successful upsert yields a single
-flat-rate "Monta Fulfillment" service; a rejected order yields no rates and
+flat-rate "Monta Ship" service; a rejected order yields no rates and
 the `OrderInvalidReasons` surface as rate messages.
 """
 

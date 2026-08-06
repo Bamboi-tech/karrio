@@ -79,7 +79,14 @@ class Proxy(proxy.Proxy):
         errors: list = []
 
         def request_json(url: str, method: str = "GET", data: dict = None) -> dict:
-            response = lib.to_dict(
+            """Call Monta and hand the decoded body back as-is.
+
+            Errors are returned rather than collected: only the caller knows
+            whether a given failure should stop the chain, and getting that
+            wrong is expensive here — step 3 spends money and is skipped
+            whenever `errors` is non-empty.
+            """
+            return lib.to_dict(
                 lib.request(
                     url=url,
                     method=method,
@@ -90,35 +97,54 @@ class Proxy(proxy.Proxy):
                 )
             )
 
-            if isinstance(response, dict) and (
-                response.get("HttpStatus") or response.get("OrderInvalidReasons")
-            ):
-                errors.append(response)
-                return {}
+        # 1. idempotency guard: only register colli that don't exist yet.
+        #    A failing read is never fatal. Monta answers this GET with "Order
+        #    has no shipping boxes." until the first collo exists — the normal
+        #    starting state of every order — so letting it reach `errors` would
+        #    strand each one packed but unlabeled.
+        existing = provider_utils.normalize_colli(
+            request_json(self._order_url(webshop_order_id, "colli"))
+        )
+        existing_numbers = [collo.get("Number") for collo in existing]
 
-            return response
-
-        # 1. idempotency guard: only register colli that don't exist yet
-        existing = request_json(self._order_url(webshop_order_id, "colli"))
-        existing_numbers = [
-            collo.get("Number")
-            for collo in (existing if isinstance(existing, list) else [])
-        ]
-        colli = [
-            request_json(
-                self._order_url(webshop_order_id, "colli"), "POST", data=collo
+        # 2. register the colli the order is still missing, one POST per parcel
+        registered = [
+            (
+                collo,
+                request_json(
+                    self._order_url(webshop_order_id, "colli"), "POST", data=collo
+                ),
             )
             for collo in payload["colli"]
             if collo.get("Number") not in existing_numbers
-        ] + (existing if isinstance(existing, list) else [])
+        ]
+        errors.extend(
+            response
+            for _, response in registered
+            if provider_utils.request_failed(response)
+            and not provider_utils.collo_already_exists(response)
+        )
+        colli = [
+            # On Code 39 Monta returns the rejection, not the collo — but the
+            # collo we sent is the one on the order, so carry that forward.
+            collo if provider_utils.request_failed(response) else response
+            for collo, response in registered
+            if not provider_utils.request_failed(response)
+            or provider_utils.collo_already_exists(response)
+        ] + existing
 
-        # 2. create the shipping labels — this flips the order to shipped!
+        # 3. create the shipping labels — this flips the order to shipped!
         labels = (
             lib.to_dict(
                 lib.request(
                     url=(
                         self._order_url(webshop_order_id, "shippinglabels")
-                        + f"?{urllib.parse.urlencode(dict(labelfiletype=payload['label_file_type']))}"
+                        # Monta's enum is lowercase and it does not fold case:
+                        # `labelfiletype=PDF` comes back as "Label file type is
+                        # unknown", `pdf` is accepted. Karrio and the ERP field
+                        # both spell it in caps, so normalize here rather than
+                        # ask every caller to remember.
+                        + f"?{urllib.parse.urlencode(dict(labelfiletype=(payload['label_file_type'] or 'pdf').lower()))}"
                     ),
                     method="POST",
                     trace=self.trace_as("json"),
@@ -161,6 +187,10 @@ class Proxy(proxy.Proxy):
             else []
         )
 
+        if provider_utils.request_failed(return_labels):
+            errors.append(return_labels)
+            return_labels = []
+
         return lib.Deserializable(
             lib.to_json(
                 dict(
@@ -197,7 +227,7 @@ class Proxy(proxy.Proxy):
             errors: list = []
 
             def request_json(url: str):
-                response = lib.to_dict(
+                return lib.to_dict(
                     lib.request(
                         url=url,
                         method="GET",
@@ -207,17 +237,20 @@ class Proxy(proxy.Proxy):
                     )
                 )
 
-                if isinstance(response, dict) and response.get("HttpStatus"):
-                    errors.append(response)
-                    return []
+            events = request_json(self._order_url(webshop_order_id, "events"))
+            colli = request_json(self._order_url(webshop_order_id, "colli"))
 
-                return response if isinstance(response, list) else []
+            if provider_utils.request_failed(events):
+                errors.append(events)
 
             return (
                 webshop_order_id,
                 dict(
-                    events=request_json(self._order_url(webshop_order_id, "events")),
-                    colli=request_json(self._order_url(webshop_order_id, "colli")),
+                    events=events if isinstance(events, list) else [],
+                    # Shaped like the POST response, whichever shape Monta sent.
+                    # An order that carries no boxes yet is not a tracking
+                    # failure, so it stays out of `errors`.
+                    colli=provider_utils.normalize_colli(colli),
                     errors=errors,
                 ),
             )

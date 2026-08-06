@@ -184,16 +184,12 @@ ParsedTrackingResponse = [
     [],
 ]
 
+# One message, not two: /events decides whether the order exists, while a
+# failing /colli only means no boxes are registered yet — normal for anything
+# Monta has not packed, and never worth reporting on its own.
 ParsedErrorResponse = [
     [],
     [
-        {
-            "carrier_id": "monta",
-            "carrier_name": "monta",
-            "code": "404",
-            "message": "Order not found",
-            "details": {"tracking_number": "SAL-ORD-2026-00001"},
-        },
         {
             "carrier_id": "monta",
             "carrier_name": "monta",

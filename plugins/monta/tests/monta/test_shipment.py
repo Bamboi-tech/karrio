@@ -40,7 +40,8 @@ class TestMontaShipment(unittest.TestCase):
                 [
                     f"{base}/colli",
                     f"{base}/colli",
-                    f"{base}/shippinglabels?labelfiletype=PDF",
+                    # lowercase on the wire — Monta rejects "PDF"
+                    f"{base}/shippinglabels?labelfiletype=pdf",
                     f"{base}/shippinglabels/SAL-ORD-2026-00001_DHL_1.pdf",
                     f"{base}/returnlabels",
                 ],
@@ -58,6 +59,59 @@ class TestMontaShipment(unittest.TestCase):
             karrio.Shipment.create(self.ShipmentRequest).from_(gateway)
 
             self.assertEqual(mock.call_count, 4)
+
+    def test_create_shipment_labels_an_order_without_boxes_yet(self):
+        """Monta rejects the guard GET until the first collo exists. That is the
+        starting state of every order and must not suppress the label call."""
+        with patch("karrio.mappers.monta.proxy.lib.request") as mock:
+            mock.side_effect = [
+                NoShippingBoxesResponse,  # GET colli -> 404 "no shipping boxes"
+                ColloResponse,  # POST colli
+                ShippingLabelsResponse,  # POST shippinglabels
+                LabelFileContent,
+                ReturnLabelsResponse,
+            ]
+            parsed_response = (
+                karrio.Shipment.create(self.ShipmentRequest).from_(gateway).parse()
+            )
+
+            methods = [call[1]["method"] for call in mock.call_args_list]
+            self.assertEqual(methods, ["GET", "POST", "POST", "GET", "GET"])
+            self.assertListEqual(lib.to_dict(parsed_response), ParsedShipmentResponse)
+
+    def test_create_shipment_skips_colli_reported_as_shipped_boxes(self):
+        """The guard GET answers in the shipped-boxes shape, not the shape POST
+        returns. Missing that re-posts every collo Monta already has."""
+        with patch("karrio.mappers.monta.proxy.lib.request") as mock:
+            mock.side_effect = [
+                ShippedBoxesResponse,  # GET colli -> collo 1 already registered
+                ShippingLabelsResponse,  # POST shippinglabels
+                LabelFileContent,
+                ReturnLabelsResponse,
+            ]
+            karrio.Shipment.create(self.ShipmentRequest).from_(gateway)
+
+            methods = [call[1]["method"] for call in mock.call_args_list]
+            self.assertEqual(methods, ["GET", "POST", "GET", "GET"])
+
+    def test_create_shipment_treats_duplicate_collo_as_registered(self):
+        """Code 39 means the collo is on the order — the outcome this step
+        wants. It must not block the label."""
+        with patch("karrio.mappers.monta.proxy.lib.request") as mock:
+            mock.side_effect = [
+                NoShippingBoxesResponse,  # GET colli
+                DuplicateColloResponse,  # POST colli -> Code 39
+                ShippingLabelsResponse,  # POST shippinglabels
+                LabelFileContent,
+                ReturnLabelsResponse,
+            ]
+            parsed_response = (
+                karrio.Shipment.create(self.ShipmentRequest).from_(gateway).parse()
+            )
+
+            methods = [call[1]["method"] for call in mock.call_args_list]
+            self.assertEqual(methods, ["GET", "POST", "POST", "GET", "GET"])
+            self.assertEqual(lib.to_dict(parsed_response)[1], [])
 
     def test_parse_shipment_response(self):
         with patch("karrio.mappers.monta.proxy.lib.request") as mock:
@@ -174,6 +228,55 @@ ExistingColliResponse = """[
         "PackageDescription": "Box 1 of 1"
     }
 ]
+"""
+
+# What `error_decoder` makes of Monta's answer to the guard GET while the order
+# carries no colli: HTTP 404 with the bare string body "Order has no shipping
+# boxes." (observed on production, 6 Aug 2026).
+NoShippingBoxesResponse = """{
+    "HttpStatus": 404,
+    "Message": "Order has no shipping boxes."
+}
+"""
+
+# The same GET once a collo is registered — a shipped-boxes summary, not the
+# ColloResponse list that POST returns (observed on production, 6 Aug 2026).
+ShippedBoxesResponse = """{
+    "TotalWeightInKg": 1,
+    "PalletsShipped": 0,
+    "BoxesShipped": 1,
+    "ShippedPallets": {},
+    "ShippedBoxesOnPallets": [],
+    "ShippedBoxesNotOnPallets": [
+        {
+            "DistinctProducts": 0,
+            "TotalProducts": 0,
+            "ShippedCarrierInfo": {
+                "TTColloNr": 1,
+                "PackageDescription": "Collo 1 met verpakking 'Eigen verpakking product'",
+                "WeightInGrams": 1000,
+                "LengthInMM": 1,
+                "WidthInMM": 1,
+                "HeightInMM": 1,
+                "IsProductItsOwnPackage": true,
+                "FitsThroughDutchMailBox": "True",
+                "TTCode": "",
+                "TTLink": "",
+                "DeliveryStatusDescription": "",
+                "DeliveryStatusCode": "",
+                "DeliveryStatusUpdatedAt": ""
+            },
+            "ShippedProduct": []
+        }
+    ]
+}
+"""
+
+DuplicateColloResponse = """{
+    "OrderInvalidReasons": [
+        {"Code": 39, "Message": "Collo with given number already exists."}
+    ]
+}
 """
 
 ShippingLabelsResponse = """[

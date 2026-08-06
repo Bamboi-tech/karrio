@@ -196,7 +196,7 @@ ParsedRateResponse = [
             "service": "monta_fulfillment",
             "total_charge": 0.0,
             "meta": {
-                "service_name": "Monta Fulfillment",
+                "service_name": "Monta Ship",
                 "webshop_order_id": "SAL-ORD-2026-00001",
                 "monta_eorder_id": 123456,
                 "verified": "2026-06-10T08:30:05Z",

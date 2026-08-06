@@ -38,7 +38,7 @@ class ShippingService(lib.StrEnum):
     portal. Karrio therefore exposes a single flat service.
     """
 
-    monta_fulfillment = "Monta Fulfillment"
+    monta_fulfillment = "Monta Ship"
 
 
 class ShippingOption(lib.Enum):

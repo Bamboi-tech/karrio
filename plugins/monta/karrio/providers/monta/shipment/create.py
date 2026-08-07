@@ -46,6 +46,7 @@ def _extract_details(
 ) -> models.ShipmentDetails:
     webshop_order_id = response.get("webshop_order_id")
     labels = response.get("labels") or []
+    label_type = response.get("label_file_type") or "PDF"
     colli = [collo for label in labels for collo in (label.get("Colli") or [])] or (
         response.get("colli") or []
     )
@@ -60,6 +61,26 @@ def _extract_details(
     ]
     first_return = next(iter(return_labels), None)
 
+    # Monta prints one label per collo, but whether that arrives as N files or
+    # as one file covering N colli depends on the shipper — label_map records
+    # which file covers which collo numbers (and where its content sits in
+    # docs.extra_documents) so consumers never have to parse filenames. A label
+    # whose download failed keeps its map entry without a document_index.
+    document_indexes = {
+        index: position
+        for position, index in enumerate(
+            index for index, label in enumerate(labels) if label.get("file")
+        )
+    }
+    label_map = [
+        dict(
+            file_name=label.get("FileName"),
+            colli=[collo.get("Number") for collo in (label.get("Colli") or [])],
+            document_index=document_indexes.get(index),
+        )
+        for index, label in enumerate(labels)
+    ]
+
     return models.ShipmentDetails(
         carrier_id=settings.carrier_id,
         carrier_name=settings.carrier_name,
@@ -68,13 +89,24 @@ def _extract_details(
         # level track & trace codes are exposed in meta.tracking_numbers.
         tracking_number=webshop_order_id,
         shipment_identifier=webshop_order_id,
-        label_type="PDF",
+        label_type=label_type,
         docs=models.Documents(
+            # The bundled label is the compatibility surface (label_url,
+            # dashboard, ERP fallback); the per-collo files travel unbundled in
+            # extra_documents so each box can get its own printed label.
             label=(
                 label_files[0]
                 if len(label_files) == 1
-                else lib.bundle_base64(label_files, "PDF")
-            )
+                else lib.bundle_base64(label_files, label_type)
+            ),
+            extra_documents=[
+                models.ShippingDocument(
+                    category=f"collo_label_{position}",
+                    format=label_type,
+                    base64=file,
+                )
+                for position, file in enumerate(label_files, start=1)
+            ],
         ),
         return_shipment=(
             models.ReturnShipment(
@@ -93,6 +125,7 @@ def _extract_details(
             carrier_tracking_link=next(iter(tracking_links), None),
             colli=colli,
             label_files=[label.get("FileName") for label in labels],
+            label_map=label_map,
             return_labels=return_labels,
         ),
     )

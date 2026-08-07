@@ -160,7 +160,25 @@ class Proxy(proxy.Proxy):
             errors.append(labels)
             labels = []
 
-        # 3. download each label file as base64 PDF
+        # 3. download each label file as base64. With one label per collo a
+        #    swallowed download failure is a box that ships without a label, so
+        #    a failure lands in `errors` — but never stops the other downloads:
+        #    the order is already flipped to shipped at this point and every
+        #    label that can still be saved should be.
+        def download_failed(error, file_name: str) -> str:
+            failure = lib.to_dict(provider_utils.error_decoder(error)) or {}
+            errors.append(
+                {
+                    **failure,
+                    "Message": lib.text(
+                        f"Label file '{file_name}' download failed",
+                        failure.get("Message"),
+                        separator=": ",
+                    ),
+                }
+            )
+            return ""
+
         for label in labels:
             label["file"] = (
                 lib.request(
@@ -174,7 +192,9 @@ class Proxy(proxy.Proxy):
                         "Authorization": f"Basic {self.settings.authorization}",
                     },
                     decoder=lib.encode_base64,
-                    on_error=lambda _: "",
+                    on_error=lambda error, file_name=label["FileName"]: (
+                        download_failed(error, file_name)
+                    ),
                 )
                 if label.get("FileName")
                 else ""
@@ -197,6 +217,9 @@ class Proxy(proxy.Proxy):
                     webshop_order_id=webshop_order_id,
                     colli=[collo for collo in colli if any(collo or {})],
                     labels=labels,
+                    # Echo the requested type so the parser can declare what the
+                    # files actually are instead of assuming PDF.
+                    label_file_type=payload.get("label_file_type"),
                     return_labels=(
                         return_labels if isinstance(return_labels, list) else []
                     ),

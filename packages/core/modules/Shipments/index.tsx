@@ -552,10 +552,29 @@ export default function Page(pageProps: any) {
                       )}
                     </TableCell>
                     <TableCell
-                      className="reference items-center text-xs font-bold text-gray-600 text-ellipsis"
+                      className="reference items-center text-xs text-gray-600 text-ellipsis"
                       onClick={() => previewShipment(shipment.id)}
                     >
-                      <span>{shipment.reference || ""}</span>
+                      {/* All three references of the ERP chain: the Shopify
+                          number the customer knows, the Sales Order the office
+                          knows, and the ERP shipment the warehouse works from.
+                          Metadata keys are stamped by karrio_shipping; rows
+                          from before that mirror simply show fewer lines. */}
+                      <div style={{ lineHeight: "15px" }}>
+                        {(shipment.metadata as any)?.shopify_order_number && (
+                          <p className="text-xs font-bold">
+                            {(shipment.metadata as any).shopify_order_number}
+                          </p>
+                        )}
+                        <p className="text-xs font-semibold">
+                          {shipment.reference || ""}
+                        </p>
+                        {(shipment.metadata as any)?.karrio_shipment && (
+                          <p className="text-xs text-gray-400">
+                            {(shipment.metadata as any).karrio_shipment}
+                          </p>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell
                       className="date items-center px-1"

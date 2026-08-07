@@ -150,10 +150,24 @@ def shipment_request(
             "Monta orders are keyed by the client supplied WebshopOrderId."
         )
 
+    # Monta weighs every collo itself at the warehouse (their words), while a
+    # declared weight actively hurts: their product auto-selection rejects e.g.
+    # a >2 kg collo on a Buspakje product. When the connection (or a shipment
+    # option) says so, declare no weight at all and let Monta measure.
+    omit_weight = (
+        options.monta_omit_collo_weight.state
+        if options.monta_omit_collo_weight.state is not None
+        else settings.connection_config.omit_collo_weight.state
+    )
+
     colli = [
         monta.ColloRequestType(
             Number=index,
-            WeightGrammes=lib.to_int((package.weight.KG or 0) * 1000) or None,
+            WeightGrammes=(
+                None
+                if omit_weight
+                else lib.to_int((package.weight.KG or 0) * 1000) or None
+            ),
             LengthMm=lib.to_int((package.length.CM or 0) * 10) or None,
             WidthMm=lib.to_int((package.width.CM or 0) * 10) or None,
             HeightMm=lib.to_int((package.height.CM or 0) * 10) or None,

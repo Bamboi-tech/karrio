@@ -11,4 +11,6 @@ class OrderInvalidReasonType:
 
 @attr.s(auto_attribs=True)
 class ErrorResponseType:
-    OrderInvalidReasons: typing.Optional[typing.List[OrderInvalidReasonType]] = jstruct.JList[OrderInvalidReasonType]
+    OrderInvalidReasons: typing.Optional[typing.List[OrderInvalidReasonType]] = (
+        jstruct.JList[OrderInvalidReasonType]
+    )

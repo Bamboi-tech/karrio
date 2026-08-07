@@ -74,9 +74,15 @@ def _extract_details(
 
     events = [
         models.TrackingEvent(
-            date=lib.fdate(event.Occured or event.Created, try_formats=DATETIME_FORMATS),
-            time=lib.flocaltime(event.Occured or event.Created, try_formats=DATETIME_FORMATS),
-            timestamp=lib.fiso_timestamp(event.Occured or event.Created, try_formats=DATETIME_FORMATS),
+            date=lib.fdate(
+                event.Occured or event.Created, try_formats=DATETIME_FORMATS
+            ),
+            time=lib.flocaltime(
+                event.Occured or event.Created, try_formats=DATETIME_FORMATS
+            ),
+            timestamp=lib.fiso_timestamp(
+                event.Occured or event.Created, try_formats=DATETIME_FORMATS
+            ),
             code=event.TypeCode,
             description=event.Description or event.TypeCode,
             status=provider_units.to_tracking_status(event.TypeCode, event.Description),
@@ -85,8 +91,12 @@ def _extract_details(
     ] + [
         models.TrackingEvent(
             date=lib.fdate(item.DeliveryStatusUpdated, try_formats=DATETIME_FORMATS),
-            time=lib.flocaltime(item.DeliveryStatusUpdated, try_formats=DATETIME_FORMATS),
-            timestamp=lib.fiso_timestamp(item.DeliveryStatusUpdated, try_formats=DATETIME_FORMATS),
+            time=lib.flocaltime(
+                item.DeliveryStatusUpdated, try_formats=DATETIME_FORMATS
+            ),
+            timestamp=lib.fiso_timestamp(
+                item.DeliveryStatusUpdated, try_formats=DATETIME_FORMATS
+            ),
             code=item.DeliveryStatusCode,
             description=lib.text(
                 f"Collo {item.Number}",
@@ -102,8 +112,12 @@ def _extract_details(
     ]
 
     status = _overall_status(order_events, colli)
-    tracking_links = [item.TrackAndTraceLink for item in colli if item.TrackAndTraceLink]
-    tracking_numbers = [item.TrackAndTraceCode for item in colli if item.TrackAndTraceCode]
+    tracking_links = [
+        item.TrackAndTraceLink for item in colli if item.TrackAndTraceLink
+    ]
+    tracking_numbers = [
+        item.TrackAndTraceCode for item in colli if item.TrackAndTraceCode
+    ]
 
     return models.TrackingDetails(
         carrier_id=settings.carrier_id,
@@ -147,11 +161,16 @@ def _overall_status(order_events: list, colli: list) -> str:
                 return name
         return "in_transit"
 
-    latest = next(iter(sorted(
-        order_events,
-        key=lambda event: str(event.Occured or event.Created or ""),
-        reverse=True,
-    )), None)
+    latest = next(
+        iter(
+            sorted(
+                order_events,
+                key=lambda event: str(event.Occured or event.Created or ""),
+                reverse=True,
+            )
+        ),
+        None,
+    )
 
     if latest is not None:
         status = provider_units.to_tracking_status(latest.TypeCode, latest.Description)
@@ -164,8 +183,6 @@ def tracking_request(
     payload: models.TrackingRequest,
     settings: provider_utils.Settings,
 ) -> lib.Serializable:
-    request = [
-        dict(webshop_order_id=number) for number in payload.tracking_numbers
-    ]
+    request = [dict(webshop_order_id=number) for number in payload.tracking_numbers]
 
     return lib.Serializable(request, lib.to_dict)

@@ -10,6 +10,7 @@ class ConnectionConfig(lib.Enum):
     shipper_code = lib.OptionEnum("shipper_code", str)
     allowed_shippers = lib.OptionEnum("allowed_shippers", list)
     include_return_labels = lib.OptionEnum("include_return_labels", bool, True)
+    omit_collo_weight = lib.OptionEnum("omit_collo_weight", bool, False)
     label_file_type = lib.OptionEnum("label_file_type", str, "PDF")
     shipping_options = lib.OptionEnum("shipping_options", list)
     shipping_services = lib.OptionEnum("shipping_services", list)
@@ -54,6 +55,7 @@ class ShippingOption(lib.Enum):
     monta_comment = lib.OptionEnum("comment", str)
     monta_b2b = lib.OptionEnum("b2b", bool)
     monta_include_return_labels = lib.OptionEnum("include_return_labels", bool)
+    monta_omit_collo_weight = lib.OptionEnum("omit_collo_weight", bool)
 
 
 def shipping_options_initializer(
@@ -84,7 +86,13 @@ class TrackingStatus(lib.Enum):
     """
 
     cancelled = ["CANCELLED", "CANCELED", "DELETED", "ANNULEERD"]
-    return_to_sender = ["RETURNTOSENDER", "RETURNEDTOSENDER", "RETURNED", "RETOUR", "RMA"]
+    return_to_sender = [
+        "RETURNTOSENDER",
+        "RETURNEDTOSENDER",
+        "RETURNED",
+        "RETOUR",
+        "RMA",
+    ]
     delivery_failed = [
         "DELIVERYFAILED",
         "DELIVERYFAILURE",
@@ -112,7 +120,14 @@ class TrackingStatus(lib.Enum):
         "DEPARTED",
         "ARRIVED",
     ]
-    picked_up = ["PICKED", "PACKED", "LABELCREATED", "LABELPRINTED", "PICKING", "INPICKING"]
+    picked_up = [
+        "PICKED",
+        "PACKED",
+        "LABELCREATED",
+        "LABELPRINTED",
+        "PICKING",
+        "INPICKING",
+    ]
     pending = ["RECEIVED", "VERIFIED", "OPEN", "NEW", "BACKORDER", "CREATED", "PENDING"]
 
 

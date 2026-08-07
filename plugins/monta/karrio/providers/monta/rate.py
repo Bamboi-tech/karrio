@@ -110,9 +110,7 @@ def rate_request(
     request = monta.OrderRequestType(
         WebshopOrderId=webshop_order_id,
         Reference=payload.reference or webshop_order_id,
-        Origin=(
-            options.monta_origin.state or settings.connection_config.origin.state
-        ),
+        Origin=(options.monta_origin.state or settings.connection_config.origin.state),
         ConsumerDetails=monta.ConsumerDetailsType(
             DeliveryAddress=delivery_address,
             InvoiceAddress=delivery_address,

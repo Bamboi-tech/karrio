@@ -44,7 +44,9 @@ class OrderResponseType:
     WebshopOrderId: typing.Optional[str] = None
     Reference: typing.Optional[str] = None
     Origin: typing.Optional[str] = None
-    ConsumerDetails: typing.Optional[ConsumerDetailsType] = jstruct.JStruct[ConsumerDetailsType]
+    ConsumerDetails: typing.Optional[ConsumerDetailsType] = jstruct.JStruct[
+        ConsumerDetailsType
+    ]
     PlannedShipmentDate: typing.Optional[str] = None
     ShipOnPlannedShipmentDate: typing.Optional[bool] = None
     Blocked: typing.Optional[bool] = None

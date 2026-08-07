@@ -123,7 +123,9 @@ def normalize_colli(response: typing.Any) -> typing.List[dict]:
     ]
 
 
-def parse_house_number(address: lib.units.ComputedAddress) -> typing.Tuple[str, str, str]:
+def parse_house_number(
+    address: lib.units.ComputedAddress,
+) -> typing.Tuple[str, str, str]:
     """Split an address line into (street, house number, addition) as Monta expects.
 
     Prefers the explicit `street_number` when provided; otherwise extracts the

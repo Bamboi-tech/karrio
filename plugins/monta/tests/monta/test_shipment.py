@@ -122,6 +122,18 @@ class TestMontaShipment(unittest.TestCase):
             self.assertEqual(methods, ["GET", "POST", "POST", "GET", "GET"])
             self.assertEqual(lib.to_dict(parsed_response)[1], [])
 
+    def test_create_shipment_request_omits_weight_when_configured(self):
+        """omit_collo_weight: Monta weighs at the warehouse; a declared weight
+        only feeds their product auto-selection rejections (Buspakje > 2 kg)."""
+        payload = models.ShipmentRequest(
+            **{**ShipmentPayload, "options": {"monta_omit_collo_weight": True}}
+        )
+        request = gateway.mapper.create_shipment_request(payload)
+
+        collo = request.serialize()["colli"][0]
+        self.assertNotIn("WeightGrammes", collo)
+        self.assertEqual(collo["LengthMm"], 400)
+
     def test_parse_shipment_response(self):
         with patch("karrio.mappers.monta.proxy.lib.request") as mock:
             mock.side_effect = [

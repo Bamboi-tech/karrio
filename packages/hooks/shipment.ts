@@ -47,8 +47,22 @@ export function useShipments({
         .map((v: string) => v === "purchased" ? "created" : v) as any
     } : {}),
   });
-  const fetch = (variables: { filter: ShipmentFilter }) =>
-    karrio.graphql.request<get_shipments>(gqlstr(GET_SHIPMENTS), { variables });
+  const fetch = (variables: { filter: ShipmentFilter }) => {
+    // Underscore-prefixed statuses are UI sentinels (the Failed card's
+    // "_failed_creation", the address-review card's "_address_review"): they
+    // keep a FiltersCard highlighted but are not server-side statuses. Strip
+    // them from the outgoing query; the rest of the filter still applies.
+    const status = (
+      ([] as string[]).concat((variables.filter.status as any) || [])
+    ).filter((s) => !`${s}`.startsWith("_"));
+    const filter = {
+      ...variables.filter,
+      ...(status.length ? { status } : { status: undefined }),
+    } as ShipmentFilter;
+    return karrio.graphql.request<get_shipments>(gqlstr(GET_SHIPMENTS), {
+      variables: { filter },
+    });
+  };
 
   // Queries
   const query = useAuthenticatedQuery({

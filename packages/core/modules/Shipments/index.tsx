@@ -44,6 +44,7 @@ import { ShipmentsStatusBadge } from "@karrio/ui/components/shipments-status-bad
 import {
   AddressValidationBadge,
   getAddressReview,
+  ADDRESS_REVIEW_FLAG,
 } from "@karrio/ui/components/address-validation-badge";
 import { useAPIMetadata } from "@karrio/hooks/api-metadata";
 import { useLoader } from "@karrio/ui/core/components/loader";
@@ -53,6 +54,10 @@ import React, { useContext, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 
 const FAILED_SENTINEL = "_failed_creation";
+// Keeps the Needs Attention card highlighted while the real filtering happens
+// via metadata_key (see onFilterChange); stripped from the outgoing query by
+// useShipments like every "_"-prefixed sentinel.
+const ADDRESS_REVIEW_SENTINEL = "_address_review";
 
 
 export default function Page(pageProps: any) {
@@ -222,8 +227,12 @@ export default function Page(pageProps: any) {
         value: ["delivered"]
       },
       {
+        // The address worklist: every shipment whose delivery address is
+        // flagged Suspect/Invalid and waits on a human decision. Keyed on the
+        // metadata flag the ERP stamps, not on a Karrio status — flagged
+        // drafts are status "draft", which no status filter can isolate.
         label: "Needs Attention",
-        value: ["needs_attention"]
+        value: [ADDRESS_REVIEW_SENTINEL]
       },
       {
         label: "Exception",
@@ -290,7 +299,20 @@ export default function Page(pageProps: any) {
         <FiltersCard
           filters={getFilterOptions()}
           activeFilter={filter?.status || []}
-          onFilterChange={(status) => updateFilter({ status, offset: 0 })}
+          onFilterChange={(status) =>
+            updateFilter({
+              status,
+              // The address-review card filters on the ERP-stamped metadata
+              // flag; every other card must clear it or its status filter
+              // would intersect with the review worklist.
+              metadata_key: (status as string[]).includes(
+                ADDRESS_REVIEW_SENTINEL,
+              )
+                ? ADDRESS_REVIEW_FLAG
+                : undefined,
+              offset: 0,
+            })
+          }
         />
 
         {isFailedView && <FailedShipmentsList />}

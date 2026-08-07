@@ -70,6 +70,7 @@ export default function Page(pageProps: any) {
     const context = useShipments({
       status: [
         "created",
+        "shipped",
         "delivered",
         "in_transit",
         "cancelled",
@@ -210,11 +211,11 @@ export default function Page(pageProps: any) {
     const getFilterOptions = () => [
       {
         label: "All",
-        value: ["created", "delivered", "in_transit", "cancelled", "needs_attention", "out_for_delivery", "delivery_failed"]
+        value: ["created", "shipped", "delivered", "in_transit", "cancelled", "needs_attention", "out_for_delivery", "delivery_failed"]
       },
       {
         label: "Purchased", 
-        value: ["created", "in_transit", "out_for_delivery"]
+        value: ["created", "shipped", "in_transit", "out_for_delivery"]
       },
       {
         label: "Delivered",

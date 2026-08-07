@@ -23,7 +23,7 @@ export const FiltersCard: React.FC<FiltersCardProps> = ({
   className
 }) => {
   const isActive = (filterValue: string[]) => {
-    return JSON.stringify(filterValue.sort()) === JSON.stringify(activeFilter.sort());
+    return JSON.stringify([...filterValue].sort()) === JSON.stringify([...activeFilter].sort());
   };
 
   return (

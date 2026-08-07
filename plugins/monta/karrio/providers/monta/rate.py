@@ -61,6 +61,11 @@ def _extract_details(
             backorder=order.Backorder,
             estimated_delivery_from=order.EstimatedDeliveryFrom,
             estimated_delivery_to=order.EstimatedDeliveryTo,
+            planned_shipment_date=order.PlannedShipmentDate,
+            ship_on_planned_date=order.ShipOnPlannedShipmentDate,
+            monta_delivery_date=order.DeliveryDate,
+            latest_delivery_date=order.LatestDeliveryDate,
+            order_shipment_days=order.OrderShipmentDays,
         ),
     )
 

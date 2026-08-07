@@ -166,7 +166,12 @@ OrderResponse = """{
     "Picking": false,
     "MontaEorderId": 123456,
     "EstimatedDeliveryFrom": "2026-06-11T09:00:00Z",
-    "EstimatedDeliveryTo": "2026-06-11T18:00:00Z"
+    "EstimatedDeliveryTo": "2026-06-11T18:00:00Z",
+    "PlannedShipmentDate": "2026-06-10T22:00:00Z",
+    "ShipOnPlannedShipmentDate": false,
+    "DeliveryDate": "2026-06-11T00:00:00Z",
+    "LatestDeliveryDate": "2026-06-12T00:00:00Z",
+    "OrderShipmentDays": 1
 }
 """
 
@@ -204,6 +209,11 @@ ParsedRateResponse = [
                 "backorder": False,
                 "estimated_delivery_from": "2026-06-11T09:00:00Z",
                 "estimated_delivery_to": "2026-06-11T18:00:00Z",
+                "planned_shipment_date": "2026-06-10T22:00:00Z",
+                "ship_on_planned_date": False,
+                "monta_delivery_date": "2026-06-11T00:00:00Z",
+                "latest_delivery_date": "2026-06-12T00:00:00Z",
+                "order_shipment_days": 1,
             },
         }
     ],

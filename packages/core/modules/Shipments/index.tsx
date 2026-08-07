@@ -222,6 +222,10 @@ export default function Page(pageProps: any) {
         value: ["delivered"]
       },
       {
+        label: "Needs Attention",
+        value: ["needs_attention"]
+      },
+      {
         label: "Exception",
         value: ["needs_attention", "delivery_failed"]
       },

@@ -29,7 +29,14 @@ class Proxy(proxy.Proxy):
     def get_rates(self, request: lib.Serializable) -> lib.Deserializable[str]:
         """Upsert the Monta order: PUT /order/{id}, falling back to POST /order
         when the order does not exist yet. Monta verifies the delivery address
-        here; failures surface as rate messages."""
+        here; failures surface as rate messages.
+
+        The upsert response does not carry the computed planning fields
+        (PlannedShipmentDate & co) — Monta computes those asynchronously and
+        only serves them at read time. So a successful upsert is followed by a
+        GET of the same order and the fresher read view is merged over the
+        upsert body. A failing GET degrades to the upsert body alone: it must
+        never turn a successful registration into a rate failure."""
         payload = request.serialize()
         order = lib.to_json(payload["order"])
 
@@ -51,6 +58,24 @@ class Proxy(proxy.Proxy):
                 headers=self._headers,
                 on_error=provider_utils.error_decoder,
             )
+
+        upserted = lib.to_dict(response)
+
+        if isinstance(upserted, dict) and not provider_utils.request_failed(upserted):
+            fetched = lib.failsafe(
+                lambda: lib.to_dict(
+                    lib.request(
+                        url=self._order_url(payload["webshop_order_id"]),
+                        method="GET",
+                        trace=self.trace_as("json"),
+                        headers=self._headers,
+                        on_error=provider_utils.error_decoder,
+                    )
+                )
+            )
+
+            if isinstance(fetched, dict) and not provider_utils.request_failed(fetched):
+                response = lib.to_json({**upserted, **fetched})
 
         return lib.Deserializable(response, lib.to_dict)
 

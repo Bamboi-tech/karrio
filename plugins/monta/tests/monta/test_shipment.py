@@ -740,8 +740,10 @@ ParsedFailedDownloadResponse = [
             "carrier_id": "monta",
             "carrier_name": "monta",
             "code": "500",
-            "message": "Label file 'SAL-ORD-2026-00001_DHL_1.zpl' download failed: boom",
-            "details": {},
+            "message": "Label file 'SAL-ORD-2026-00001_DHL_1.zpl' download failed: boom — Monta log: https://www.montaportal.nl/Connect/PlatformDetails?platform=RestAPI",
+            "details": {
+                "montaportal": "https://www.montaportal.nl/Connect/PlatformDetails?platform=RestAPI"
+            },
         }
     ],
 ]
@@ -753,8 +755,10 @@ ParsedErrorResponse = [
             "carrier_id": "monta",
             "carrier_name": "monta",
             "code": "21",
-            "message": "Order is already shipped",
-            "details": {},
+            "message": "Order is already shipped — Monta log: https://www.montaportal.nl/Connect/PlatformDetails?platform=RestAPI",
+            "details": {
+                "montaportal": "https://www.montaportal.nl/Connect/PlatformDetails?platform=RestAPI"
+            },
         }
     ],
 ]

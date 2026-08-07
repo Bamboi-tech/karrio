@@ -5,6 +5,13 @@ import karrio.lib as lib
 import karrio.core.models as models
 import karrio.providers.monta.utils as provider_utils
 
+# Monta's own request log — the only place their side of a failed call is
+# visible. Every parsed error links here so an operator lands on the portal
+# instead of guessing which system rejected what.
+MONTAPORTAL_LOG_URL = (
+    "https://www.montaportal.nl/Connect/PlatformDetails?platform=RestAPI"
+)
+
 
 def parse_error_response(
     response: typing.Union[typing.List[dict], dict],
@@ -53,8 +60,8 @@ def parse_error_response(
             carrier_id=settings.carrier_id,
             carrier_name=settings.carrier_name,
             code=error["code"],
-            message=error["message"],
-            details={**kwargs},
+            message=f"{error['message']} — Monta log: {MONTAPORTAL_LOG_URL}",
+            details={"montaportal": MONTAPORTAL_LOG_URL, **kwargs},
         )
         for error in errors
     ]

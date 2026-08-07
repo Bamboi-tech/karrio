@@ -194,8 +194,11 @@ ParsedErrorResponse = [
             "carrier_id": "monta",
             "carrier_name": "monta",
             "code": "404",
-            "message": "Order not found",
-            "details": {"tracking_number": "SAL-ORD-2026-00001"},
+            "message": "Order not found — Monta log: https://www.montaportal.nl/Connect/PlatformDetails?platform=RestAPI",
+            "details": {
+                "montaportal": "https://www.montaportal.nl/Connect/PlatformDetails?platform=RestAPI",
+                "tracking_number": "SAL-ORD-2026-00001",
+            },
         },
     ],
 ]

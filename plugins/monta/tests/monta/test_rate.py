@@ -72,7 +72,9 @@ class TestMontaRating(unittest.TestCase):
                 karrio.Rating.fetch(self.RateRequest).from_(gateway).parse()
             )
 
-            self.assertListEqual(lib.to_dict(parsed_response), ParsedInvalidOrderResponse)
+            self.assertListEqual(
+                lib.to_dict(parsed_response), ParsedInvalidOrderResponse
+            )
 
 
 if __name__ == "__main__":
@@ -227,8 +229,10 @@ ParsedInvalidOrderResponse = [
             "carrier_id": "monta",
             "carrier_name": "monta",
             "code": "12",
-            "message": "DeliveryAddress.PostalCode is invalid for country NL",
-            "details": {},
+            "message": "DeliveryAddress.PostalCode is invalid for country NL — Monta log: https://www.montaportal.nl/Connect/PlatformDetails?platform=RestAPI",
+            "details": {
+                "montaportal": "https://www.montaportal.nl/Connect/PlatformDetails?platform=RestAPI"
+            },
         }
     ],
 ]

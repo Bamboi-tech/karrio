@@ -66,6 +66,12 @@ def _extract_details(
     # which file covers which collo numbers (and where its content sits in
     # docs.extra_documents) so consumers never have to parse filenames. A label
     # whose download failed keeps its map entry without a document_index.
+    #
+    # Indexing convention: document_index is the 0-based position in the
+    # docs.extra_documents list, while the documents themselves are named
+    # collo_label_{n} with n starting at 1 — so category == collo_label_{
+    # document_index + 1}. Both are exposed so consumers can match by category
+    # name (safe) or index the list (0-based) without an off-by-one.
     document_indexes = {
         index: position
         for position, index in enumerate(
@@ -77,6 +83,11 @@ def _extract_details(
             file_name=label.get("FileName"),
             colli=[collo.get("Number") for collo in (label.get("Colli") or [])],
             document_index=document_indexes.get(index),
+            category=(
+                f"collo_label_{document_indexes[index] + 1}"
+                if index in document_indexes
+                else None
+            ),
         )
         for index, label in enumerate(labels)
     ]

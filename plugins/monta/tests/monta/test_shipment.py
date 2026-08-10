@@ -588,6 +588,7 @@ ParsedShipmentResponse = [
                     "file_name": "SAL-ORD-2026-00001_DHL_1.pdf",
                     "colli": [1],
                     "document_index": 0,
+                    "category": "collo_label_1",
                 }
             ],
             "return_labels": [
@@ -670,11 +671,13 @@ ParsedTwoLabelFilesResponse = [
                     "file_name": "SAL-ORD-2026-00001_DHL_1.zpl",
                     "colli": [1],
                     "document_index": 0,
+                    "category": "collo_label_1",
                 },
                 {
                     "file_name": "SAL-ORD-2026-00001_DHL_2.zpl",
                     "colli": [2],
                     "document_index": 1,
+                    "category": "collo_label_2",
                 },
             ],
         },
@@ -708,6 +711,7 @@ ParsedSingleFileTwoColliResponse = [
                     "file_name": "SAL-ORD-2026-00001_DHL_1.pdf",
                     "colli": [1, 2],
                     "document_index": 0,
+                    "category": "collo_label_1",
                 }
             ],
         },
@@ -737,12 +741,14 @@ ParsedFailedDownloadResponse = [
                 "SAL-ORD-2026-00001_DHL_2.zpl",
             ],
             "label_map": [
-                # The failed file keeps its map entry but points at no document.
+                # The failed file keeps its map entry but points at no document
+                # (no document_index, no category).
                 {"file_name": "SAL-ORD-2026-00001_DHL_1.zpl", "colli": [1]},
                 {
                     "file_name": "SAL-ORD-2026-00001_DHL_2.zpl",
                     "colli": [2],
                     "document_index": 0,
+                    "category": "collo_label_1",
                 },
             ],
         },

@@ -15,6 +15,7 @@ import karrio.schemas.monta.order_request as monta
 import karrio.schemas.monta.order_response as shipping
 
 import typing
+import datetime
 import karrio.lib as lib
 import karrio.core.models as models
 import karrio.core.errors as errors
@@ -70,6 +71,39 @@ def _extract_details(
     )
 
 
+def _actionable_date_hint(
+    value: typing.Optional[str],
+    allow_today: bool = False,
+) -> typing.Optional[str]:
+    """Return the date hint only when Monta can still act on it.
+
+    Monta rejects an order whose DeliveryDateRequested is in the past, and a
+    stale PlannedShipmentDate is equally dead weight. Dropping the hint is
+    always safe: Monta then computes its own dates, which round-trip back via
+    the rate meta (monta_delivery_date, planned_shipment_date) and the
+    post-upsert order read. The comparison is on the date part against today
+    in UTC; an unparseable value is dropped for the same reason — we cannot
+    prove it is still actionable.
+    """
+    if value is None:
+        return None
+
+    parsed = lib.failsafe(
+        lambda: lib.to_date(
+            value,
+            try_formats=["%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"],
+        )
+    )
+
+    if parsed is None:
+        return None
+
+    today = datetime.datetime.now(datetime.timezone.utc).date()
+    is_actionable = parsed.date() > today or (allow_today and parsed.date() == today)
+
+    return value if is_actionable else None
+
+
 def rate_request(
     payload: models.RateRequest,
     settings: provider_utils.Settings,
@@ -122,12 +156,20 @@ def rate_request(
             ShippingComment=options.monta_shipping_comment.state,
             CommunicationLanguageCode=recipient.country_code,
         ),
-        PlannedShipmentDate=options.monta_planned_shipment_date.state,
+        # Shipping today is legitimate; only a planned date in the past is a
+        # stale hint.
+        PlannedShipmentDate=_actionable_date_hint(
+            options.monta_planned_shipment_date.state, allow_today=True
+        ),
         ShipperCode=(
             options.monta_shipper_code.state
             or settings.connection_config.shipper_code.state
         ),
-        DeliveryDateRequested=options.monta_delivery_date_requested.state,
+        # A same-day (or past) requested delivery date gets the whole order
+        # rejected — strictly in the future or not at all.
+        DeliveryDateRequested=_actionable_date_hint(
+            options.monta_delivery_date_requested.state
+        ),
         Lines=[
             monta.LineType(
                 Sku=(item.sku or item.id or item.title),

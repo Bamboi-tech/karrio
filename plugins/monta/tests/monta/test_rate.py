@@ -1,5 +1,6 @@
 """Monta carrier rate (order registration) tests."""
 
+import datetime
 import unittest
 from unittest.mock import patch
 from .fixture import gateway
@@ -18,6 +19,78 @@ class TestMontaRating(unittest.TestCase):
         request = gateway.mapper.create_rate_request(self.RateRequest)
 
         self.assertEqual(request.serialize(), RateRequest)
+
+    def test_create_rate_request_passes_future_date_hints(self):
+        future = (_utc_today() + datetime.timedelta(days=3)).strftime("%Y-%m-%d")
+        request = gateway.mapper.create_rate_request(
+            models.RateRequest(
+                **{
+                    **RatePayload,
+                    "options": {
+                        "monta_delivery_date_requested": future,
+                        "monta_planned_shipment_date": future,
+                    },
+                }
+            )
+        )
+
+        order = request.serialize()["order"]
+        self.assertEqual(order["DeliveryDateRequested"], future)
+        self.assertEqual(order["PlannedShipmentDate"], future)
+
+    def test_create_rate_request_drops_past_date_hints(self):
+        """A stale date hint must never reach Monta: a past
+        DeliveryDateRequested gets the whole order rejected."""
+        past = (_utc_today() - datetime.timedelta(days=3)).strftime("%Y-%m-%d")
+        request = gateway.mapper.create_rate_request(
+            models.RateRequest(
+                **{
+                    **RatePayload,
+                    "options": {
+                        "monta_delivery_date_requested": past,
+                        "monta_planned_shipment_date": past,
+                    },
+                }
+            )
+        )
+
+        order = request.serialize()["order"]
+        self.assertNotIn("DeliveryDateRequested", order)
+        self.assertNotIn("PlannedShipmentDate", order)
+
+    def test_create_rate_request_drops_same_day_delivery_but_keeps_shipment_date(
+        self,
+    ):
+        """Same-day delivery is never honorable (the parcel still has to
+        ship), but shipping today is legitimate."""
+        today = _utc_today().strftime("%Y-%m-%d")
+        request = gateway.mapper.create_rate_request(
+            models.RateRequest(
+                **{
+                    **RatePayload,
+                    "options": {
+                        "monta_delivery_date_requested": today,
+                        "monta_planned_shipment_date": today,
+                    },
+                }
+            )
+        )
+
+        order = request.serialize()["order"]
+        self.assertNotIn("DeliveryDateRequested", order)
+        self.assertEqual(order["PlannedShipmentDate"], today)
+
+    def test_create_rate_request_drops_unparseable_date_hints(self):
+        request = gateway.mapper.create_rate_request(
+            models.RateRequest(
+                **{
+                    **RatePayload,
+                    "options": {"monta_delivery_date_requested": "asap"},
+                }
+            )
+        )
+
+        self.assertNotIn("DeliveryDateRequested", request.serialize()["order"])
 
     def test_get_rates_upserts_the_monta_order(self):
         with patch("karrio.mappers.monta.proxy.lib.request") as mock:
@@ -117,6 +190,11 @@ class TestMontaRating(unittest.TestCase):
             self.assertListEqual(
                 lib.to_dict(parsed_response), ParsedInvalidOrderResponse
             )
+
+
+def _utc_today() -> datetime.date:
+    """The guard in rate.py compares date hints against today in UTC."""
+    return datetime.datetime.now(datetime.timezone.utc).date()
 
 
 if __name__ == "__main__":

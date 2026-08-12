@@ -1,3 +1,4 @@
+import re
 import typing
 import django.conf as conf
 import django.db.models as models
@@ -462,29 +463,27 @@ class ShipmentFilters(filters.FilterSet):
         )
 
     def keyword_filter(self, queryset, name, value):
-        if "postgres" in conf.settings.DB_ENGINE:
-            from django.contrib.postgres.search import SearchVector
+        # Substring search on both engines, on purpose: the Postgres
+        # SearchVector this replaces tokenizes whole words, so the fragments
+        # an operator actually holds ("28141" from #2026-28141, "01180" from
+        # KAR-SHIP-2026-01180) matched nothing — and it never indexed the
+        # metadata keys the ERP integration stamps (sales_order,
+        # shopify_order_number, karrio_shipment), leaving those references
+        # unfindable altogether.
+        value = (value or "").strip()
+        terms = {value}
+        stripped = value.lstrip("#").strip()
+        if stripped:
+            terms.add(stripped)
+        # "KAR-01180" and "KAR-SHIP-01180" are how humans abbreviate the ERP
+        # shipment name KAR-SHIP-2026-01180: the digits are the identity, the
+        # elided middle breaks a plain substring match.
+        kar = re.fullmatch(r"(?i)KAR[-_ ]?(?:SHIP[-_ ]?)?([\d\-_ ]+)", stripped)
+        if kar:
+            terms.add(kar.group(1).strip("-_ "))
 
-            return queryset.annotate(
-                search=SearchVector(
-                    "id",
-                    "reference",
-                    "tracking_number",
-                    "recipient__address_line1",
-                    "recipient__address_line2",
-                    "recipient__postal_code",
-                    "recipient__person_name",
-                    "recipient__company_name",
-                    "recipient__country_code",
-                    "recipient__city",
-                    "recipient__email",
-                    "recipient__phone_number",
-                )
-            ).filter(search=value)
-
-        return queryset.filter(
-            models.Q(id__icontains=value)
-            | models.Q(recipient__address_line1__icontains=value)
+        query = (
+            models.Q(recipient__address_line1__icontains=value)
             | models.Q(recipient__address_line2__icontains=value)
             | models.Q(recipient__postal_code__icontains=value)
             | models.Q(recipient__person_name__icontains=value)
@@ -493,10 +492,18 @@ class ShipmentFilters(filters.FilterSet):
             | models.Q(recipient__city__icontains=value)
             | models.Q(recipient__email__icontains=value)
             | models.Q(recipient__phone_number__icontains=value)
-            | models.Q(tracking_number__icontains=value)
-            | models.Q(reference__icontains=value)
-            | models.Q(meta__request_id__icontains=value)
         )
+        for term in terms:
+            query |= (
+                models.Q(id__icontains=term)
+                | models.Q(tracking_number__icontains=term)
+                | models.Q(reference__icontains=term)
+                | models.Q(meta__request_id__icontains=term)
+                | models.Q(metadata__sales_order__icontains=term)
+                | models.Q(metadata__shopify_order_number__icontains=term)
+                | models.Q(metadata__karrio_shipment__icontains=term)
+            )
+        return queryset.filter(query)
 
     def carrier_filter(self, queryset, name, values):
         # Filter by carrier_code in carrier JSON snapshot

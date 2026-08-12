@@ -1961,3 +1961,47 @@ class TestShipmentExtraDocuments(TestShipmentFixture):
             shipment.extra_documents,
             PERSISTED_EXTRA_DOCUMENTS,
         )
+
+
+class TestShipmentKeywordSearch(TestShipmentFixture):
+    """The dashboard search must find a shipment by any reference a human
+    holds: the Shopify number, the Sales Order or the ERP shipment name —
+    including the digit fragments operators actually type."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.shipment.reference = "SO-Shopify-04886"
+        self.shipment.tracking_number = "SO-Shopify-04886"
+        self.shipment.metadata = {
+            "sales_order": "SO-Shopify-04886",
+            "shopify_order_number": "#2026-28141",
+            "karrio_shipment": "KAR-SHIP-2026-01180",
+        }
+        self.shipment.save()
+
+    def test_finds_shipment_by_any_reference_form(self):
+        import karrio.server.core.filters as core_filters
+
+        for keyword in [
+            "#2026-28141",
+            "2026-28141",
+            "28141",
+            "SO-Shopify-04886",
+            "so-shopify-04886",
+            "KAR-SHIP-2026-01180",
+            "01180",
+            "KAR-01180",
+        ]:
+            with self.subTest(keyword=keyword):
+                queryset = core_filters.ShipmentFilters(
+                    {"keyword": keyword}, queryset=models.Shipment.objects.all()
+                ).qs
+                self.assertIn(self.shipment, queryset)
+
+    def test_unrelated_keyword_matches_nothing(self):
+        import karrio.server.core.filters as core_filters
+
+        queryset = core_filters.ShipmentFilters(
+            {"keyword": "totally-absent-9797"}, queryset=models.Shipment.objects.all()
+        ).qs
+        self.assertNotIn(self.shipment, queryset)

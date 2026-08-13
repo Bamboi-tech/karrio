@@ -42,19 +42,22 @@ export function useShipments({
   const [filter, _setFilter] = React.useState<ShipmentFilter>({
     ...PAGINATION,
     ...initialData,
-    ...(initialData.status ? {
-      status: ([] as string[]).concat(initialData.status as any)
-        .map((v: string) => v === "purchased" ? "created" : v) as any
-    } : {}),
+    ...(initialData.status
+      ? {
+          status: ([] as string[])
+            .concat(initialData.status as any)
+            .map((v: string) => (v === "purchased" ? "created" : v)) as any,
+        }
+      : {}),
   });
   const fetch = (variables: { filter: ShipmentFilter }) => {
     // Underscore-prefixed statuses are UI sentinels (the Failed card's
     // "_failed_creation", the address-review card's "_address_review"): they
     // keep a FiltersCard highlighted but are not server-side statuses. Strip
     // them from the outgoing query; the rest of the filter still applies.
-    const status = (
-      ([] as string[]).concat((variables.filter.status as any) || [])
-    ).filter((s) => !`${s}`.startsWith("_"));
+    const status = ([] as string[])
+      .concat((variables.filter.status as any) || [])
+      .filter((s) => !`${s}`.startsWith("_"));
     const filter = {
       ...variables.filter,
       ...(status.length ? { status } : { status: undefined }),
@@ -77,6 +80,13 @@ export function useShipments({
   function setFilter(options: ShipmentFilter) {
     const params = Object.keys(options).reduce((acc, key) => {
       if (["modal"].includes(key)) return acc;
+      // A key explicitly set to undefined means "clear this filter". Dropping
+      // it here keeps it out of the URL too — URLSearchParams would otherwise
+      // stringify it to a literal "undefined", which then round-trips back in
+      // as a real filter value. The string check heals URLs already polluted
+      // that way.
+      const value = options[key as keyof ShipmentFilter];
+      if (value == null || value === "undefined") return acc;
       if (["carrier_name", "status", "service"].includes(key))
         return {
           ...acc,
@@ -89,7 +99,7 @@ export function useShipments({
                   : [].concat(acc, item),
               [],
             )
-            .map((v: string) => v === "purchased" ? "created" : v),
+            .map((v: string) => (v === "purchased" ? "created" : v)),
         };
       if (["offset", "first"].includes(key))
         return {
@@ -168,11 +178,11 @@ export function useShipmentMutation(id?: string) {
       handleFailure(
         id !== undefined && id !== "new"
           ? karrio.shipments
-            .rates({ id, shipmentRateData: data as any })
-            .then(({ data: { rates, messages } }) => ({ rates, messages }))
+              .rates({ id, shipmentRateData: data as any })
+              .then(({ data: { rates, messages } }) => ({ rates, messages }))
           : karrio.proxy
-            .fetchRates({ rateRequest: data as any })
-            .then(({ data: { rates, messages } }) => ({ rates, messages })),
+              .fetchRates({ rateRequest: data as any })
+              .then(({ data: { rates, messages } }) => ({ rates, messages })),
       ),
     { onSuccess: invalidateCache, onError },
   );
@@ -181,14 +191,14 @@ export function useShipmentMutation(id?: string) {
       handleFailure(
         id !== undefined && id !== "new"
           ? karrio.shipments
-            .purchase({
-              id,
-              shipmentPurchaseData: { selected_rate_id } as any,
-            })
-            .then(({ data }) => data)
+              .purchase({
+                id,
+                shipmentPurchaseData: { selected_rate_id } as any,
+              })
+              .then(({ data }) => data)
           : karrio.shipments
-            .create({ shipmentData: shipment as any })
-            .then(({ data }) => data),
+              .create({ shipmentData: shipment as any })
+              .then(({ data }) => data),
       ),
     { onSuccess: invalidateCache, onError },
   );
@@ -222,13 +232,13 @@ export function useShipmentMutation(id?: string) {
         ),
         ...(data.customs
           ? {
-            customs: {
-              ...data.customs,
-              commodities: (data.customs.commodities || []).map(
-                ({ id, ...commodity }: any) => commodity,
-              ),
-            },
-          }
+              customs: {
+                ...data.customs,
+                commodities: (data.customs.commodities || []).map(
+                  ({ id, ...commodity }: any) => commodity,
+                ),
+              },
+            }
           : {}),
         payment: data.payment,
         metadata: data.metadata,

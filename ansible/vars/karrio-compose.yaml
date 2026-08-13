@@ -39,6 +39,9 @@ compose:
         EMAIL_HOST_USER: "{{ email_host_user }}"
         EMAIL_HOST_PASSWORD: "{{ email_host_password }}"
         EMAIL_FROM_ADDRESS: "{{ email_from_address }}"
+        # Empty DSN = Sentry stays off (settings/apm.py gates on it).
+        SENTRY_DSN: "{{ sentry_dsn | default('') }}"
+        SENTRY_ENVIRONMENT: "{{ env | default('staging') }}"
       volumes:
         - type: volume
           source: karrio-static
@@ -77,6 +80,8 @@ compose:
         EMAIL_HOST_USER: "{{ email_host_user }}"
         EMAIL_HOST_PASSWORD: "{{ email_host_password }}"
         EMAIL_FROM_ADDRESS: "{{ email_from_address }}"
+        SENTRY_DSN: "{{ sentry_dsn | default('') }}"
+        SENTRY_ENVIRONMENT: "{{ env | default('staging') }}"
 
     dashboard:
       image: "{{ karrio_dashboard_image }}:{{ karrio_tag }}"
@@ -91,6 +96,9 @@ compose:
         DASHBOARD_PORT: "3002"
         NEXT_PUBLIC_DASHBOARD_URL: "https://{{ domains.app }}"
         NEXT_PUBLIC_KARRIO_PUBLIC_URL: "https://{{ domains.api }}"
+        # Served to the browser at runtime via next-runtime-env; empty = off.
+        NEXT_PUBLIC_SENTRY_DSN: "{{ sentry_dashboard_dsn | default('') }}"
+        NEXT_PUBLIC_SENTRY_ENVIRONMENT: "{{ env | default('staging') }}"
 
     caddy:
       image: "{{ caddy_image }}"

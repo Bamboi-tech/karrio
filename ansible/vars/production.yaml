@@ -17,6 +17,13 @@ pull_policy: if_not_present
 database_name: karrio
 database_username: karrio
 
+# Sentry error monitoring. DSNs are not secrets (the dashboard one ships to
+# every browser anyway). Backend project: karrio Django API + worker.
+sentry_dsn: "https://036416afe6ba07c6a64b6df9e7801b90@o4511905404354560.ingest.de.sentry.io/4511905420214352"
+# Dashboard (Next.js) Sentry project DSN — create a separate Next.js project
+# in the same Sentry org and paste its DSN here; empty = client Sentry off.
+sentry_dashboard_dsn: ""
+
 # Email via Mailgun EU (credential lives in vault/env/production.yaml)
 email_host: smtp.eu.mailgun.org
 email_port: "587"

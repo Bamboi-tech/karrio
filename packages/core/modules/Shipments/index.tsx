@@ -46,6 +46,10 @@ import {
   getAddressReview,
   ADDRESS_REVIEW_FLAG,
 } from "@karrio/ui/components/address-validation-badge";
+import {
+  getShopifyHold,
+  SHOPIFY_HOLD_KEY,
+} from "@karrio/ui/components/shipment-hold";
 import { useAPIMetadata } from "@karrio/hooks/api-metadata";
 import { useLoader } from "@karrio/ui/core/components/loader";
 import { AppLink } from "@karrio/ui/core/components/app-link";
@@ -66,6 +70,11 @@ const ADDRESS_REVIEW_SENTINEL = "_address_review";
 const COMPLETE_SENTINEL = "_review_clear";
 const PLANNED_SENTINEL = "_print_planned";
 const TODAY_SENTINEL = "_print_today";
+// The On hold card is the exception among the draft views: hold is a plain
+// metadata-key presence, which the API's metadata_key filter CAN test — so
+// this card filters server-side (like Needs Attention) and its pagination
+// count is exact. The sentinel only keeps the card highlighted.
+const HOLD_SENTINEL = "_on_hold";
 
 // Planning metadata mirrored onto every draft by the ERP (karrio_shipping):
 // the day the parcel leaves (shipment_date), where that day came from
@@ -75,6 +84,8 @@ const TODAY_SENTINEL = "_print_today";
 const SHIP_DATE_KEY = "shipment_date";
 const SHIP_DATE_SOURCE_KEY = "shipment_date_source";
 const PRINT_DATE_KEY = "print_date";
+// The day the customer expects the parcel (ISO date), mirrored by the ERP.
+const DELIVERY_DATE_KEY = "delivery_date";
 
 // The warehouse plans in Amsterdam wall-clock days; the browser (or a
 // traveling laptop) must not shift the worklist by comparing in local time.
@@ -96,6 +107,14 @@ const asISODate = (value: unknown): string | null => {
 // (metadata_key=address_review_required tests key presence).
 const hasAddressReviewFlag = (metadata: unknown) =>
   ADDRESS_REVIEW_FLAG in ((metadata || {}) as Record<string, unknown>);
+
+const getPrintDate = (metadata: unknown) =>
+  asISODate(((metadata || {}) as Record<string, unknown>)[PRINT_DATE_KEY]);
+
+// Amsterdam calendar days between two ISO dates. Both parse as UTC midnight,
+// so the difference is an exact whole number of days.
+const daysBetween = (fromISODate: string, toISODate: string) =>
+  Math.round((Date.parse(toISODate) - Date.parse(fromISODate)) / 86400000);
 
 export default function Page(pageProps: any) {
   const Component = (): JSX.Element => {
@@ -128,6 +147,27 @@ export default function Page(pageProps: any) {
       filter,
       setFilter,
     } = context;
+    // Count-badge queries, independent of whichever card is active.
+    // - On hold: metadata_key presence is server-filterable, so one row
+    //   (first: 1) is enough — page_info.count is the exact total.
+    // - Today: not expressible server-side (date comparison + key
+    //   exclusions), so it is counted over the FIRST draft page only and
+    //   rendered as "N+" when more draft pages exist. Cheap (one extra
+    //   request, shared react-query cache) and honest about its limit;
+    //   daily volumes make a multi-page Today unusual.
+    // Both use their own cacheKey, so mutations that invalidate the
+    // ["shipments"] key do not refresh them — staleTime keeps them at most
+    // a few seconds behind, which is fine for an advisory badge.
+    const draftBadge = useShipments({
+      status: ["draft"] as any,
+      cacheKey: "shipments-badge-draft",
+    });
+    const holdBadge = useShipments({
+      status: ["draft"] as any,
+      metadata_key: SHOPIFY_HOLD_KEY,
+      first: 1,
+      cacheKey: "shipments-badge-hold",
+    });
     const {
       query: { data: { document_templates } = {} },
     } = useDocumentTemplates({
@@ -270,10 +310,63 @@ export default function Page(pageProps: any) {
       );
     };
 
+    // The customer-facing delivery day. Sits next to SHIP DATE so that on a
+    // Friday a label "for Monday" reads in one glance: leaves Friday,
+    // delivers Monday. Date-only; rows the ERP has not stamped show "—".
+    const renderDeliveryDate = (metadata: unknown) => {
+      const deliveryDate = asISODate(
+        ((metadata || {}) as Record<string, unknown>)[DELIVERY_DATE_KEY],
+      );
+      if (!deliveryDate) return <span className="text-gray-300">—</span>;
+      return (
+        <p className="text-xs font-semibold text-gray-700">
+          {formatDate(deliveryDate)}
+        </p>
+      );
+    };
+
+    // Today-only: how long a row has been waiting. print_date < today (in
+    // Amsterdam wall-clock days) → red "N d te laat"; == today → neutral, no
+    // marker; missing → "—" so the fail-visible dateless rows stay
+    // recognizable as "unknown", not "on time".
+    const renderPrintOverdue = (metadata: unknown) => {
+      const printDate = getPrintDate(metadata);
+      if (!printDate)
+        return <p className="text-xs font-medium text-gray-400">—</p>;
+      const today = amsterdamToday();
+      if (printDate >= today) return null;
+      const daysLate = daysBetween(printDate, today);
+      return (
+        <span className="inline-block rounded bg-red-100 text-red-700 text-xs font-semibold px-1.5 py-0.5 mt-1">
+          {daysLate} d te laat
+        </span>
+      );
+    };
+
+    // Client-side Today count over the first draft page (see the badge-query
+    // comment above): same predicate as the Today view, "+" suffix when more
+    // draft pages exist and the count is therefore a lower bound.
+    const todayBadge = React.useMemo(() => {
+      const page = draftBadge.query.data?.shipments;
+      if (!page) return undefined;
+      const today = amsterdamToday();
+      const count = (page.edges || []).filter(({ node: shipment }) => {
+        if (hasAddressReviewFlag(shipment.metadata)) return false;
+        if (getShopifyHold(shipment.metadata).held) return false;
+        const printDate = getPrintDate(shipment.metadata);
+        return !printDate || printDate <= today;
+      }).length;
+      return `${count}${page.page_info?.has_next_page ? "+" : ""}`;
+    }, [draftBadge.query.data]);
+    // Exact: the server counted every draft carrying the hold key.
+    const holdCount = holdBadge.query.data?.shipments?.page_info?.count;
+    const holdBadgeLabel = holdCount == null ? undefined : `${holdCount}`;
+
     // The cards follow the shipment lifecycle left-to-right: fix addresses
-    // (Needs Attention) → clean drafts (Complete) → print later (Planned) →
-    // print now (Today) → labeled, waiting for the carrier (Picked) → on the
-    // road (Shipped) → Delivered, with the failure buckets at the end.
+    // (Needs Attention) → clean drafts (Complete) → parked drafts (On hold) →
+    // print later (Planned) → print now (Today) → labeled, waiting for the
+    // carrier (Picked) → on the road (Shipped) → Delivered, with the failure
+    // buckets at the end.
     const getFilterOptions = () => [
       {
         label: "All",
@@ -304,6 +397,16 @@ export default function Page(pageProps: any) {
         value: ["draft", COMPLETE_SENTINEL],
       },
       {
+        // Drafts whose Shopify order is on hold (metadata.shopify_hold,
+        // stamped by the ERP): parked, not forgotten. They are excluded from
+        // Complete/Planned/Today — even with an elapsed print_date — and live
+        // here until the hold is released. Filtered server-side on key
+        // presence (see onFilterChange), like Needs Attention.
+        label: "On hold",
+        value: ["draft", HOLD_SENTINEL],
+        badge: holdBadgeLabel,
+      },
+      {
         // Clean drafts whose print day is still ahead.
         label: "Planned",
         value: ["draft", PLANNED_SENTINEL],
@@ -312,9 +415,13 @@ export default function Page(pageProps: any) {
         // Rico's printlist: clean drafts due today — including overdue
         // print dates (forgotten work must stay visible) and drafts without a
         // print_date (fail-visible: better one row too many here than one
-        // silently missing).
+        // silently missing). A shipment fresh off a Shopify hold (key already
+        // removed, ERP recalculation not yet run) lands here through the
+        // elapsed-print_date branch — visibility must not wait for the
+        // recalculation.
         label: "Today",
         value: ["draft", TODAY_SENTINEL],
+        badge: todayBadge,
       },
       {
         // Labeled but not yet handed to the carrier ("purchased" is aliased
@@ -349,6 +456,7 @@ export default function Page(pageProps: any) {
     const isCompleteView = statusFilter.includes(COMPLETE_SENTINEL);
     const isPlannedView = statusFilter.includes(PLANNED_SENTINEL);
     const isTodayView = statusFilter.includes(TODAY_SENTINEL);
+    const isHoldView = statusFilter.includes(HOLD_SENTINEL);
 
     // Complete/Planned/Today are narrowed client-side over the fetched
     // status=draft page (see the sentinel comment up top for why the API
@@ -358,22 +466,40 @@ export default function Page(pageProps: any) {
     // that this is acceptable.
     const visibleShipments = React.useMemo(() => {
       const edges = shipments?.edges || [];
+      if (isHoldView) {
+        // The server already narrowed to metadata_key=shopify_hold; this
+        // mirror only guards against a hold released between refetches.
+        return edges.filter(
+          ({ node: shipment }) => getShopifyHold(shipment.metadata).held,
+        );
+      }
       if (!isCompleteView && !isPlannedView && !isTodayView) return edges;
       const today = amsterdamToday();
-      return edges.filter(({ node: shipment }) => {
+      const narrowed = edges.filter(({ node: shipment }) => {
         if (hasAddressReviewFlag(shipment.metadata)) return false;
+        // Held orders are parked on the On hold card — never in the print
+        // worklist, elapsed print_date or not.
+        if (getShopifyHold(shipment.metadata).held) return false;
         if (isCompleteView) return true;
-        const printDate = asISODate(
-          ((shipment.metadata || {}) as Record<string, unknown>)[
-            PRINT_DATE_KEY
-          ],
-        );
+        const printDate = getPrintDate(shipment.metadata);
         if (isPlannedView) return !!printDate && printDate > today;
         // Today: due or overdue print dates, plus drafts the ERP has not
         // stamped a print_date on yet — never silently hidden.
         return !printDate || printDate <= today;
       });
-    }, [shipments, isCompleteView, isPlannedView, isTodayView]);
+      if (!isTodayView) return narrowed;
+      // Today is a work queue: longest-waiting (oldest print_date) first.
+      // Dateless drafts sort to the TOP — "unknown" is an attention case
+      // that must not drown below a page of dated rows.
+      return [...narrowed].sort(({ node: a }, { node: b }) => {
+        const printA = getPrintDate(a.metadata);
+        const printB = getPrintDate(b.metadata);
+        if (!printA && !printB) return 0;
+        if (!printA) return -1;
+        if (!printB) return 1;
+        return printA < printB ? -1 : printA > printB ? 1 : 0;
+      });
+    }, [shipments, isCompleteView, isPlannedView, isTodayView, isHoldView]);
 
     const searchParamsString = searchParams?.toString() ?? "";
     useEffect(() => {
@@ -423,14 +549,16 @@ export default function Page(pageProps: any) {
           onFilterChange={(status) =>
             updateFilter({
               status,
-              // The address-review card filters on the ERP-stamped metadata
-              // flag; every other card must clear it or its status filter
-              // would intersect with the review worklist.
+              // Needs Attention and On hold both filter on an ERP-stamped
+              // metadata key server-side; every other card must clear it or
+              // its status filter would intersect with those worklists.
               metadata_key: (status as string[]).includes(
                 ADDRESS_REVIEW_SENTINEL,
               )
                 ? ADDRESS_REVIEW_FLAG
-                : undefined,
+                : (status as string[]).includes(HOLD_SENTINEL)
+                  ? SHOPIFY_HOLD_KEY
+                  : undefined,
               offset: 0,
             })
           }
@@ -475,7 +603,7 @@ export default function Page(pageProps: any) {
                   </TableHead>
 
                   {selection.length > 0 && (
-                    <TableHead className="p-2" colSpan={9}>
+                    <TableHead className="p-2" colSpan={10}>
                       <div className="flex items-center gap-2 flex-wrap">
                         <Button
                           variant="outline"
@@ -545,6 +673,9 @@ export default function Page(pageProps: any) {
                       </TableHead>
                       <TableHead className="ship-date text-xs items-center">
                         SHIP DATE
+                      </TableHead>
+                      <TableHead className="delivery-date text-xs items-center">
+                        DELIVERY
                       </TableHead>
                       <TableHead className="date text-xs items-center">DATE</TableHead>
                       <TableHead className="action sticky-right"></TableHead>
@@ -731,6 +862,13 @@ export default function Page(pageProps: any) {
                       onClick={() => previewShipment(shipment.id)}
                     >
                       {renderShipDate(shipment.metadata)}
+                      {isTodayView && renderPrintOverdue(shipment.metadata)}
+                    </TableCell>
+                    <TableCell
+                      className="delivery-date items-center px-1"
+                      onClick={() => previewShipment(shipment.id)}
+                    >
+                      {renderDeliveryDate(shipment.metadata)}
                     </TableCell>
                     <TableCell
                       className="date items-center px-1"

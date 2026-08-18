@@ -37,6 +37,10 @@ import {
   MetadataEditorContext,
 } from "@karrio/ui/core/forms/metadata-editor";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@karrio/ui/components/ui/collapsible";
+import {
+  getShopifyHold,
+  shopifyHoldTooltip,
+} from "@karrio/ui/components/shipment-hold";
 import { CustomsInfoDescription } from "@karrio/ui/core/components/customs-info-description";
 import { GoogleGeocodingScript } from "@karrio/ui/core/components/google-geocoding-script";
 import { CommodityDescription } from "@karrio/ui/core/components/commodity-description";
@@ -94,6 +98,7 @@ export default function CreateLabelPage(pageProps: any) {
       state: { shipment, query },
       ...mutation
     } = useLabelDataMutation(shipment_id);
+    const shopifyHold = getShopifyHold(shipment.metadata);
     const { query: orders } = useOrders({
       first: 10,
       status: ["unfulfilled", "partial"] as any,
@@ -1639,13 +1644,33 @@ export default function CreateLabelPage(pageProps: any) {
                     </div>
 
 
+                    {/* Purchase blocked while the Shopify order is on hold
+                        (metadata.shopify_hold, mirrored by the ERP). UI
+                        courtesy only: the authoritative enforcement lives in
+                        the ERP's gates (karrio_shipping) and, phase 2, in the
+                        Karrio server — this merely explains WHY instead of
+                        letting the purchase bounce off those gates. */}
+                    {shopifyHold.held && (
+                      <p
+                        className="has-text-danger has-text-centered px-1 mb-2"
+                        style={{ fontSize: "0.8em" }}
+                      >
+                        {shopifyHoldTooltip(shopifyHold)}
+                      </p>
+                    )}
                     <ButtonField
                       onClick={() =>
                         mutation.buyLabel.mutateAsync(selected_rate as any)
                       }
                       fieldClass="has-text-centered py-1 px-6 m-0"
                       className="is-success is-fullwidth"
+                      title={
+                        shopifyHold.held
+                          ? shopifyHoldTooltip(shopifyHold)
+                          : undefined
+                      }
                       disabled={
+                        shopifyHold.held ||
                         (shipment.rates || []).filter(
                           (r) => r.id === selected_rate?.id,
                         ).length === 0 ||

@@ -7,6 +7,9 @@ import { cn } from "@karrio/ui/lib/utils";
 interface FilterOption {
   label: string;
   value: string[];
+  // Optional count shown next to the label (e.g. "4" or "20+"). Left
+  // undefined while the count is loading or not wanted for the card.
+  badge?: string;
 }
 
 interface FiltersCardProps {
@@ -46,6 +49,18 @@ export const FiltersCard: React.FC<FiltersCardProps> = ({
             isActive(filter.value) ? "text-blue-700" : "text-gray-700"
           )}>
             {filter.label}
+            {filter.badge != null && (
+              <span
+                className={cn(
+                  "ml-1.5 inline-block rounded-full px-1.5 text-xs font-semibold align-middle",
+                  isActive(filter.value)
+                    ? "bg-blue-100 text-blue-700"
+                    : "bg-gray-100 text-gray-600"
+                )}
+              >
+                {filter.badge}
+              </span>
+            )}
           </div>
         </Card>
       ))}

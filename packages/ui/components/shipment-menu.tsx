@@ -10,6 +10,7 @@ import { useDocumentTemplates } from "@karrio/hooks/document-template";
 import { useDocumentPrinter, FormatType } from "@karrio/hooks/resource-token";
 import { errorToMessages, formatRef, isNone, isNoneOrEmpty, p } from "@karrio/lib";
 import { useShipmentMutation } from "@karrio/hooks/shipment";
+import { getShopifyHold, shopifyHoldTooltip } from "./shipment-hold";
 import { DeleteConfirmationDialog } from "./delete-confirmation-dialog";
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -56,6 +57,7 @@ export const ShipmentMenu = ({
     related_object: "shipment",
     active: true,
   } as any);
+  const shopifyHold = getShopifyHold(shipment.metadata);
 
   const createLabel = (_: React.MouseEvent) => {
     toast({
@@ -193,12 +195,25 @@ export const ShipmentMenu = ({
             </DropdownMenuItem>
           )}
 
+          {/* A draft whose Shopify order is on hold cannot buy a label.
+              UI courtesy only: it saves the operator a dead-end trip to the
+              create_label page — the authoritative enforcement lives in the
+              ERP's gates (karrio_shipping) and, phase 2, in the Karrio
+              server. The wrapping span carries the tooltip because a
+              disabled Radix item swallows pointer events. */}
           {isNone(shipment.label_url) &&
-            shipment.status === ShipmentStatusEnum.draft && (
+            shipment.status === ShipmentStatusEnum.draft &&
+            (shopifyHold.held ? (
+              <span title={shopifyHoldTooltip(shopifyHold)}>
+                <DropdownMenuItem disabled>
+                  <span>Buy Label</span>
+                </DropdownMenuItem>
+              </span>
+            ) : (
               <DropdownMenuItem onClick={createLabel}>
                 <span>Buy Label</span>
               </DropdownMenuItem>
-            )}
+            ))}
 
           {!isNone(shipment.label_url) && (
             <DropdownMenuItem

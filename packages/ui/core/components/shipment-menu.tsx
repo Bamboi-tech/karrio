@@ -8,6 +8,10 @@ import {
 import { useDocumentTemplates } from "@karrio/hooks/document-template";
 import { useDocumentPrinter, FormatType } from "@karrio/hooks/resource-token";
 import { formatRef, isNone, isNoneOrEmpty, p } from "@karrio/lib";
+import {
+  getShopifyHold,
+  shopifyHoldTooltip,
+} from "@karrio/ui/components/shipment-hold";
 import { ConfirmModalContext } from "../modals/confirm-modal";
 import { useShipmentMutation } from "@karrio/hooks/shipment";
 import React, { useState, useRef, useContext } from "react";
@@ -38,6 +42,7 @@ export const ShipmentMenu = ({
     related_object: "shipment",
     active: true,
   } as any);
+  const shopifyHold = getShopifyHold(shipment.metadata);
 
   const handleOnClick = (e: React.MouseEvent) => {
     setIsActive(!isActive);
@@ -100,12 +105,24 @@ export const ShipmentMenu = ({
         role="menu"
       >
         <div className="dropdown-content">
+          {/* Blocked while the Shopify order is on hold — UI courtesy only;
+              the authoritative enforcement lives in the ERP's gates
+              (karrio_shipping) and, phase 2, in the Karrio server. */}
           {isNone(shipment.label_url) &&
-            shipment.status === ShipmentStatusEnum.draft && (
+            shipment.status === ShipmentStatusEnum.draft &&
+            (shopifyHold.held ? (
+              <a
+                className="dropdown-item"
+                title={shopifyHoldTooltip(shopifyHold)}
+                style={{ opacity: 0.5, cursor: "not-allowed" }}
+              >
+                <span>Buy Label</span>
+              </a>
+            ) : (
               <a className="dropdown-item" onClick={createLabel}>
                 <span>Buy Label</span>
               </a>
-            )}
+            ))}
 
           {!isNone(shipment.label_url) && (
             <a

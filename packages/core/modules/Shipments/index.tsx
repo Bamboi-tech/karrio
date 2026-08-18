@@ -58,7 +58,44 @@ const FAILED_SENTINEL = "_failed_creation";
 // via metadata_key (see onFilterChange); stripped from the outgoing query by
 // useShipments like every "_"-prefixed sentinel.
 const ADDRESS_REVIEW_SENTINEL = "_address_review";
+// The warehouse print-worklist views. All three query status=draft server-side
+// (the sentinel is stripped by useShipments) and are narrowed client-side —
+// the API's metadata_key filter can only test key presence, so it can neither
+// EXCLUDE the address-review flag (Complete) nor compare a metadata date
+// against today (Planned/Today). See visibleShipments below.
+const COMPLETE_SENTINEL = "_review_clear";
+const PLANNED_SENTINEL = "_print_planned";
+const TODAY_SENTINEL = "_print_today";
 
+// Planning metadata mirrored onto every draft by the ERP (karrio_shipping):
+// the day the parcel leaves (shipment_date), where that day came from
+// (shipment_date_source: "monta" = Monta's planned day, anything else is a
+// fallback derived from the delivery date) and the day the warehouse must
+// print/prep (print_date).
+const SHIP_DATE_KEY = "shipment_date";
+const SHIP_DATE_SOURCE_KEY = "shipment_date_source";
+const PRINT_DATE_KEY = "print_date";
+
+// The warehouse plans in Amsterdam wall-clock days; the browser (or a
+// traveling laptop) must not shift the worklist by comparing in local time.
+const amsterdamToday = () =>
+  new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Amsterdam" }).format(
+    new Date(),
+  );
+
+// Metadata values are untrusted JSON: accept "YYYY-MM-DD" with or without a
+// time suffix, reject everything else. ISO date strings compare correctly as
+// plain strings.
+const asISODate = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+  const match = value.match(/^\d{4}-\d{2}-\d{2}/);
+  return match ? match[0] : null;
+};
+
+// Client-side mirror of the Needs Attention card's server filter
+// (metadata_key=address_review_required tests key presence).
+const hasAddressReviewFlag = (metadata: unknown) =>
+  ADDRESS_REVIEW_FLAG in ((metadata || {}) as Record<string, unknown>);
 
 export default function Page(pageProps: any) {
   const Component = (): JSX.Element => {
@@ -109,11 +146,9 @@ export default function Page(pageProps: any) {
     };
     const updatedSelection = (
       selectedShipments: string[],
-      current: typeof shipments,
+      current: { node: Pick<ShipmentType, "id"> }[],
     ) => {
-      const shipment_ids = (current?.edges || []).map(
-        ({ node: shipment }) => shipment.id,
-      );
+      const shipment_ids = current.map(({ node: shipment }) => shipment.id);
       const selection = selectedShipments.filter((id) =>
         shipment_ids.includes(id),
       );
@@ -130,9 +165,7 @@ export default function Page(pageProps: any) {
     const handleCheckboxChange = (checked: boolean, name: string) => {
       if (name === "all") {
         setSelection(
-          !checked
-            ? []
-            : (shipments?.edges || []).map(({ node: { id } }) => id),
+          !checked ? [] : visibleShipments.map(({ node: { id } }) => id),
         );
       } else {
         setSelection(
@@ -212,19 +245,48 @@ export default function Page(pageProps: any) {
       );
     };
 
-    // Define filter options for the cards
+    // The day the parcel is planned to leave, mirrored by the ERP. A value
+    // whose source isn't "monta" is only derived from the delivery date, so it
+    // is rendered muted with a "~" prefix until Monta's planned day arrives.
+    const renderShipDate = (metadata: unknown) => {
+      const values = (metadata || {}) as Record<string, unknown>;
+      const shipDate = asISODate(values[SHIP_DATE_KEY]);
+      if (!shipDate) return <span className="text-gray-300">—</span>;
+      const fromMonta = values[SHIP_DATE_SOURCE_KEY] === "monta";
+      if (fromMonta) {
+        return (
+          <p className="text-xs font-semibold text-gray-700">
+            {formatDate(shipDate)}
+          </p>
+        );
+      }
+      return (
+        <p
+          className="text-xs font-medium text-gray-400"
+          title="afgeleid van leverdatum; Monta's geplande dag nog niet binnen"
+        >
+          ~{formatDate(shipDate)}
+        </p>
+      );
+    };
+
+    // The cards follow the shipment lifecycle left-to-right: fix addresses
+    // (Needs Attention) → clean drafts (Complete) → print later (Planned) →
+    // print now (Today) → labeled, waiting for the carrier (Picked) → on the
+    // road (Shipped) → Delivered, with the failure buckets at the end.
     const getFilterOptions = () => [
       {
         label: "All",
-        value: ["created", "shipped", "delivered", "in_transit", "cancelled", "needs_attention", "out_for_delivery", "delivery_failed"]
-      },
-      {
-        label: "Purchased", 
-        value: ["created", "shipped", "in_transit", "out_for_delivery"]
-      },
-      {
-        label: "Delivered",
-        value: ["delivered"]
+        value: [
+          "created",
+          "shipped",
+          "delivered",
+          "in_transit",
+          "cancelled",
+          "needs_attention",
+          "out_for_delivery",
+          "delivery_failed",
+        ],
       },
       {
         // The address worklist: every shipment whose delivery address is
@@ -232,27 +294,86 @@ export default function Page(pageProps: any) {
         // metadata flag the ERP stamps, not on a Karrio status — flagged
         // drafts are status "draft", which no status filter can isolate.
         label: "Needs Attention",
-        value: [ADDRESS_REVIEW_SENTINEL]
+        value: [ADDRESS_REVIEW_SENTINEL],
+      },
+      {
+        // Every draft whose address review is done or was never needed —
+        // status "draft" minus the Needs Attention worklist. (Renames the old
+        // Draft card; the backend status is still "draft".)
+        label: "Complete",
+        value: ["draft", COMPLETE_SENTINEL],
+      },
+      {
+        // Clean drafts whose print day is still ahead.
+        label: "Planned",
+        value: ["draft", PLANNED_SENTINEL],
+      },
+      {
+        // Rico's printlist: clean drafts due today — including overdue
+        // print dates (forgotten work must stay visible) and drafts without a
+        // print_date (fail-visible: better one row too many here than one
+        // silently missing).
+        label: "Today",
+        value: ["draft", TODAY_SENTINEL],
+      },
+      {
+        // Labeled but not yet handed to the carrier ("purchased" is aliased
+        // to "created" by useShipments).
+        label: "Picked",
+        value: ["created"],
+      },
+      {
+        label: "Shipped",
+        value: ["shipped", "in_transit", "out_for_delivery"],
+      },
+      {
+        label: "Delivered",
+        value: ["delivered"],
       },
       {
         label: "Exception",
-        value: ["needs_attention", "delivery_failed"]
+        value: ["needs_attention", "delivery_failed"],
       },
       {
-        label: "Cancelled", 
-        value: ["cancelled"]
-      },
-      {
-        label: "Draft",
-        value: ["draft"]
+        label: "Cancelled",
+        value: ["cancelled"],
       },
       {
         label: "Failed",
-        value: [FAILED_SENTINEL]
-      }
+        value: [FAILED_SENTINEL],
+      },
     ];
 
-    const isFailedView = (filter?.status as string[] || []).includes(FAILED_SENTINEL);
+    const statusFilter = ([] as string[]).concat((filter?.status as any) || []);
+    const isFailedView = statusFilter.includes(FAILED_SENTINEL);
+    const isCompleteView = statusFilter.includes(COMPLETE_SENTINEL);
+    const isPlannedView = statusFilter.includes(PLANNED_SENTINEL);
+    const isTodayView = statusFilter.includes(TODAY_SENTINEL);
+
+    // Complete/Planned/Today are narrowed client-side over the fetched
+    // status=draft page (see the sentinel comment up top for why the API
+    // cannot do this). Limitation: the narrowing happens per 20-row page, so
+    // the pagination count/next-page still describe the full draft list and a
+    // page can render fewer rows than it says. Daily volumes are small enough
+    // that this is acceptable.
+    const visibleShipments = React.useMemo(() => {
+      const edges = shipments?.edges || [];
+      if (!isCompleteView && !isPlannedView && !isTodayView) return edges;
+      const today = amsterdamToday();
+      return edges.filter(({ node: shipment }) => {
+        if (hasAddressReviewFlag(shipment.metadata)) return false;
+        if (isCompleteView) return true;
+        const printDate = asISODate(
+          ((shipment.metadata || {}) as Record<string, unknown>)[
+            PRINT_DATE_KEY
+          ],
+        );
+        if (isPlannedView) return !!printDate && printDate > today;
+        // Today: due or overdue print dates, plus drafts the ERP has not
+        // stamped a print_date on yet — never silently hidden.
+        return !printDate || printDate <= today;
+      });
+    }, [shipments, isCompleteView, isPlannedView, isTodayView]);
 
     const searchParamsString = searchParams?.toString() ?? "";
     useEffect(() => {
@@ -262,8 +383,8 @@ export default function Page(pageProps: any) {
       if (!isFailedView) setLoading(query.isFetching);
     }, [query.isFetching, isFailedView]);
     useEffect(() => {
-      updatedSelection(selection, shipments);
-    }, [selection, shipments]);
+      updatedSelection(selection, visibleShipments);
+    }, [selection, visibleShipments]);
     useEffect(() => {
       if (
         query.isFetched &&
@@ -335,7 +456,7 @@ export default function Page(pageProps: any) {
           </div>
         )}
 
-        {!isFailedView && query.isFetched && (shipments?.edges || []).length > 0 && (
+        {!isFailedView && query.isFetched && visibleShipments.length > 0 && (
           <>
             <StickyTableWrapper>
               <Table className="shipments-table">
@@ -354,7 +475,7 @@ export default function Page(pageProps: any) {
                   </TableHead>
 
                   {selection.length > 0 && (
-                    <TableHead className="p-2" colSpan={8}>
+                    <TableHead className="p-2" colSpan={9}>
                       <div className="flex items-center gap-2 flex-wrap">
                         <Button
                           variant="outline"
@@ -422,6 +543,9 @@ export default function Page(pageProps: any) {
                       <TableHead className="reference text-xs items-center">
                         REFERENCE
                       </TableHead>
+                      <TableHead className="ship-date text-xs items-center">
+                        SHIP DATE
+                      </TableHead>
                       <TableHead className="date text-xs items-center">DATE</TableHead>
                       <TableHead className="action sticky-right"></TableHead>
                     </>
@@ -429,7 +553,7 @@ export default function Page(pageProps: any) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {(shipments?.edges || []).map(({ node: shipment }) => (
+                {visibleShipments.map(({ node: shipment }) => (
                   <TableRow 
                     key={shipment.id} 
                     className={`items cursor-pointer transition-colors duration-150 ease-in-out ${
@@ -603,6 +727,12 @@ export default function Page(pageProps: any) {
                       </div>
                     </TableCell>
                     <TableCell
+                      className="ship-date items-center px-1"
+                      onClick={() => previewShipment(shipment.id)}
+                    >
+                      {renderShipDate(shipment.metadata)}
+                    </TableCell>
+                    <TableCell
                       className="date items-center px-1"
                       onClick={() => previewShipment(shipment.id)}
                     >
@@ -641,7 +771,7 @@ export default function Page(pageProps: any) {
           </>
         )}
 
-        {!isFailedView && query.isFetched && (shipments?.edges || []).length == 0 && (
+        {!isFailedView && query.isFetched && visibleShipments.length == 0 && (
           <div className="bg-white rounded-lg shadow-sm border my-6">
             <div className="p-6 text-center">
               <p>No shipment found.</p>

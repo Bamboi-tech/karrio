@@ -2114,3 +2114,42 @@ class TestShipmentWorklistFilters(TestShipmentFixture):
             self._rest_filter(warehouse="veemarkt", fulfilment_mode="monta"),
             [],
         )
+
+
+class TestPurchasedShipmentMetadataUpdate(TestShipmentFixture):
+    """A purchased shipment must still accept a metadata-only update.
+
+    can_mutate_shipment exempts metadata-only requests on purpose — metadata is
+    bookkeeping about the shipment, not the shipment — but ShipmentDetails.put
+    used to map the payload first, and ShipmentUpdateData.map mutates the dict
+    it is handed by adding an empty `options`. The exemption therefore never
+    fired through HTTP, and the ERP's status mirror stopped landing the moment
+    a label was bought (its erp_status stayed "Synced" on every shipped order).
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.shipment.status = "in_transit"
+        self.shipment.metadata = {"erp_status": "Label Created"}
+        self.shipment.save()
+
+    def test_metadata_only_update_survives_a_purchased_shipment(self):
+        response = self.client.put(
+            reverse("karrio.server.manager:shipment-details", kwargs=dict(pk=self.shipment.pk)),
+            data=dict(metadata={"erp_status": "In Transit", "source_warehouse": "Veemarkt - B"}),
+        )
+
+        self.assertResponseNoErrors(response)
+        self.shipment.refresh_from_db()
+        self.assertEqual(self.shipment.metadata["erp_status"], "In Transit")
+        self.assertEqual(self.shipment.metadata["source_warehouse"], "Veemarkt - B")
+
+    def test_a_wider_update_is_still_refused(self):
+        """The exemption is metadata-only; everything else still respects the
+        shipment's state."""
+        response = self.client.put(
+            reverse("karrio.server.manager:shipment-details", kwargs=dict(pk=self.shipment.pk)),
+            data=dict(metadata={"erp_status": "In Transit"}, reference="SO-Shopify-00001"),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)

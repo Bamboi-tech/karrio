@@ -142,8 +142,16 @@ class ShipmentDetails(APIView):
         It is not for editing the parcels of a shipment.
         """
         shipment = models.Shipment.access_by(request).get(pk=pk)
-        payload = ShipmentUpdateData.map(data=request.data).data
+        # Asked BEFORE the payload is mapped, and that ordering is the whole
+        # point: ShipmentUpdateData.map mutates the dict it is handed, adding
+        # an empty `options` to it. Running it first therefore turned every
+        # metadata-only request into a two-key one and defeated the
+        # metadata-only exemption in can_mutate_shipment, so a purchased
+        # shipment refused metadata it is explicitly allowed to accept — which
+        # is how the ERP's erp_status mirror silently stopped landing the
+        # moment a label was bought.
         can_mutate_shipment(shipment, update=True, payload=request.data)
+        payload = ShipmentUpdateData.map(data=request.data).data
 
         update = (
             ShipmentSerializer.map(

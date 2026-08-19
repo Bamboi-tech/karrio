@@ -17,7 +17,8 @@ export const ERP_LINK_KEYS = ["karrio_shipment", "sales_order"] as const;
 export type ERPShipmentAction =
   | "mark-picked"
   | "unmark-picked"
-  | "mark-out-for-delivery";
+  | "mark-out-for-delivery"
+  | "mark-shipped";
 
 export function isERPLinked(metadata: unknown): boolean {
   const values = (metadata || {}) as Record<string, unknown>;
@@ -52,10 +53,15 @@ export function useShipmentERPActions(id?: string) {
   const markPicked = runAction("mark-picked");
   const unmarkPicked = runAction("unmark-picked");
   const markOutForDelivery = runAction("mark-out-for-delivery");
+  // Bookkeeping only: moves the ERP row to "In Transit" once the carrier has
+  // the parcel. Carrier path only, and the ERP requires status
+  // "Label Created" — a purchased label, not a draft.
+  const markShipped = runAction("mark-shipped");
 
   return {
     markPicked,
     unmarkPicked,
     markOutForDelivery,
+    markShipped,
   };
 }

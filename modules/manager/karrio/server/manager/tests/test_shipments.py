@@ -2005,3 +2005,112 @@ class TestShipmentKeywordSearch(TestShipmentFixture):
             {"keyword": "totally-absent-9797"}, queryset=models.Shipment.objects.all()
         ).qs
         self.assertNotIn(self.shipment, queryset)
+
+
+class TestShipmentWorklistFilters(TestShipmentFixture):
+    """The dashboard worklist must be filterable by the two facts the ERP
+    mirrors onto the shipment metadata: the source warehouse and the
+    fulfilment route (Monta 3PL, own delivery, own carrier, external)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.shipment.metadata = {
+            "source_warehouse": "Veemarkt - B",
+            "fulfilment_mode": "own_delivery",
+        }
+        self.shipment.save()
+
+        self.monta = self._shipment(
+            source_warehouse="Monta Nieuwegein - B",
+            fulfilment_mode="monta",
+        )
+        self.external = self._shipment(
+            source_warehouse="DHL Beringe - B",
+            fulfilment_mode="external",
+        )
+        self.unmirrored = self._shipment()
+
+    def _shipment(self, **metadata) -> models.Shipment:
+        return models.Shipment.objects.create(
+            shipper=self.shipper_data,
+            recipient=self.recipient_data,
+            parcels=[self.parcel_data],
+            created_by=self.user,
+            test_mode=True,
+            payment={"currency": "CAD", "paid_by": "sender"},
+            metadata=metadata,
+        )
+
+    def _rest_filter(self, **params) -> list:
+        """The REST path: a QueryDict, exactly what ShipmentList hands the
+        filterset — a multi-select arrives comma separated or repeated."""
+        from urllib.parse import urlencode
+        from django.http import QueryDict
+
+        return self._filtered(QueryDict(urlencode(params, doseq=True)))
+
+    def _graph_filter(self, **params) -> list:
+        """The GraphQL path: a plain dict, multi-selects as lists."""
+        return self._filtered(params)
+
+    def _filtered(self, data) -> list:
+        import karrio.server.core.filters as core_filters
+
+        return list(
+            core_filters.ShipmentFilters(
+                data, queryset=models.Shipment.objects.all()
+            ).qs
+        )
+
+    def test_warehouse_matches_case_insensitively_and_partially(self):
+        for value in ["Veemarkt - B", "veemarkt", "MARKT", "markt - b"]:
+            with self.subTest(warehouse=value):
+                self.assertEqual(self._rest_filter(warehouse=value), [self.shipment])
+                self.assertEqual(self._graph_filter(warehouse=value), [self.shipment])
+
+    def test_warehouse_excludes_other_warehouses(self):
+        self.assertEqual(self._rest_filter(warehouse="Monta"), [self.monta])
+        self.assertEqual(self._rest_filter(warehouse="no-such-warehouse"), [])
+
+    def test_fulfilment_mode_selects_a_single_route(self):
+        self.assertEqual(
+            self._rest_filter(fulfilment_mode="own_delivery"), [self.shipment]
+        )
+        self.assertEqual(self._graph_filter(fulfilment_mode=["monta"]), [self.monta])
+
+    def test_fulfilment_mode_accepts_a_comma_list(self):
+        self.assertCountEqual(
+            self._rest_filter(fulfilment_mode="monta,external"),
+            [self.monta, self.external],
+        )
+
+    def test_fulfilment_mode_accepts_repeated_query_params(self):
+        self.assertCountEqual(
+            self._rest_filter(fulfilment_mode=["monta", "external"]),
+            [self.monta, self.external],
+        )
+
+    def test_fulfilment_mode_accepts_a_list_from_graphql(self):
+        self.assertCountEqual(
+            self._graph_filter(fulfilment_mode=["monta", "external"]),
+            [self.monta, self.external],
+        )
+
+    def test_shipments_without_mirrored_metadata_are_never_selected(self):
+        self.assertNotIn(self.unmirrored, self._rest_filter(warehouse="B"))
+        self.assertNotIn(
+            self.unmirrored,
+            self._rest_filter(
+                fulfilment_mode="monta,own_delivery,own_carrier,external"
+            ),
+        )
+
+    def test_both_filters_combine(self):
+        self.assertEqual(
+            self._rest_filter(warehouse="monta", fulfilment_mode="monta"),
+            [self.monta],
+        )
+        self.assertEqual(
+            self._rest_filter(warehouse="veemarkt", fulfilment_mode="monta"),
+            [],
+        )

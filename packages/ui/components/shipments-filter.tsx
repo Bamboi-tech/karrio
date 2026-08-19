@@ -17,6 +17,16 @@ interface ShipmentsFilterComponent {
   context: ReturnType<typeof useShipments>;
 }
 
+// Bamboi fork: how the parcel leaves the warehouse (metadata.fulfilment_mode,
+// stamped by the ERP sync and filtered server-side). The values are the ERP's
+// own; the labels are what the warehouse calls them.
+const FULFILMENT_MODES: { label: string; value: string }[] = [
+  { label: "Monta 3PL", value: "monta_fulfillment" },
+  { label: "Eigen bezorging", value: "self_delivery" },
+  { label: "Eigen carrier", value: "direct_carrier" },
+  { label: "Extern", value: "external" },
+];
+
 export const ShipmentsFilter = ({ context }: ShipmentsFilterComponent): JSX.Element => {
   const [isReady, setIsReady] = useState(true);
   const [open, setOpen] = useState(false);
@@ -57,8 +67,17 @@ export const ShipmentsFilter = ({ context }: ShipmentsFilterComponent): JSX.Elem
 
       case 'hasAddress':
       case 'hasReference':
+      case 'hasWarehouse':
         if (checked) return { ...state, [value as string]: "" };
         return Object.keys(state).reduce((acc, key) => key === value ? acc : { ...acc, [key]: state[key] }, {});
+
+      case 'hasFulfilmentMode':
+        if (checked) return { ...state, fulfilment_mode: [] };
+        return Object.keys(state).reduce((acc, key) => key === 'fulfilment_mode' ? acc : { ...acc, [key]: state[key] }, {});
+      case 'fulfilment_mode':
+        return checked
+          ? { ...state, fulfilment_mode: [...(new Set([...state.fulfilment_mode, value]) as any)] }
+          : { ...state, fulfilment_mode: state.fulfilment_mode.filter((item: string) => item !== value) };
 
       default:
         return { ...state, [name]: value };
@@ -280,6 +299,74 @@ export const ShipmentsFilter = ({ context }: ShipmentsFilterComponent): JSX.Elem
                       />
                       <Label htmlFor={`carrier_${index}`} className="text-sm">
                         {carrier_name}
+                      </Label>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <Separator />
+
+            {/* Warehouse Filter — matches metadata.source_warehouse
+                (partial, case-insensitive). Today every shipment ships from
+                "Veemarkt"; the field exists for the day a second warehouse
+                starts shipping. */}
+            <div className="px-4 py-2">
+              <div className="flex items-center space-x-2 mb-1">
+                <Checkbox
+                  id="hasWarehouse"
+                  checked={!isNone(filters?.warehouse)}
+                  onCheckedChange={(checked) =>
+                    handleChange('hasWarehouse', 'warehouse', checked as boolean)
+                  }
+                />
+                <Label htmlFor="hasWarehouse" className="text-sm font-medium">
+                  Warehouse
+                </Label>
+              </div>
+
+              {!isNone(filters?.warehouse) && (
+                <div className="ml-5 p-2 bg-gray-50 rounded">
+                  <Input
+                    value={filters?.warehouse || ''}
+                    onChange={(e) => handleChange('warehouse', e.target.value)}
+                    placeholder="e.g: Veemarkt"
+                    className="text-sm h-8"
+                  />
+                </div>
+              )}
+            </div>
+
+            <Separator />
+
+            {/* Route Filter — metadata.fulfilment_mode, exact match over one
+                or more of the ERP's routes. */}
+            <div className="px-4 py-2">
+              <div className="flex items-center space-x-2 mb-1">
+                <Checkbox
+                  id="hasFulfilmentMode"
+                  checked={!isNone(filters?.fulfilment_mode)}
+                  onCheckedChange={(checked) => handleChange('hasFulfilmentMode', '', checked as boolean)}
+                />
+                <Label htmlFor="hasFulfilmentMode" className="text-sm font-medium">
+                  Route
+                </Label>
+              </div>
+
+              {!isNone(filters?.fulfilment_mode) && (
+                <div className="ml-5 bg-gray-50 rounded">
+                  {FULFILMENT_MODES.map(({ label, value }, index) => (
+                    <div key={index} className="flex items-center space-x-2 py-0.5 px-2">
+                      <Checkbox
+                        id={`fulfilment_mode_${index}`}
+                        checked={filters?.fulfilment_mode?.includes(value) || false}
+                        onCheckedChange={(checked) =>
+                          handleChange('fulfilment_mode', value, checked as boolean)
+                        }
+                      />
+                      <Label htmlFor={`fulfilment_mode_${index}`} className="text-sm">
+                        {label}
                       </Label>
                     </div>
                   ))}

@@ -1,5 +1,6 @@
 "use client";
 import {
+  errorToMessages,
   formatAddressShort,
   formatAddressLocationShort,
   formatDate,
@@ -53,7 +54,10 @@ import {
 import { useAPIMetadata } from "@karrio/hooks/api-metadata";
 import { useLoader } from "@karrio/ui/core/components/loader";
 import { AppLink } from "@karrio/ui/core/components/app-link";
-import { useShipments } from "@karrio/hooks/shipment";
+import { useShipments, useShipmentMutation } from "@karrio/hooks/shipment";
+import { useShipmentERPActions } from "@karrio/hooks/erp-actions";
+import { useToast } from "@karrio/ui/hooks/use-toast";
+import { useQueryClient } from "@tanstack/react-query";
 import React, { useContext, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 
@@ -116,6 +120,38 @@ const getPrintDate = (metadata: unknown) =>
 const daysBetween = (fromISODate: string, toISODate: string) =>
   Math.round((Date.parse(toISODate) - Date.parse(fromISODate)) / 86400000);
 
+// How the parcel leaves the warehouse, mirrored onto every shipment by the
+// ERP sync. Own delivery rides our own van and never buys a carrier label.
+const FULFILMENT_MODE_KEY = "fulfilment_mode";
+const isSelfDelivery = (metadata: unknown) =>
+  ((metadata || {}) as Record<string, unknown>)[FULFILMENT_MODE_KEY] ===
+  "self_delivery";
+
+// The name the warehouse actually works with. Karrio ids mean nothing on the
+// floor, so batch reports quote the Shopify order number and fall back to the
+// id only when the ERP has not mirrored one.
+const SHOPIFY_ORDER_NUMBER_KEY = "shopify_order_number";
+const shipmentLabel = (shipment: Pick<ShipmentType, "id" | "metadata">) => {
+  const value = ((shipment.metadata || {}) as Record<string, unknown>)[
+    SHOPIFY_ORDER_NUMBER_KEY
+  ];
+  return typeof value === "string" || typeof value === "number"
+    ? `${value}`
+    : shipment.id;
+};
+
+// errorToMessages yields either strings or API message objects; flatten both
+// into one operator-readable line (same shape shipment-menu.tsx renders).
+const describeError = (error: unknown) =>
+  errorToMessages(error)
+    .map((message: unknown) =>
+      typeof message === "string"
+        ? message
+        : (message as { message?: string })?.message ||
+          JSON.stringify(message),
+    )
+    .join("; ");
+
 export default function Page(pageProps: any) {
   const Component = (): JSX.Element => {
     const searchParams = useSearchParams();
@@ -124,10 +160,20 @@ export default function Page(pageProps: any) {
     const [allChecked, setAllChecked] = React.useState(false);
     const [initialized, setInitialized] = React.useState(false);
     const [selection, setSelection] = React.useState<string[]>([]);
+    // Which sequential bulk run (if any) is in flight — the buttons disable
+    // each other so two batches can never interleave over one selection.
+    const [bulkAction, setBulkAction] = React.useState<
+      "buy_and_print" | "mark_shipped" | null
+    >(null);
     const { previewShipment } = useContext(ShipmentPreviewSheetContext);
     const { user_connections } = useCarrierConnections();
     const { system_connections } = useSystemConnections();
     const documentPrinter = useDocumentPrinter();
+    const queryClient = useQueryClient();
+    const { toast } = useToast();
+    const mutation = useShipmentMutation();
+    // Bamboi fork: warehouse actions relayed to the ERP (Ship Today phase 2).
+    const erpActions = useShipmentERPActions();
     const context = useShipments({
       status: [
         "created",
@@ -382,12 +428,19 @@ export default function Page(pageProps: any) {
         ],
       },
       {
-        // The address worklist: every shipment whose delivery address is
+        // The address worklist: every DRAFT whose delivery address is
         // flagged Suspect/Invalid and waits on a human decision. Keyed on the
-        // metadata flag the ERP stamps, not on a Karrio status — flagged
-        // drafts are status "draft", which no status filter can isolate.
+        // metadata flag the ERP stamps (the status filter alone cannot
+        // isolate it — flagged drafts are ordinary "draft" rows), but the
+        // "draft" status still rides along: an address-review flag is by
+        // definition a property of a draft, and once the shipment is
+        // purchased or cancelled it is no longer actionable here. Without it
+        // the sentinel is stripped before the query (useShipments) and the
+        // card would send NO status constraint at all, so cancelled and
+        // delivered rows that still carry the flag would show up. Filtering
+        // fully server-side also makes this card's pagination count exact.
         label: "Needs Attention",
-        value: [ADDRESS_REVIEW_SENTINEL],
+        value: ["draft", ADDRESS_REVIEW_SENTINEL],
       },
       {
         // Every draft whose address review is done or was never needed —
@@ -457,6 +510,11 @@ export default function Page(pageProps: any) {
     const isPlannedView = statusFilter.includes(PLANNED_SENTINEL);
     const isTodayView = statusFilter.includes(TODAY_SENTINEL);
     const isHoldView = statusFilter.includes(HOLD_SENTINEL);
+    // The Picked card is exactly status=["created"]. Membership alone would
+    // also match the All card (which contains "created" among eight other
+    // statuses), so the bulk Mark shipped button keys on the exact filter.
+    const isPickedView =
+      statusFilter.length === 1 && statusFilter[0] === "created";
 
     // Complete/Planned/Today are narrowed client-side over the fetched
     // status=draft page (see the sentinel comment up top for why the API
@@ -500,6 +558,119 @@ export default function Page(pageProps: any) {
         return printA < printB ? -1 : printA > printB ? 1 : 0;
       });
     }, [shipments, isCompleteView, isPlannedView, isTodayView, isHoldView]);
+
+    // The selected rows of the current page, in the order the operator sees
+    // them. Bulk actions work over visibleShipments (not shipments.edges), so
+    // a client-side narrowed view can never act on a row it does not show.
+    const selectedShipments = () =>
+      visibleShipments
+        .filter(({ node: shipment }) => selection.includes(shipment.id))
+        .map(({ node: shipment }) => shipment);
+
+    // One destructive toast per batch, listing the rows by the number the
+    // warehouse recognises — mirrors the ERP's own mark_picked_bulk report.
+    const reportBulkFailures = (title: string, failures: string[]) => {
+      if (failures.length === 0) return;
+      toast({
+        variant: "destructive",
+        title: `${title}: ${failures.length} failed`,
+        description: failures.join(" | "),
+      });
+    };
+
+    // Today's one-click warehouse run: ERP mark picked → buy the label → one
+    // print job at the end. Strictly SEQUENTIAL: parallel purchases would
+    // race Monta's verification window and the ERP's row locks. A failing
+    // row is collected and the batch continues, exactly like the ERP's
+    // mark_picked_bulk.
+    const runBuyAndPrint = async () => {
+      const selected = selectedShipments();
+      // Own delivery never buys a carrier label — name the rows instead of
+      // letting the server refuse them one by one.
+      const skipped = selected.filter(({ metadata }) => isSelfDelivery(metadata));
+      const targets = selected.filter(({ metadata }) => !isSelfDelivery(metadata));
+
+      if (skipped.length > 0) {
+        toast({
+          title: `${skipped.length} own-delivery shipment(s) skipped`,
+          description: `Eigen bezorging koopt geen label: ${skipped
+            .map(shipmentLabel)
+            .join(", ")}`,
+        });
+      }
+      if (targets.length === 0) return;
+
+      setBulkAction("buy_and_print");
+      const purchased: string[] = [];
+      const failures: string[] = [];
+
+      for (const shipment of targets) {
+        try {
+          // BEFORE the purchase on purpose: the ERP's mark_picked only
+          // accepts a shipment in status "Synced", and buying the label moves
+          // the ERP row to "Label Created" — pick after buy would always be
+          // refused. This ordering is the whole reason the two calls are not
+          // swapped.
+          await erpActions.markPicked.mutateAsync({ id: shipment.id });
+          await mutation.buyLabel.mutateAsync({
+            ...shipment,
+            id: shipment.id,
+            selected_rate_id:
+              shipment.selected_rate?.id ?? shipment.rates?.[0]?.id,
+          } as ShipmentType);
+          purchased.push(shipment.id);
+        } catch (error) {
+          failures.push(`${shipmentLabel(shipment)}: ${describeError(error)}`);
+        }
+      }
+
+      setBulkAction(null);
+      queryClient.invalidateQueries(["shipments"]);
+
+      if (purchased.length > 0) {
+        toast({
+          title: `${purchased.length} label(s) purchased`,
+          description:
+            "De rijen verhuizen vanzelf naar Picked; de labels openen nu.",
+        });
+        documentPrinter.openBatchLabels(purchased, {
+          format: (computeDocFormat(purchased) || "pdf")?.toLowerCase() as FormatType,
+          doc: "label",
+        });
+      }
+      reportBulkFailures("Buy and print", failures);
+    };
+
+    // Picked → In Transit in the ERP, carrier path only. Bookkeeping, so no
+    // confirmation; same sequential loop and per-row error collection.
+    const runMarkShipped = async () => {
+      const targets = selectedShipments();
+      if (targets.length === 0) return;
+
+      setBulkAction("mark_shipped");
+      const failures: string[] = [];
+      let succeeded = 0;
+
+      for (const shipment of targets) {
+        try {
+          await erpActions.markShipped.mutateAsync({ id: shipment.id });
+          succeeded += 1;
+        } catch (error) {
+          failures.push(`${shipmentLabel(shipment)}: ${describeError(error)}`);
+        }
+      }
+
+      setBulkAction(null);
+      queryClient.invalidateQueries(["shipments"]);
+
+      if (succeeded > 0) {
+        toast({
+          title: `${succeeded} shipment(s) marked shipped`,
+          description: "De ERP-status staat nu op In Transit.",
+        });
+      }
+      reportBulkFailures("Mark shipped", failures);
+    };
 
     const searchParamsString = searchParams?.toString() ?? "";
     useEffect(() => {
@@ -618,6 +789,36 @@ export default function Page(pageProps: any) {
                           {documentPrinter.isLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
                           Print Labels
                         </Button>
+                        {/* Today's warehouse run: pick in the ERP, buy the
+                            label, print once. Sequential per row (see
+                            runBuyAndPrint) and only offered on the Today
+                            card, where the operator is working the printlist. */}
+                        {isTodayView && (
+                          <Button
+                            variant="default"
+                            size="sm"
+                            disabled={bulkAction !== null || documentPrinter.isLoading}
+                            className="px-3"
+                            onClick={runBuyAndPrint}
+                          >
+                            {bulkAction === "buy_and_print" && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+                            Buy and print
+                          </Button>
+                        )}
+                        {/* Picked card only: the parcel is with the carrier,
+                            so the ERP row moves to In Transit. */}
+                        {isPickedView && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={bulkAction !== null}
+                            className="px-3"
+                            onClick={runMarkShipped}
+                          >
+                            {bulkAction === "mark_shipped" && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+                            Mark shipped
+                          </Button>
+                        )}
                         <Button
                           variant="outline"
                           size="sm"

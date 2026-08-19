@@ -6398,6 +6398,8 @@ export interface ShipmentFilter {
   order_id?: string | null;
   service?: string[] | null;
   status?: ShipmentStatusEnum[] | null;
+  warehouse?: string | null;
+  fulfilment_mode?: string[] | null;
   option_key?: string | null;
   option_value?: any | null;
   metadata_key?: string | null;

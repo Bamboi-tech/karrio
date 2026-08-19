@@ -95,7 +95,8 @@ def assert_erp_label_allowed(shipment) -> None:
 
 
 # ---------------------------------------------------------------------------
-# ERP shipment actions (Mark Picked / Undo pick / Mark Out for Delivery)
+# ERP shipment actions (Mark Picked / Undo pick / Mark Out for Delivery /
+# Mark Shipped)
 # ---------------------------------------------------------------------------
 
 # Whitelisted @frappe.whitelist() doc methods on the ERP's Karrio Shipment.
@@ -106,6 +107,7 @@ ERP_SHIPMENT_ACTIONS = {
     "mark_picked",
     "unmark_picked",
     "mark_out_for_delivery",
+    "mark_shipped",
 }
 RUN_DOC_METHOD_PATH = "/api/method/frappe.handler.run_doc_method"
 

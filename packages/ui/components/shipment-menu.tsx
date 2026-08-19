@@ -298,6 +298,19 @@ export const ShipmentMenu = ({
               </DropdownMenuItem>
             )}
 
+          {/* Carrier path bookkeeping: the parcel is with the carrier, so the
+              ERP row moves to In Transit. Not customer-facing (no Shopify
+              fulfillment, no mail) and the ERP re-checks the status gate, so
+              no confirmation dialog. */}
+          {erpLinked && erpStatus === "Label Created" && (
+            <DropdownMenuItem
+              onClick={runERPAction(erpActions.markShipped, "Mark shipped")}
+              disabled={erpActions.markShipped.isLoading}
+            >
+              <span>Mark Shipped (ERP)</span>
+            </DropdownMenuItem>
+          )}
+
           {!isNone(shipment.label_url) && (
             <DropdownMenuItem
               onClick={() => documentPrinter.openShipmentLabel(

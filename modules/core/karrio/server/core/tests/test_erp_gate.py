@@ -116,6 +116,27 @@ class TestShipmentActionRelay(TestCase):
             },
         )
 
+    def test_mark_shipped_is_relayed(self):
+        message = "Marked shipped. The order is now In Transit."
+        with mock.patch.object(
+            erp_gate.requests,
+            "post",
+            return_value=_response(payload={"message": message}),
+        ) as post:
+            result = erp_gate.run_erp_shipment_action(
+                _shipment(ERP_META), "mark_shipped"
+            )
+        self.assertEqual(result, {"message": message})
+        _args, kwargs = post.call_args
+        self.assertEqual(
+            kwargs["json"],
+            {
+                "dt": "Karrio Shipment",
+                "dn": ERP_META["karrio_shipment"],
+                "method": "mark_shipped",
+            },
+        )
+
     def test_erp_refusal_surfaces_server_message(self):
         body = {
             "exception": "frappe.exceptions.ValidationError: held",

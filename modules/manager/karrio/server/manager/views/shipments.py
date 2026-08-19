@@ -283,7 +283,8 @@ class ShipmentPurchase(APIView):
 
 class ShipmentERPAction(APIView):
     """Bamboi fork: relay a warehouse action to the ERP (Mark Picked / Undo
-    pick / Mark Out for Delivery) so the dashboard is a full workstation.
+    pick / Mark Out for Delivery / Mark Shipped) so the dashboard is a full
+    workstation.
 
     The relay adds no business logic: the ERP document method enforces its
     own gates and mirrors the resulting erp_status back onto this shipment's

@@ -251,6 +251,16 @@ class ShipmentFilters(filters.FilterSet):
         Values: {', '.join([f"`{s.name}`" for s in list(serializers.ShipmentStatus)])}
         """,
     )
+    warehouse = filters.CharFilter(
+        field_name="metadata__source_warehouse",
+        lookup_expr="icontains",
+        help_text="the ERP source warehouse mirrored onto the shipment metadata.",
+    )
+    fulfilment_mode = filters.CharInFilter(
+        method="fulfilment_mode_filter",
+        field_name="metadata__fulfilment_mode",
+        help_text="fulfilment route(s) mirrored onto the shipment metadata.",
+    )
     option_key = filters.CharFilter(
         field_name="options",
         method="option_key_filter",
@@ -366,6 +376,24 @@ class ShipmentFilters(filters.FilterSet):
             description=(
                 "Valid shipment status. <br/>"
                 f"Values: {', '.join([f'`{c.value}`' for c in list(serializers.ShipmentStatus)])}"
+            ),
+        ),
+        openapi.OpenApiParameter(
+            "warehouse",
+            type=openapi.OpenApiTypes.STR,
+            location=openapi.OpenApiParameter.QUERY,
+            description=(
+                "The ERP source warehouse mirrored onto the shipment metadata. "
+                "Partial, case-insensitive match."
+            ),
+        ),
+        openapi.OpenApiParameter(
+            "fulfilment_mode",
+            type=openapi.OpenApiTypes.STR,
+            location=openapi.OpenApiParameter.QUERY,
+            description=(
+                "The fulfilment route(s) mirrored onto the shipment metadata. "
+                "Comma separated for a multi-select."
             ),
         ),
         openapi.OpenApiParameter(
@@ -517,6 +545,11 @@ class ShipmentFilters(filters.FilterSet):
 
     def service_filter(self, queryset, name, values):
         return queryset.filter(models.Q(selected_rate__service__in=values))
+
+    def fulfilment_mode_filter(self, queryset, name, values):
+        # Keyed JSON lookup, not a whole-queryset scan like metadata_value:
+        # the ERP mirrors the route onto metadata.fulfilment_mode.
+        return queryset.filter(models.Q(metadata__fulfilment_mode__in=values))
 
     def option_key_filter(self, queryset, name, value):
         return queryset.filter(models.Q(options__has_key=value))

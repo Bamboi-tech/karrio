@@ -56,6 +56,8 @@ class ShipmentFilter(utils.Paginated):
     order_id: typing.Optional[str] = strawberry.UNSET
     service: typing.Optional[typing.List[str]] = strawberry.UNSET
     status: typing.Optional[typing.List[utils.ShipmentStatusEnum]] = strawberry.UNSET
+    warehouse: typing.Optional[str] = strawberry.UNSET
+    fulfilment_mode: typing.Optional[typing.List[str]] = strawberry.UNSET
     option_key: typing.Optional[str] = strawberry.UNSET
     option_value: typing.Optional[utils.JSON] = strawberry.UNSET
     metadata_key: typing.Optional[str] = strawberry.UNSET

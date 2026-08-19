@@ -87,7 +87,11 @@ export function useShipments({
       // that way.
       const value = options[key as keyof ShipmentFilter];
       if (value == null || value === "undefined") return acc;
-      if (["carrier_name", "status", "service"].includes(key))
+      // Multi-value filters: a comma-joined URL param must round-trip back
+      // into a list (fulfilment_mode is the Bamboi fork's route filter).
+      if (
+        ["carrier_name", "status", "service", "fulfilment_mode"].includes(key)
+      )
         return {
           ...acc,
           [key]: []

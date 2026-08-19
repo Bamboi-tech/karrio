@@ -22,3 +22,9 @@ email_host: smtp.eu.mailgun.org
 email_port: "587"
 email_use_tls: "True"
 email_from_address: noreply@bamboi.eu
+
+# ERP label gate (Ship Today phase 2). The token is the ERPNext "Karrio
+# Dashboard" integration user's api_key:api_secret and lives in
+# vault/env/staging.yaml as erp_gate_token. Empty token = purchases on
+# ERP-linked shipments fail closed with a clear message.
+erp_gate_url: "https://stage-erp.bamboi.eu"

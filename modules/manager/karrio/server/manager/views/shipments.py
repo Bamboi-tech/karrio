@@ -193,11 +193,7 @@ class ShipmentCancel(APIView):
         try:
             shipment = qs.get(pk=pk)
         except models.Shipment.DoesNotExist:
-            shipment = (
-                qs.filter(meta__request_id=pk)
-                .order_by("-created_at")
-                .first()
-            )
+            shipment = qs.filter(meta__request_id=pk).order_by("-created_at").first()
 
         if shipment is None:
             raise models.Shipment.DoesNotExist()
@@ -283,6 +279,27 @@ class ShipmentPurchase(APIView):
         )
 
         return Response(PurchasedShipment(update).data)
+
+
+class ShipmentERPAction(APIView):
+    """Bamboi fork: relay a warehouse action to the ERP (Mark Picked / Undo
+    pick / Mark Out for Delivery) so the dashboard is a full workstation.
+
+    The relay adds no business logic: the ERP document method enforces its
+    own gates and mirrors the resulting erp_status back onto this shipment's
+    metadata. See karrio.server.core.erp_gate.
+    """
+
+    throttle_scope = "carrier_request"
+
+    @openapi.extend_schema(exclude=True)
+    def post(self, request: Request, pk: str, action: str):
+        from karrio.server.core.erp_gate import run_erp_shipment_action
+
+        shipment = models.Shipment.access_by(request).get(pk=pk)
+        result = run_erp_shipment_action(shipment, action.replace("-", "_"))
+
+        return Response(result)
 
 
 class ShipmentDocs(AccessMixin, VirtualDownloadView):
@@ -425,6 +442,13 @@ router.urls.append(
         "shipments/<str:pk>/purchase",
         ShipmentPurchase.as_view(),
         name="shipment-purchase",
+    )
+)
+router.urls.append(
+    path(
+        "shipments/<str:pk>/erp/<str:action>",
+        ShipmentERPAction.as_view(),
+        name="shipment-erp-action",
     )
 )
 router.urls.append(

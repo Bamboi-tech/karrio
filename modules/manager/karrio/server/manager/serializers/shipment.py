@@ -671,6 +671,13 @@ def buy_shipment_label(
     carriers: typing.List = None,
     **kwargs,
 ) -> models.Shipment:
+    # Bamboi fork: single choke point for every purchase path (REST purchase,
+    # create-with-service, batch). An ERP-linked shipment must pass the same
+    # gates the ERP's own label button runs; fail closed when ERP cannot answer.
+    from karrio.server.core.erp_gate import assert_erp_label_allowed
+
+    assert_erp_label_allowed(shipment)
+
     extra: dict = {}
     invoice: dict = {}
     selected_rate = lib.to_dict(selected_rate or {})
@@ -747,6 +754,7 @@ def buy_shipment_label(
 
     # Update shipment state - preserve original meta and merge with response meta
     from karrio.server.core.middleware import get_request_id
+
     response_details = ShipmentDetails(response).data
     _request_id = get_request_id()
     merged_meta = {
@@ -823,15 +831,9 @@ def can_mutate_shipment(
     purchase: bool = False,
     payload: dict = None,
 ):
-    address_sync_pending = bool(
-        (shipment.meta or {}).get("address_sync_pending")
-    )
+    address_sync_pending = bool((shipment.meta or {}).get("address_sync_pending"))
     is_recipient_correction = bool(payload and "recipient" in payload)
-    if (
-        address_sync_pending
-        and (update or purchase)
-        and not is_recipient_correction
-    ):
+    if address_sync_pending and (update or purchase) and not is_recipient_correction:
         raise exceptions.APIException(
             (
                 "The recipient correction is awaiting ERP validation and "
@@ -868,7 +870,9 @@ def can_mutate_shipment(
             status_code=status.HTTP_409_CONFLICT,
         )
 
-    active_pickup = shipment.shipment_pickup.exclude(status__in=["cancelled", "closed"]).first()
+    active_pickup = shipment.shipment_pickup.exclude(
+        status__in=["cancelled", "closed"]
+    ).first()
     if delete and active_pickup is not None:
         raise exceptions.APIException(
             (
@@ -974,9 +978,11 @@ def create_shipment_tracker(shipment: typing.Optional[models.Shipment], context)
             # Include request_id from shipment meta in tracker meta
             _tracker_meta = dict(
                 carrier=rate_provider,
-                **({
-                    "request_id": (shipment.meta or {}).get("request_id")
-                } if (shipment.meta or {}).get("request_id") else {}),
+                **(
+                    {"request_id": (shipment.meta or {}).get("request_id")}
+                    if (shipment.meta or {}).get("request_id")
+                    else {}
+                ),
             )
 
             tracker = models.Tracking.objects.create(

@@ -10,6 +10,11 @@ import { useDocumentTemplates } from "@karrio/hooks/document-template";
 import { useDocumentPrinter, FormatType } from "@karrio/hooks/resource-token";
 import { errorToMessages, formatRef, isNone, isNoneOrEmpty, p } from "@karrio/lib";
 import { useShipmentMutation } from "@karrio/hooks/shipment";
+import {
+  useShipmentERPActions,
+  isERPLinked,
+  getERPStatus,
+} from "@karrio/hooks/erp-actions";
 import { getShopifyHold, shopifyHoldTooltip } from "./shipment-hold";
 import { DeleteConfirmationDialog } from "./delete-confirmation-dialog";
 import React, { useState } from "react";
@@ -58,6 +63,34 @@ export const ShipmentMenu = ({
     active: true,
   } as any);
   const shopifyHold = getShopifyHold(shipment.metadata);
+  // Bamboi fork: warehouse actions relayed to the ERP (Ship Today phase 2).
+  // The ERP enforces its own gates; a refusal (hold, wrong status) surfaces
+  // as a toast with the ERP's own message.
+  const erpActions = useShipmentERPActions(shipment.id);
+  const erpLinked = isERPLinked(shipment.metadata);
+  const erpStatus = getERPStatus(shipment.metadata);
+  const erpSelfDelivery =
+    ((shipment.metadata || {}) as Record<string, unknown>)["fulfilment_mode"] ===
+    "self_delivery";
+
+  const runERPAction =
+    (mutation: typeof erpActions.markPicked, title: string) => async () => {
+      try {
+        const { message } = await mutation.mutateAsync({ id: shipment.id });
+        toast({ title, description: message });
+      } catch (error: any) {
+        const messages = errorToMessages(error);
+        toast({
+          variant: "destructive",
+          title: `${title} failed`,
+          description: messages
+            .map((m: any) => (typeof m === "string" ? m : m.message || JSON.stringify(m)))
+            .join("; "),
+        });
+        // Re-throw so a confirmation dialog stays open for retry.
+        throw error;
+      }
+    };
 
   const createLabel = (_: React.MouseEvent) => {
     toast({
@@ -214,6 +247,56 @@ export const ShipmentMenu = ({
                 <span>Buy Label</span>
               </DropdownMenuItem>
             ))}
+
+          {/* Bamboi fork: ERP warehouse actions. Visibility follows the
+              mirrored erp_status; the ERP re-checks its own gates on every
+              call, so a stale mirror can only hide a button, never bypass a
+              rule. Mark picked / undo are reversible — no dialog. */}
+          {erpLinked && erpStatus === "Synced" && (
+            <DropdownMenuItem
+              onClick={runERPAction(erpActions.markPicked, "Mark picked")}
+              disabled={erpActions.markPicked.isLoading}
+            >
+              <span>Mark Picked (ERP)</span>
+            </DropdownMenuItem>
+          )}
+
+          {erpLinked && erpStatus === "Picked" && (
+            <DropdownMenuItem
+              onClick={runERPAction(erpActions.unmarkPicked, "Undo pick")}
+              disabled={erpActions.unmarkPicked.isLoading}
+            >
+              <span>Undo Pick (ERP)</span>
+            </DropdownMenuItem>
+          )}
+
+          {/* Irreversible: creates the Shopify fulfillment and notifies the
+              customer — always behind a confirmation dialog. Only offered on
+              own-delivery shipments (metadata.fulfilment_mode, stamped by the
+              ERP sync); legacy drafts without the key keep using the ERP
+              button. */}
+          {erpLinked &&
+            erpSelfDelivery &&
+            ["Synced", "Picked"].includes(erpStatus || "") && (
+              <DropdownMenuItem
+                onClick={() => {
+                  setConfirmAction({
+                    title: "Mark Out for Delivery",
+                    description:
+                      "The parcel leaves on our own van: this creates the Shopify fulfillment and notifies the customer. This cannot be undone.",
+                    confirmLabel: "Mark Out for Delivery",
+                    onConfirm: runERPAction(
+                      erpActions.markOutForDelivery,
+                      "Mark out for delivery",
+                    ),
+                  });
+                  setConfirmDialogOpen(true);
+                }}
+                disabled={erpActions.markOutForDelivery.isLoading}
+              >
+                <span>Mark Out for Delivery (ERP)</span>
+              </DropdownMenuItem>
+            )}
 
           {!isNone(shipment.label_url) && (
             <DropdownMenuItem

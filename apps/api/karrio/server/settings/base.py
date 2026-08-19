@@ -734,3 +734,12 @@ if USE_LOGURU:
         print(f"Warning: Failed to initialize Loguru: {e}")
         print("Falling back to standard Django logging")
         USE_LOGURU = False
+
+
+# Bamboi fork: ERP label gate. When set, every label purchase on an
+# ERP-linked shipment (metadata carries karrio_shipment/sales_order) asks
+# the ERP's karrio_shipping.api.gates.assert_label_allowed first and fails
+# closed when ERP does not answer. See karrio.server.core.erp_gate.
+ERP_GATE_URL = config("ERP_GATE_URL", default=None)
+ERP_GATE_TOKEN = config("ERP_GATE_TOKEN", default=None)
+ERP_GATE_TIMEOUT = config("ERP_GATE_TIMEOUT", default=5, cast=int)

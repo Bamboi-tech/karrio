@@ -42,6 +42,11 @@ compose:
         # Empty DSN = Sentry stays off (settings/apm.py gates on it).
         SENTRY_DSN: "{{ sentry_dsn | default('') }}"
         SENTRY_ENVIRONMENT: "{{ env | default('staging') }}"
+        # ERP label gate (Ship Today phase 2): every purchase of an
+        # ERP-linked shipment asks the ERP first and fails closed when it
+        # cannot answer. Token = ERPNext "Karrio Dashboard" user api_key:api_secret.
+        ERP_GATE_URL: "{{ erp_gate_url | default('') }}"
+        ERP_GATE_TOKEN: "{{ erp_gate_token | default('') }}"
       volumes:
         - type: volume
           source: karrio-static
@@ -82,6 +87,11 @@ compose:
         EMAIL_FROM_ADDRESS: "{{ email_from_address }}"
         SENTRY_DSN: "{{ sentry_dsn | default('') }}"
         SENTRY_ENVIRONMENT: "{{ env | default('staging') }}"
+        # ERP label gate (Ship Today phase 2): every purchase of an
+        # ERP-linked shipment asks the ERP first and fails closed when it
+        # cannot answer. Token = ERPNext "Karrio Dashboard" user api_key:api_secret.
+        ERP_GATE_URL: "{{ erp_gate_url | default('') }}"
+        ERP_GATE_TOKEN: "{{ erp_gate_token | default('') }}"
 
     dashboard:
       image: "{{ karrio_dashboard_image }}:{{ karrio_tag }}"

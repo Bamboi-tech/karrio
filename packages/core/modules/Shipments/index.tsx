@@ -281,6 +281,17 @@ export default function Page(pageProps: any) {
       first: 1,
       cacheKey: "shipments-badge-hold",
     });
+    // Same server-side count for the address worklist: without a number the
+    // card only says a worklist *exists* — the operator has to open it to
+    // learn whether one address needs fixing or thirty. Status "draft" keeps
+    // cancelled rows that still carry the flag (pre-cleanup tombstones) out
+    // of the count, exactly like the card's own filter.
+    const reviewBadge = useShipments({
+      status: ["draft"] as any,
+      metadata_key: ADDRESS_REVIEW_FLAG,
+      first: 1,
+      cacheKey: "shipments-badge-review",
+    });
     const {
       query: { data: { document_templates } = {} },
     } = useDocumentTemplates({
@@ -474,6 +485,10 @@ export default function Page(pageProps: any) {
     // Exact: the server counted every draft carrying the hold key.
     const holdCount = holdBadge.query.data?.shipments?.page_info?.count;
     const holdBadgeLabel = holdCount == null ? undefined : `${holdCount}`;
+    // Exact for the same reason; shown even when 0 so "nothing to fix" is a
+    // statement, not an absence.
+    const reviewCount = reviewBadge.query.data?.shipments?.page_info?.count;
+    const reviewBadgeLabel = reviewCount == null ? undefined : `${reviewCount}`;
 
     // The cards follow the shipment lifecycle left-to-right: fix addresses
     // (Needs Attention) → clean drafts (Complete) → parked drafts (On hold) →
@@ -508,6 +523,7 @@ export default function Page(pageProps: any) {
         // fully server-side also makes this card's pagination count exact.
         label: "Needs Attention",
         value: ["draft", ADDRESS_REVIEW_SENTINEL],
+        badge: reviewBadgeLabel,
       },
       {
         // Every draft whose address review is done or was never needed —

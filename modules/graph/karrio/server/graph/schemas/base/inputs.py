@@ -203,9 +203,13 @@ class WorkspaceConfigMutationInput(utils.BaseInput):
     # ─────────────────────────────────────────────────────────────────
     # Shipping Defaults - Recommendations Preferences
     # ─────────────────────────────────────────────────────────────────
-    pref_first_mile: typing.Optional[typing.List[utils.FirstMileEnum]] = strawberry.UNSET
+    pref_first_mile: typing.Optional[typing.List[utils.FirstMileEnum]] = (
+        strawberry.UNSET
+    )
     pref_last_mile: typing.Optional[typing.List[utils.LastMileEnum]] = strawberry.UNSET
-    pref_form_factor: typing.Optional[typing.List[utils.FormFactorEnum]] = strawberry.UNSET
+    pref_form_factor: typing.Optional[typing.List[utils.FormFactorEnum]] = (
+        strawberry.UNSET
+    )
     pref_age_check: typing.Optional[utils.AgeCheckEnum] = strawberry.UNSET
     pref_signature_required: typing.Optional[bool] = strawberry.UNSET
     pref_max_lead_time_days: typing.Optional[int] = strawberry.UNSET
@@ -512,6 +516,9 @@ class PartialShipmentMutationInput(utils.BaseInput):
 class ChangeShipmentStatusMutationInput(utils.BaseInput):
     id: str
     status: typing.Optional[utils.ManualShipmentStatusEnum]
+    # Bamboi fork: required to override a tracked shipment's status — the
+    # audit reason recorded onto shipment.metadata["status_override"].
+    reason: typing.Optional[str] = strawberry.UNSET
 
 
 # ─────────────────────────────────────────────────────────────────────────────

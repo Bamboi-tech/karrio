@@ -35,6 +35,7 @@ def shipment_updated(
     """Shipment related events:
     - shipment purchased (label purchased)
     - shipment fulfilled (shipped)
+    - shipment delivered (status changed to delivered)
     """
     is_bound = "created_at" in (update_fields or [])
     status_updated = "status" in (update_fields or [])
@@ -61,6 +62,10 @@ def shipment_updated(
         and instance.status == serializers.ShipmentStatus.out_for_delivery.value
     ):
         event = EventTypes.shipment_out_for_delivery.value
+    elif (
+        status_updated and instance.status == serializers.ShipmentStatus.delivered.value
+    ):
+        event = EventTypes.shipment_delivered.value
     elif (
         status_updated
         and instance.status == serializers.ShipmentStatus.needs_attention.value

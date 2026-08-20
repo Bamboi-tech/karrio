@@ -9,6 +9,7 @@ from django_email_verification import confirm as email_verification
 from django_otp.plugins.otp_email import models as otp
 from django.utils.translation import gettext_lazy as _
 from django.db import transaction, models
+from django.utils import timezone
 
 from karrio.server.core.utils import ConfirmationToken, send_email
 from karrio.server.user.serializers import TokenSerializer
@@ -78,9 +79,7 @@ class WorkspaceConfigMutation(utils.BaseMutation):
 
         serializer.is_valid(raise_exception=True)
 
-        return WorkspaceConfigMutation(
-            workspace_config=serializer.save()
-        )  # type:ignore
+        return WorkspaceConfigMutation(workspace_config=serializer.save())  # type:ignore
 
 
 @strawberry.type
@@ -585,10 +584,14 @@ class UpdateRateSheetMutation(utils.BaseMutation):
         # Note: origin_countries stays in data - saved via serializer
 
         # Preserve services input for building temp-to-real service ID map
-        services_input = [
-            (svc.copy() if isinstance(svc, dict) else dict(svc))
-            for svc in data.get("services", [])
-        ] if "services" in data else []
+        services_input = (
+            [
+                (svc.copy() if isinstance(svc, dict) else dict(svc))
+                for svc in data.get("services", [])
+            ]
+            if "services" in data
+            else []
+        )
 
         serializer = serializers.RateSheetModelSerializer(
             instance,
@@ -612,9 +615,7 @@ class UpdateRateSheetMutation(utils.BaseMutation):
 
         # Process service_rates AFTER services exist so temp IDs can be resolved
         if service_rates_data is not None:
-            temp_to_real_id = serializer.build_temp_to_real_service_map(
-                services_input
-            )
+            temp_to_real_id = serializer.build_temp_to_real_service_map(services_input)
             # Full replacement: frontend sends all rates
             rate_sheet.service_rates = []
             rate_sheet.save(update_fields=["service_rates"])
@@ -622,9 +623,9 @@ class UpdateRateSheetMutation(utils.BaseMutation):
 
         # Link/unlink carriers
         if any(carriers):
-            carrier_qs = providers.CarrierConnection.access_by(info.context.request).filter(
-                carrier_code=rate_sheet.carrier_name
-            )
+            carrier_qs = providers.CarrierConnection.access_by(
+                info.context.request
+            ).filter(carrier_code=rate_sheet.carrier_name)
             carrier_qs.filter(id__in=carriers).update(rate_sheet=rate_sheet)
             carrier_qs.filter(rate_sheet=rate_sheet).exclude(id__in=carriers).update(
                 rate_sheet=None
@@ -751,7 +752,9 @@ class AddSharedSurchargeMutation(utils.BaseMutation):
             id=input["rate_sheet_id"]
         )
         surcharge_data = input["surcharge"]
-        surcharge_dict = {k: v for k, v in surcharge_data.items() if not utils.is_unset(v)}
+        surcharge_dict = {
+            k: v for k, v in surcharge_data.items() if not utils.is_unset(v)
+        }
 
         try:
             rate_sheet.add_surcharge(surcharge_dict)
@@ -775,7 +778,9 @@ class UpdateSharedSurchargeMutation(utils.BaseMutation):
             id=input["rate_sheet_id"]
         )
         surcharge_data = input["surcharge"]
-        surcharge_dict = {k: v for k, v in surcharge_data.items() if not utils.is_unset(v)}
+        surcharge_dict = {
+            k: v for k, v in surcharge_data.items() if not utils.is_unset(v)
+        }
 
         try:
             rate_sheet.update_surcharge(input["surcharge_id"], surcharge_dict)
@@ -854,7 +859,15 @@ class UpdateServiceRateMutation(utils.BaseMutation):
 
         # Build the rate update dict from input fields
         rate_data = {}
-        rate_fields = ["rate", "cost", "min_weight", "max_weight", "transit_days", "transit_time", "meta"]
+        rate_fields = [
+            "rate",
+            "cost",
+            "min_weight",
+            "max_weight",
+            "transit_days",
+            "transit_time",
+            "meta",
+        ]
         for field in rate_fields:
             if field in input and not utils.is_unset(input[field]):
                 rate_data[field] = input[field]
@@ -864,7 +877,7 @@ class UpdateServiceRateMutation(utils.BaseMutation):
             rate_sheet.update_service_rate(
                 service_id=input["service_id"],
                 zone_id=input["zone_id"],
-                rate_data=rate_data
+                rate_data=rate_data,
             )
         except ValueError as e:
             raise exceptions.ValidationError({"rate": str(e)})
@@ -1064,9 +1077,8 @@ class PartialShipmentMutation(utils.BaseMutation):
 
             # refetch the shipment to get the updated state with signals processed
             update = manager.Shipment.access_by(info.context.request).get(id=id)
-            if (
-                "recipient" in input
-                and previous_recipient != lib.to_dict(update.recipient)
+            if "recipient" in input and previous_recipient != lib.to_dict(
+                update.recipient
             ):
                 if (update.metadata or {}).get("sales_order"):
                     update.meta = {
@@ -1146,14 +1158,40 @@ class ChangeShipmentStatusMutation(utils.BaseMutation):
                 code="invalid_operation",
             )
 
-        if getattr(shipment, "tracker", None) is not None:
+        # Bamboi fork: a tracked shipment normally gets its status from the
+        # carrier, not from an operator — but the operator standing at the
+        # parcel knows things the tracker does not (a box handed back at the
+        # door, a return accepted on the dock). Overriding is therefore
+        # allowed, on one condition: a reason, so an audit can reconstruct
+        # who decided what when the tracker and the human disagree.
+        reason = (input.get("reason") or "").strip()
+        if getattr(shipment, "tracker", None) is not None and not reason:
             raise exceptions.ValidationError(
-                _(f"this shipment is tracked automatically by API"),
+                f"this shipment is tracked automatically by API — "
+                "overriding its status requires a reason",
                 code="invalid_operation",
             )
 
+        update_fields = ["status"]
+        if reason:
+            # The audit record rides on the shipment itself, where the
+            # dashboard already reads metadata. Deliberately one key that is
+            # overwritten per override: the full history lives in the ERP's
+            # timeline, this is the at-a-glance "why is this row here".
+            shipment.metadata = {
+                **(shipment.metadata or {}),
+                "status_override": {
+                    "status": str(input["status"]),
+                    "reason": reason,
+                    "by": getattr(info.context.request.user, "email", None)
+                    or str(info.context.request.user),
+                    "at": timezone.now().isoformat(),
+                },
+            }
+            update_fields.append("metadata")
+
         shipment.status = input["status"]
-        shipment.save(update_fields=["status"])
+        shipment.save(update_fields=update_fields)
 
         return ChangeShipmentStatusMutation(shipment=shipment)  # type:ignore
 
@@ -1200,11 +1238,7 @@ class CreateAddressMutation(utils.BaseMutation):
 
         # Extract meta from input (flat structure)
         meta_input = data.pop("meta", {})
-        meta = {
-            k: v
-            for k, v in meta_input.items()
-            if not utils.is_unset(v)
-        }
+        meta = {k: v for k, v in meta_input.items() if not utils.is_unset(v)}
 
         # If setting as default, clear existing default
         if meta.get("is_default"):
@@ -1239,11 +1273,7 @@ class UpdateAddressMutation(utils.BaseMutation):
 
         # Extract meta from input (flat structure)
         meta_input = data.pop("meta", {})
-        meta_updates = {
-            k: v
-            for k, v in meta_input.items()
-            if not utils.is_unset(v)
-        }
+        meta_updates = {k: v for k, v in meta_input.items() if not utils.is_unset(v)}
 
         instance = manager.Address.access_by(info.context.request).get(id=id)
 
@@ -1286,11 +1316,7 @@ class CreateParcelMutation(utils.BaseMutation):
 
         # Extract meta from input (flat structure)
         meta_input = data.pop("meta", {})
-        meta = {
-            k: v
-            for k, v in meta_input.items()
-            if not utils.is_unset(v)
-        }
+        meta = {k: v for k, v in meta_input.items() if not utils.is_unset(v)}
 
         # If setting as default, clear existing default
         if meta.get("is_default"):
@@ -1325,11 +1351,7 @@ class UpdateParcelMutation(utils.BaseMutation):
 
         # Extract meta from input (flat structure)
         meta_input = data.pop("meta", {})
-        meta_updates = {
-            k: v
-            for k, v in meta_input.items()
-            if not utils.is_unset(v)
-        }
+        meta_updates = {k: v for k, v in meta_input.items() if not utils.is_unset(v)}
 
         instance = manager.Parcel.access_by(info.context.request).get(id=id)
 
@@ -1430,11 +1452,7 @@ class CreateProductMutation(utils.BaseMutation):
 
         # Extract meta from input (flat structure)
         meta_input = data.pop("meta", {})
-        meta = {
-            k: v
-            for k, v in meta_input.items()
-            if not utils.is_unset(v)
-        }
+        meta = {k: v for k, v in meta_input.items() if not utils.is_unset(v)}
 
         # If setting as default, clear existing default
         if meta.get("is_default"):
@@ -1469,11 +1487,7 @@ class UpdateProductMutation(utils.BaseMutation):
 
         # Extract meta from input (flat structure)
         meta_input = data.pop("meta", {})
-        meta_updates = {
-            k: v
-            for k, v in meta_input.items()
-            if not utils.is_unset(v)
-        }
+        meta_updates = {k: v for k, v in meta_input.items() if not utils.is_unset(v)}
 
         instance = manager.Commodity.access_by(info.context.request).get(id=id)
 
@@ -1536,7 +1550,9 @@ class UpdateCarrierConnectionMutation(utils.BaseMutation):
     def mutate(info: Info, **input) -> "UpdateCarrierConnectionMutation":
         data = input.copy()
         id = data.get("id")
-        instance = providers.CarrierConnection.access_by(info.context.request).get(id=id)
+        instance = providers.CarrierConnection.access_by(info.context.request).get(
+            id=id
+        )
         connection = lib.identity(
             providers_serializers.CarrierConnectionModelSerializer.map(
                 instance,
@@ -1563,7 +1579,9 @@ class SystemCarrierMutation(utils.BaseMutation):
         info: Info, **input: inputs.SystemCarrierMutationInput
     ) -> "SystemCarrierMutation":
         import datetime
-        from karrio.server.providers.serializers import BrokeredConnectionModelSerializer
+        from karrio.server.providers.serializers import (
+            BrokeredConnectionModelSerializer,
+        )
 
         pk = input.get("id")
         tc_accepted = input.get("tc_accepted")
@@ -1580,7 +1598,9 @@ class SystemCarrierMutation(utils.BaseMutation):
 
         if is_enabling and has_central_rates and tc_text.strip() and not tc_accepted:
             raise exceptions.ValidationError(
-                {"tc_accepted": "You must accept the terms and conditions to enable this carrier."}
+                {
+                    "tc_accepted": "You must accept the terms and conditions to enable this carrier."
+                }
             )
 
         # Build serializer data from input
@@ -1607,21 +1627,19 @@ class SystemCarrierMutation(utils.BaseMutation):
         # Log T&C acceptance in BrokeredConnection metadata
         if tc_accepted and tc_text.strip():
             brokered_metadata = brokered.metadata or {}
-            brokered_metadata.update({
-                "tc_accepted": True,
-                "tc_accepted_at": datetime.datetime.now(
-                    datetime.timezone.utc
-                ).isoformat(),
-                "tc_accepted_by": getattr(
-                    context.user, "email", str(context.user)
-                ),
-            })
+            brokered_metadata.update(
+                {
+                    "tc_accepted": True,
+                    "tc_accepted_at": datetime.datetime.now(
+                        datetime.timezone.utc
+                    ).isoformat(),
+                    "tc_accepted_by": getattr(context.user, "email", str(context.user)),
+                }
+            )
             brokered.metadata = brokered_metadata
             brokered.save(update_fields=["metadata"])
 
-        return SystemCarrierMutation(
-            carrier=system_connection
-        )  # type: ignore
+        return SystemCarrierMutation(carrier=system_connection)  # type: ignore
 
 
 @strawberry.type
@@ -1701,6 +1719,7 @@ def _unarchive(instance) -> typing.Any:
 
 # ── Shipment ──────────────────────────────────────────────────────────────────
 
+
 @strawberry.type
 class ArchiveShipmentMutation(utils.BaseMutation):
     shipment: typing.Optional[types.ShipmentType] = None
@@ -1730,6 +1749,7 @@ class UnarchiveShipmentMutation(utils.BaseMutation):
 
 # ── Tracker ───────────────────────────────────────────────────────────────────
 
+
 @strawberry.type
 class ArchiveTrackerMutation(utils.BaseMutation):
     tracker: typing.Optional[types.TrackerType] = None
@@ -1758,6 +1778,7 @@ class UnarchiveTrackerMutation(utils.BaseMutation):
 
 # ── Pickup ────────────────────────────────────────────────────────────────────
 
+
 @strawberry.type
 class ArchivePickupMutation(utils.BaseMutation):
     pickup: typing.Optional[types.PickupType] = None
@@ -1784,8 +1805,8 @@ class UnarchivePickupMutation(utils.BaseMutation):
         return UnarchivePickupMutation(errors=None, pickup=_unarchive(instance))  # type: ignore
 
 
-
 # ── Order ─────────────────────────────────────────────────────────────────────
+
 
 @strawberry.type
 class ArchiveOrderMutation(utils.BaseMutation):

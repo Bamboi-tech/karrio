@@ -18,7 +18,18 @@ export type ERPShipmentAction =
   | "mark-picked"
   | "unmark-picked"
   | "mark-out-for-delivery"
-  | "mark-shipped";
+  | "mark-shipped"
+  | "cancel-shipment"
+  | "record-delivery-outcome";
+
+// How a post-purchase shipment actually ended. Karrio has no "returned"
+// status, so the precise truth lives in the ERP and Karrio only carries the
+// status that moves the row to the right card.
+export type DeliveryOutcome =
+  | "exception"
+  | "failed"
+  | "delivered"
+  | "returned";
 
 export function isERPLinked(metadata: unknown): boolean {
   const values = (metadata || {}) as Record<string, unknown>;
@@ -39,12 +50,19 @@ export function useShipmentERPActions(id?: string) {
     queryClient.invalidateQueries(["shipments", id]);
   };
 
-  const runAction = (action: ERPShipmentAction) =>
+  // Most actions are a bare POST; an action that needs arguments (the
+  // delivery outcome carries its recorded reason) declares them as its
+  // payload type and they are sent as the JSON body. An empty payload still
+  // posts no body, so the existing actions are unchanged on the wire.
+  const runAction = <Payload extends object = {}>(action: ERPShipmentAction) =>
     useMutation(
-      ({ id }: { id: string }) =>
+      ({ id, ...payload }: { id: string } & Payload) =>
         handleFailure(
           karrio.axios
-            .post<{ message: string }>(`/v1/shipments/${id}/erp/${action}`)
+            .post<{ message: string }>(
+              `/v1/shipments/${id}/erp/${action}`,
+              Object.keys(payload).length > 0 ? payload : undefined,
+            )
             .then(({ data }) => data),
         ),
       { onSuccess: invalidateCache },
@@ -57,11 +75,25 @@ export function useShipmentERPActions(id?: string) {
   // the parcel. Carrier path only, and the ERP requires status
   // "Label Created" — a purchased label, not a draft.
   const markShipped = runAction("mark-shipped");
+  // Deliberately NOT Karrio's own cancel: the ERP cancels the Karrio draft
+  // itself, clears the address-review flag and reports back whether the Monta
+  // order still has to be removed by hand — that note is the response
+  // `message`, so callers should show it rather than a generic sentence.
+  const cancelShipment = runAction("cancel-shipment");
+  // Records how the delivery ended, with the operator's reason. The ERP is
+  // where the reason is kept; the Karrio status is flipped separately by the
+  // caller, and only after this write succeeded.
+  const recordDeliveryOutcome = runAction<{
+    outcome: DeliveryOutcome;
+    note: string;
+  }>("record-delivery-outcome");
 
   return {
     markPicked,
     unmarkPicked,
     markOutForDelivery,
     markShipped,
+    cancelShipment,
+    recordDeliveryOutcome,
   };
 }

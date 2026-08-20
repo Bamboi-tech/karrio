@@ -15,6 +15,7 @@ import {
 } from "@karrio/ui/components/ui/table";
 import { Skeleton } from "@karrio/ui/components/ui/skeleton";
 import { formatDateTime, getURLSearchParams } from "@karrio/lib";
+import { toDisplayText } from "@karrio/ui/lib/error-text";
 import { useLogs } from "@karrio/hooks/log";
 import type { get_logs_logs_edges_node } from "@karrio/types/graphql/types";
 import React, { useContext, useEffect } from "react";
@@ -28,14 +29,18 @@ function parseData(data: any): any {
   return data;
 }
 
-function extractCarrier(log: get_logs_logs_edges_node): string | null {
+// Every extractor below funnels its value through toDisplayText: the log
+// payload is untrusted JSON and any of these fields can arrive as an object
+// (a serialized Django lazy translation proxy). Rendering one straight into
+// JSX throws and the root ErrorBoundary then replaces the whole page, so
+// these three ALWAYS return a string.
+function extractCarrier(log: get_logs_logs_edges_node): string {
   const data = parseData(log.data);
-  if (!data) return null;
-  return (
+  if (!data) return "";
+  return toDisplayText(
     data.carrier_name ||
-    data.selected_rate?.carrier_name ||
-    data.rates?.[0]?.carrier_name ||
-    null
+      data.selected_rate?.carrier_name ||
+      data.rates?.[0]?.carrier_name,
   );
 }
 
@@ -43,7 +48,12 @@ function extractRecipient(log: get_logs_logs_edges_node): string {
   const data = parseData(log.data);
   if (!data?.recipient) return "-";
   const { city, country_code, person_name } = data.recipient;
-  return [person_name, city, country_code].filter(Boolean).join(", ") || "-";
+  return (
+    [person_name, city, country_code]
+      .map((value: unknown) => toDisplayText(value))
+      .filter(Boolean)
+      .join(", ") || "-"
+  );
 }
 
 function extractFirstError(log: get_logs_logs_edges_node): string {
@@ -53,14 +63,19 @@ function extractFirstError(log: get_logs_logs_edges_node): string {
   const errors = response.errors || response.messages || [];
   if (Array.isArray(errors) && errors.length > 0) {
     const err = errors[0];
-    return typeof err === "string"
-      ? err
-      : err.message || err.details || err.detail || "-";
+    // Last resort is the entry itself: a lazy proxy has no message/detail
+    // key, and its own text reads better than "-".
+    return (
+      toDisplayText(
+        typeof err === "string"
+          ? err
+          : err?.message || err?.details || err?.detail || err,
+      ) || "-"
+    );
   }
-  if (response.error || response.message || response.detail) {
-    return response.error || response.message || response.detail;
-  }
-  return "-";
+  return (
+    toDisplayText(response.error || response.message || response.detail) || "-"
+  );
 }
 
 export function FailedShipmentsList() {

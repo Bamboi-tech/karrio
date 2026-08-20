@@ -3,6 +3,7 @@
 import * as React from "react";
 import { cn } from "@karrio/ui/lib/utils";
 import { formatDateTime } from "@karrio/lib";
+import { toDisplayText } from "@karrio/ui/lib/error-text";
 
 interface FailureReason {
   id: string;
@@ -19,6 +20,10 @@ interface FailureReasonsProps {
   className?: string;
 }
 
+// Every field below is coerced with toDisplayText: log payloads are
+// untrusted JSON and an error can arrive as an object (a serialized Django
+// lazy translation proxy), which React refuses as a child — it throws and the
+// root ErrorBoundary then replaces the whole page.
 function extractReasons(
   response: any,
   records: any[],
@@ -35,14 +40,16 @@ function extractReasons(
     // Handle errors array
     const errors = parsed.errors || parsed.messages || [];
     (Array.isArray(errors) ? errors : []).forEach((err: any, i: number) => {
-      const message = typeof err === "string"
-        ? err
-        : err.message || err.details || err.detail || JSON.stringify(err);
+      const message = toDisplayText(
+        typeof err === "string"
+          ? err
+          : err?.message || err?.details || err?.detail || err,
+      );
       reasons.push({
         id: `api-error-${i}`,
         message,
-        code: err.code || err.carrier_id || null,
-        carrier: err.carrier_name || err.carrier || null,
+        code: toDisplayText(err?.code || err?.carrier_id) || null,
+        carrier: toDisplayText(err?.carrier_name || err?.carrier) || null,
         timestamp: requestedAt,
       });
     });
@@ -51,8 +58,11 @@ function extractReasons(
     if (reasons.length === 0 && (parsed.error || parsed.message || parsed.detail)) {
       reasons.push({
         id: "api-error-single",
-        message: parsed.error || parsed.message || parsed.detail,
-        code: parsed.code || String(parsed.status_code || ""),
+        message: toDisplayText(
+          parsed.error || parsed.message || parsed.detail,
+        ),
+        code:
+          toDisplayText(parsed.code) || String(parsed.status_code || ""),
         carrier: null,
         timestamp: requestedAt,
       });
@@ -83,7 +93,10 @@ function extractReasons(
         id: `trace-error-${i}`,
         message: parsedError,
         code: null,
-        carrier: meta.connection?.carrier_name || meta.carrier_name || null,
+        carrier:
+          toDisplayText(
+            meta.connection?.carrier_name || meta.carrier_name,
+          ) || null,
         timestamp: record.timestamp
           ? new Date(record.timestamp * 1000).toISOString()
           : null,
@@ -92,14 +105,19 @@ function extractReasons(
       const traceErrors = parsedError.errors || parsedError.messages || [];
       if (Array.isArray(traceErrors) && traceErrors.length > 0) {
         traceErrors.forEach((err: any, j: number) => {
-          const message = typeof err === "string"
-            ? err
-            : err.message || err.details || err.detail || JSON.stringify(err);
+          const message = toDisplayText(
+            typeof err === "string"
+              ? err
+              : err?.message || err?.details || err?.detail || err,
+          );
           reasons.push({
             id: `trace-error-${i}-${j}`,
             message,
-            code: err.code || null,
-            carrier: meta.connection?.carrier_name || meta.carrier_name || null,
+            code: toDisplayText(err?.code) || null,
+            carrier:
+              toDisplayText(
+                meta.connection?.carrier_name || meta.carrier_name,
+              ) || null,
             timestamp: record.timestamp
               ? new Date(record.timestamp * 1000).toISOString()
               : null,
@@ -108,9 +126,14 @@ function extractReasons(
       } else if (parsedError.error || parsedError.message || parsedError.detail) {
         reasons.push({
           id: `trace-error-${i}`,
-          message: parsedError.error || parsedError.message || parsedError.detail,
-          code: parsedError.code || null,
-          carrier: meta.connection?.carrier_name || meta.carrier_name || null,
+          message: toDisplayText(
+            parsedError.error || parsedError.message || parsedError.detail,
+          ),
+          code: toDisplayText(parsedError.code) || null,
+          carrier:
+            toDisplayText(
+              meta.connection?.carrier_name || meta.carrier_name,
+            ) || null,
           timestamp: record.timestamp
             ? new Date(record.timestamp * 1000).toISOString()
             : null,

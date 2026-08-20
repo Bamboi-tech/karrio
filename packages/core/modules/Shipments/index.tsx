@@ -23,7 +23,12 @@ import { useDocumentTemplates } from "@karrio/hooks/document-template";
 import { useCarrierConnections } from "@karrio/hooks/user-connection";
 import { useDocumentPrinter, FormatType } from "@karrio/hooks/resource-token";
 import { ShipmentsFilter } from "@karrio/ui/components/shipments-filter";
-import { AddressType, RateType, ShipmentType } from "@karrio/types";
+import {
+  AddressType,
+  ManualShipmentStatusEnum,
+  RateType,
+  ShipmentType,
+} from "@karrio/types";
 import { ShipmentMenu } from "@karrio/ui/components/shipment-menu";
 import { FiltersCard } from "@karrio/ui/components/filters-card";
 import { ListPagination } from "@karrio/ui/components/list-pagination";
@@ -39,7 +44,7 @@ import {
 import { Button } from "@karrio/ui/components/ui/button";
 import { Checkbox } from "@karrio/ui/components/ui/checkbox";
 import { Skeleton } from "@karrio/ui/components/ui/skeleton";
-import { Loader2 } from "lucide-react";
+import { ChevronDown, Loader2 } from "lucide-react";
 import { CarrierImage } from "@karrio/ui/core/components/carrier-image";
 import { ShipmentsStatusBadge } from "@karrio/ui/components/shipments-status-badge";
 import {
@@ -55,7 +60,18 @@ import { useAPIMetadata } from "@karrio/hooks/api-metadata";
 import { useLoader } from "@karrio/ui/core/components/loader";
 import { AppLink } from "@karrio/ui/core/components/app-link";
 import { useShipments, useShipmentMutation } from "@karrio/hooks/shipment";
-import { useShipmentERPActions } from "@karrio/hooks/erp-actions";
+import {
+  DeliveryOutcome,
+  useShipmentERPActions,
+} from "@karrio/hooks/erp-actions";
+import { ConfirmationDialog } from "@karrio/ui/components/confirmation-dialog";
+import { ReasonPromptDialog } from "@karrio/ui/components/reason-prompt-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@karrio/ui/components/ui/dropdown-menu";
 import { useToast } from "@karrio/ui/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
 import React, { useContext, useEffect } from "react";
@@ -152,6 +168,48 @@ const describeError = (error: unknown) =>
     )
     .join("; ");
 
+// How a post-purchase row can end, offered from the Shipped card onward.
+// Every option writes TWICE: the ERP records the outcome WITH its reason
+// (the truth the office reads back), and Karrio's own status is flipped so
+// the row actually moves card. Karrio has no "returned" status, so a return
+// lands on delivery_failed here and stays a return only in the ERP.
+type OutcomeOption = {
+  outcome: DeliveryOutcome;
+  label: string;
+  status: ManualShipmentStatusEnum;
+  requiresReason: boolean;
+};
+
+const OUTCOME_OPTIONS: OutcomeOption[] = [
+  {
+    outcome: "exception",
+    label: "Exception",
+    status: ManualShipmentStatusEnum.needs_attention,
+    requiresReason: true,
+  },
+  {
+    outcome: "failed",
+    label: "Failed",
+    status: ManualShipmentStatusEnum.delivery_failed,
+    requiresReason: true,
+  },
+  {
+    // Delivered would speak for itself, but overriding a TRACKED shipment's
+    // status requires a reason (the carrier owns that status; the override
+    // is audited on metadata.status_override) — so it prompts like the rest.
+    outcome: "delivered",
+    label: "Delivered",
+    status: ManualShipmentStatusEnum.delivered,
+    requiresReason: true,
+  },
+  {
+    outcome: "returned",
+    label: "Returned",
+    status: ManualShipmentStatusEnum.delivery_failed,
+    requiresReason: true,
+  },
+];
+
 export default function Page(pageProps: any) {
   const Component = (): JSX.Element => {
     const searchParams = useSearchParams();
@@ -163,8 +221,17 @@ export default function Page(pageProps: any) {
     // Which sequential bulk run (if any) is in flight — the buttons disable
     // each other so two batches can never interleave over one selection.
     const [bulkAction, setBulkAction] = React.useState<
-      "buy_and_print" | "mark_shipped" | null
+      | "buy_and_print"
+      | "mark_shipped"
+      | "cancel_shipment"
+      | "record_outcome"
+      | null
     >(null);
+    // Cancelling cannot be undone, and the outcome actions record a reason —
+    // both go through a dialog before the batch starts.
+    const [cancelDialogOpen, setCancelDialogOpen] = React.useState(false);
+    const [outcomePrompt, setOutcomePrompt] =
+      React.useState<OutcomeOption | null>(null);
     const { previewShipment } = useContext(ShipmentPreviewSheetContext);
     const { user_connections } = useCarrierConnections();
     const { system_connections } = useSystemConnections();
@@ -515,6 +582,28 @@ export default function Page(pageProps: any) {
     // statuses), so the bulk Mark shipped button keys on the exact filter.
     const isPickedView =
       statusFilter.length === 1 && statusFilter[0] === "created";
+    const isNeedsAttentionView = statusFilter.includes(ADDRESS_REVIEW_SENTINEL);
+    // The five draft-stage cards. A row on any of them is still a draft — a
+    // purchased shipment is no longer "draft" — so it can never have a label
+    // (Print Labels is dead there) and cancelling it is always meaningful.
+    const isDraftStageView =
+      isNeedsAttentionView ||
+      isCompleteView ||
+      isHoldView ||
+      isPlannedView ||
+      isTodayView;
+    // Exact set match, for the same reason isPickedView is exact: the All
+    // card contains every one of these statuses, so membership alone would
+    // light the outcome dropdown up there too.
+    const matchesCard = (statuses: string[]) =>
+      statusFilter.length === statuses.length &&
+      statuses.every((status) => statusFilter.includes(status));
+    // Shipped / Delivered / Exception — the post-purchase cards, where a
+    // delivery can still turn out differently than the carrier reported.
+    const isPostPurchaseView =
+      matchesCard(["shipped", "in_transit", "out_for_delivery"]) ||
+      matchesCard(["delivered"]) ||
+      matchesCard(["needs_attention", "delivery_failed"]);
 
     // Complete/Planned/Today are narrowed client-side over the fetched
     // status=draft page (see the sentinel comment up top for why the API
@@ -672,6 +761,111 @@ export default function Page(pageProps: any) {
       reportBulkFailures("Mark shipped", failures);
     };
 
+    // Draft cards only: the ERP cancels the Karrio draft itself, clears the
+    // address-review flag and reports back whether the Monta order still has
+    // to be removed by hand. That note is the response message — it is worth
+    // more than a generic success line, so the toast quotes it per row.
+    // Same sequential loop and per-row error collection as the other runners.
+    const runCancelShipments = async () => {
+      const targets = selectedShipments();
+      if (targets.length === 0) return;
+
+      setBulkAction("cancel_shipment");
+      const notes: string[] = [];
+      const failures: string[] = [];
+      let succeeded = 0;
+
+      for (const shipment of targets) {
+        try {
+          const { message } = await erpActions.cancelShipment.mutateAsync({
+            id: shipment.id,
+          });
+          if (message) notes.push(`${shipmentLabel(shipment)}: ${message}`);
+          succeeded += 1;
+        } catch (error) {
+          failures.push(`${shipmentLabel(shipment)}: ${describeError(error)}`);
+        }
+      }
+
+      setBulkAction(null);
+      queryClient.invalidateQueries(["shipments"]);
+
+      if (succeeded > 0) {
+        toast({
+          title: `${succeeded} shipment(s) cancelled`,
+          description:
+            notes.length > 0
+              ? notes.join(" | ")
+              : "De zending is geannuleerd; de Sales Order blijft staan.",
+        });
+      }
+      reportBulkFailures("Cancel", failures);
+    };
+
+    // Post-purchase cards: record how the delivery ended. Two writes per row,
+    // ERP first — the ERP is where the reason is kept, and a row that moved
+    // card without a recorded reason is worse than one that did not move, so
+    // the Karrio status only follows a successful ERP write.
+    const runRecordOutcome = async (option: OutcomeOption, note = "") => {
+      const targets = selectedShipments();
+      if (targets.length === 0) return;
+
+      setBulkAction("record_outcome");
+      const failures: string[] = [];
+      let succeeded = 0;
+      let moved = 0;
+      let stuck = 0;
+
+      for (const shipment of targets) {
+        try {
+          await erpActions.recordDeliveryOutcome.mutateAsync({
+            id: shipment.id,
+            outcome: option.outcome,
+            note,
+          });
+          // A tracked shipment's status belongs to the carrier; the operator
+          // may override it only with a reason (recorded server-side onto
+          // metadata.status_override for the audit). The reason from the
+          // dialog is passed along, so the override is allowed — but a
+          // refusal here must never fail the row: the ERP already has the
+          // outcome on the record, and reporting it as lost would be a lie.
+          try {
+            await mutation.changeStatus.mutateAsync({
+              id: shipment.id,
+              status: option.status,
+              ...(note ? { reason: note } : {}),
+            });
+            moved += 1;
+          } catch {
+            stuck += 1;
+          }
+          succeeded += 1;
+        } catch (error) {
+          failures.push(`${shipmentLabel(shipment)}: ${describeError(error)}`);
+        }
+      }
+
+      setBulkAction(null);
+      queryClient.invalidateQueries(["shipments"]);
+
+      if (succeeded > 0) {
+        toast({
+          title: `${succeeded} shipment(s) marked ${option.label.toLowerCase()}`,
+          description: stuck
+            ? `Recorded in the ERP. ${moved} row(s) moved card; ${stuck} stayed put because Karrio tracks them itself — the ERP has the outcome either way.`
+            : `Recorded in the ERP and moved to ${formatRef(option.status.toString())}.`,
+        });
+      }
+      reportBulkFailures(`Record ${option.label.toLowerCase()}`, failures);
+    };
+
+    // Delivered speaks for itself; the other three must carry a reason, so
+    // they detour through the prompt dialog first.
+    const selectOutcome = (option: OutcomeOption) =>
+      option.requiresReason
+        ? setOutcomePrompt(option)
+        : runRecordOutcome(option);
+
     const searchParamsString = searchParams?.toString() ?? "";
     useEffect(() => {
       updateFilter();
@@ -776,19 +970,56 @@ export default function Page(pageProps: any) {
                   {selection.length > 0 && (
                     <TableHead className="p-2" colSpan={10}>
                       <div className="flex items-center gap-2 flex-wrap">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={!compatibleTypeSelection(selection) || documentPrinter.isLoading}
-                          className="px-3"
-                          onClick={() => documentPrinter.openBatchLabels(
-                            selection,
-                            { format: (computeDocFormat(selection) || "pdf")?.toLowerCase() as FormatType, doc: "label" }
-                          )}
-                        >
-                          {documentPrinter.isLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                          Print Labels
-                        </Button>
+                        {/* Hidden on the five draft-stage cards: no row
+                            there can have a label yet (buying one moves the
+                            shipment out of "draft"), so the button would be
+                            dead. Its slot is taken by the outcome dropdown
+                            on the post-purchase cards. */}
+                        {!isDraftStageView && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={!compatibleTypeSelection(selection) || documentPrinter.isLoading}
+                            className="px-3"
+                            onClick={() => documentPrinter.openBatchLabels(
+                              selection,
+                              { format: (computeDocFormat(selection) || "pdf")?.toLowerCase() as FormatType, doc: "label" }
+                            )}
+                          >
+                            {documentPrinter.isLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+                            Print Labels
+                          </Button>
+                        )}
+                        {/* Shipped card onward: what the carrier reported is
+                            not always what happened. Each option writes the
+                            outcome (with its reason) to the ERP and then
+                            moves the row to the matching Karrio card. */}
+                        {isPostPurchaseView && (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={bulkAction !== null}
+                                className="px-3"
+                              >
+                                {bulkAction === "record_outcome" && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+                                Record outcome
+                                <ChevronDown className="h-3 w-3 ml-1" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="start" className="w-48">
+                              {OUTCOME_OPTIONS.map((option) => (
+                                <DropdownMenuItem
+                                  key={option.outcome}
+                                  onClick={() => selectOutcome(option)}
+                                >
+                                  {option.label}
+                                </DropdownMenuItem>
+                              ))}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        )}
                         {/* Today's warehouse run: pick in the ERP, buy the
                             label, print once. Sequential per row (see
                             runBuyAndPrint) and only offered on the Today
@@ -817,6 +1048,22 @@ export default function Page(pageProps: any) {
                           >
                             {bulkAction === "mark_shipped" && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
                             Mark shipped
+                          </Button>
+                        )}
+                        {/* Draft cards only: hand the cancel to the ERP,
+                            which cancels the Karrio draft itself and cleans
+                            up behind it. Irreversible, so it is confirmed
+                            first (see the dialog at the bottom). */}
+                        {isDraftStageView && (
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            disabled={bulkAction !== null}
+                            className="px-3"
+                            onClick={() => setCancelDialogOpen(true)}
+                          >
+                            {bulkAction === "cancel_shipment" && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+                            Cancel
                           </Button>
                         )}
                         <Button
@@ -1116,6 +1363,34 @@ export default function Page(pageProps: any) {
               <p>No shipment found.</p>
             </div>
           </div>
+        )}
+
+        <ConfirmationDialog
+          open={cancelDialogOpen}
+          onOpenChange={setCancelDialogOpen}
+          title="Cancel shipment(s)?"
+          description={`${selectedShipments().length} zending(en) worden geannuleerd in Karrio en in het ERP. Dit kan niet ongedaan gemaakt worden. Let op: de Sales Order zelf wordt NIET geannuleerd — alleen de zending.`}
+          confirmLabel="Cancel shipment(s)"
+          cancelLabel="Terug"
+          onConfirm={runCancelShipments}
+          isLoading={bulkAction === "cancel_shipment"}
+        />
+
+        {/* Mounted only while an outcome is pending, so the reason field is
+            empty again on every run. */}
+        {outcomePrompt && (
+          <ReasonPromptDialog
+            open={true}
+            onOpenChange={(open) => !open && setOutcomePrompt(null)}
+            title={`Mark as ${outcomePrompt.label}`}
+            description={`De reden wordt vastgelegd in het ERP voor ${selectedShipments().length} zending(en) en bepaalt hoe de rij verder wordt afgehandeld.`}
+            fieldLabel="Reason"
+            placeholder="bijv. pakket beschadigd retour ontvangen"
+            confirmLabel={outcomePrompt.label}
+            cancelLabel="Terug"
+            onConfirm={(reason) => runRecordOutcome(outcomePrompt, reason)}
+            isLoading={bulkAction === "record_outcome"}
+          />
         )}
       </>
     );

@@ -2153,3 +2153,58 @@ class TestPurchasedShipmentMetadataUpdate(TestShipmentFixture):
         )
 
         self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+
+
+class TestShipmentERPAction(TestShipmentFixture):
+    """The ERP relay endpoint must forward the request body as the ERP
+    method's arguments, and refuse anything outside the whitelist."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.shipment.metadata = {"karrio_shipment": "KAR-SHIP-2026-00001"}
+        self.shipment.save()
+
+    def _url(self, action: str) -> str:
+        return reverse(
+            "karrio.server.manager:shipment-erp-action",
+            kwargs=dict(pk=self.shipment.pk, action=action),
+        )
+
+    def test_request_body_is_forwarded_as_method_arguments(self):
+        with patch("karrio.server.core.erp_gate.run_erp_shipment_action") as run_action:
+            run_action.return_value = {"message": "Outcome recorded."}
+            response = self.client.post(
+                self._url("record-delivery-outcome"),
+                data=dict(outcome="delivered", note="left with neighbour"),
+                format="json",
+            )
+
+        self.assertResponseNoErrors(response)
+        _shipment, action = run_action.call_args[0]
+        self.assertEqual(action, "record_delivery_outcome")
+        self.assertEqual(
+            run_action.call_args[1]["args"],
+            {"outcome": "delivered", "note": "left with neighbour"},
+        )
+
+    def test_parameterless_action_forwards_no_arguments(self):
+        with patch("karrio.server.core.erp_gate.run_erp_shipment_action") as run_action:
+            run_action.return_value = {"message": "Shipment cancelled."}
+            response = self.client.post(self._url("cancel-shipment"), format="json")
+
+        self.assertResponseNoErrors(response)
+        self.assertIsNone(run_action.call_args[1]["args"])
+
+    def test_unexpected_argument_is_a_bad_request(self):
+        response = self.client.post(
+            self._url("mark-picked"),
+            data=dict(outcome="delivered"),
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_unknown_action_is_a_bad_request(self):
+        response = self.client.post(self._url("delete"), format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)

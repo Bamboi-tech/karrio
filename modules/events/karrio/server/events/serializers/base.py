@@ -8,6 +8,7 @@ class EventTypes(lib.StrEnum):
     shipment_cancelled = "shipment_cancelled"
     shipment_fulfilled = "shipment_fulfilled"
     shipment_out_for_delivery = "shipment_out_for_delivery"
+    shipment_delivered = "shipment_delivered"
     shipment_needs_attention = "shipment_needs_attention"
     shipment_delivery_failed = "shipment_delivery_failed"
     shipment_recipient_updated = "shipment_recipient_updated"

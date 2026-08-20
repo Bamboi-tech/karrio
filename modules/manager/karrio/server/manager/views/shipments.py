@@ -291,8 +291,12 @@ class ShipmentPurchase(APIView):
 
 class ShipmentERPAction(APIView):
     """Bamboi fork: relay a warehouse action to the ERP (Mark Picked / Undo
-    pick / Mark Out for Delivery / Mark Shipped) so the dashboard is a full
-    workstation.
+    pick / Mark Out for Delivery / Mark Shipped / Cancel / Record delivery
+    outcome) so the dashboard is a full workstation.
+
+    The request body, when present, is the ERP method's arguments — the
+    relay only forwards the argument names ERP_SHIPMENT_ACTIONS declares for
+    that action and refuses anything else with a 400.
 
     The relay adds no business logic: the ERP document method enforces its
     own gates and mirrors the resulting erp_status back onto this shipment's
@@ -306,7 +310,11 @@ class ShipmentERPAction(APIView):
         from karrio.server.core.erp_gate import run_erp_shipment_action
 
         shipment = models.Shipment.access_by(request).get(pk=pk)
-        result = run_erp_shipment_action(shipment, action.replace("-", "_"))
+        result = run_erp_shipment_action(
+            shipment,
+            action.replace("-", "_"),
+            args=request.data or None,
+        )
 
         return Response(result)
 

@@ -22,7 +22,6 @@ import logging
 import requests
 
 from django.conf import settings
-from django.utils.translation import gettext_lazy as _
 
 from karrio.server.core.exceptions import APIException
 
@@ -52,10 +51,8 @@ def assert_erp_label_allowed(shipment) -> None:
     token = getattr(settings, "ERP_GATE_TOKEN", None)
     if not url or not token:
         raise APIException(
-            _(
-                "This shipment is managed by ERP but the ERP label gate is not configured "
-                "(ERP_GATE_URL / ERP_GATE_TOKEN) — buy the label via the ERP button instead."
-            ),
+            "This shipment is managed by ERP but the ERP label gate is not configured "
+            "(ERP_GATE_URL / ERP_GATE_TOKEN) — buy the label via the ERP button instead.",
             code="erp_gate_unconfigured",
             status_code=424,
         )
@@ -77,18 +74,15 @@ def assert_erp_label_allowed(shipment) -> None:
     except requests.RequestException as error:
         logger.warning("ERP label gate unreachable for %s: %s", shipment.id, error)
         raise APIException(
-            _(
-                "ERP label gate unreachable — the purchase is refused to be safe. "
-                "Try again in a moment or buy the label via the ERP button."
-            ),
+            "ERP label gate unreachable — the purchase is refused to be safe. "
+            "Try again in a moment or buy the label via the ERP button.",
             code="erp_gate_unreachable",
             status_code=424,
         )
 
     if not result.get("allowed"):
         raise APIException(
-            result.get("reason")
-            or _("ERP refused the label purchase for this shipment."),
+            result.get("reason") or "ERP refused the label purchase for this shipment.",
             code="erp_gate_blocked",
             status_code=409,
         )
@@ -96,18 +90,25 @@ def assert_erp_label_allowed(shipment) -> None:
 
 # ---------------------------------------------------------------------------
 # ERP shipment actions (Mark Picked / Undo pick / Mark Out for Delivery /
-# Mark Shipped)
+# Mark Shipped / Cancel / Record delivery outcome)
 # ---------------------------------------------------------------------------
 
-# Whitelisted @frappe.whitelist() doc methods on the ERP's Karrio Shipment.
-# The relay adds no logic of its own: the ERP enforces its own gates
-# (assert_order_not_blocked, assert_self_delivery_allowed) and mirrors the
-# resulting erp_status back onto this shipment's metadata by itself.
+# Whitelisted @frappe.whitelist() doc methods on the ERP's Karrio Shipment,
+# mapped to the argument names each one accepts. This mapping is the only
+# source of truth: an action outside it, or an argument name outside its
+# tuple, never reaches the ERP. An empty tuple means the method takes no
+# arguments and the caller may not send any.
+#
+# The relay adds no logic of its own beyond that: the ERP enforces its own
+# gates (assert_order_not_blocked, assert_self_delivery_allowed) and mirrors
+# the resulting erp_status back onto this shipment's metadata by itself.
 ERP_SHIPMENT_ACTIONS = {
-    "mark_picked",
-    "unmark_picked",
-    "mark_out_for_delivery",
-    "mark_shipped",
+    "mark_picked": (),
+    "unmark_picked": (),
+    "mark_out_for_delivery": (),
+    "mark_shipped": (),
+    "cancel_shipment": (),
+    "record_delivery_outcome": ("outcome", "note"),
 }
 RUN_DOC_METHOD_PATH = "/api/method/frappe.handler.run_doc_method"
 
@@ -126,20 +127,43 @@ def _erp_error_message(response) -> str:
             return str(body["exception"]).split(":", 1)[-1].strip()
     except (ValueError, TypeError):
         pass
-    return _("ERP refused the action.")
+    return "ERP refused the action."
 
 
-def run_erp_shipment_action(shipment, action: str) -> dict:
+def run_erp_shipment_action(shipment, action: str, args: dict = None) -> dict:
     """Relay one warehouse action to the ERP's Karrio Shipment document.
+
+    ``args`` carries the method arguments for the actions that take any
+    (``record_delivery_outcome``); it is validated against
+    ``ERP_SHIPMENT_ACTIONS`` so a caller can never reach an ERP method or an
+    ERP argument the fork did not whitelist.
 
     Returns ``{"message": <ERP's own success message>}``. Raises with the
     ERP's refusal (hold, wrong status, wrong mode) or on transport failure —
     same fail-closed doctrine as the label gate.
     """
-    if action not in ERP_SHIPMENT_ACTIONS:
+    allowed_args = ERP_SHIPMENT_ACTIONS.get(action)
+    if allowed_args is None:
         raise APIException(
-            _("Unknown ERP shipment action."),
+            "Unknown ERP shipment action.",
             code="erp_action_unknown",
+            status_code=400,
+        )
+
+    if args is not None and not isinstance(args, dict):
+        raise APIException(
+            "ERP shipment action arguments must be a JSON object.",
+            code="erp_action_invalid_args",
+            status_code=400,
+        )
+
+    arguments = {key: value for key, value in (args or {}).items()}
+    unexpected = sorted(set(arguments) - set(allowed_args))
+    if unexpected:
+        raise APIException(
+            f"Unexpected argument(s) for ERP shipment action '{action}': "
+            f"{', '.join(unexpected)}.",
+            code="erp_action_invalid_args",
             status_code=400,
         )
 
@@ -147,7 +171,7 @@ def run_erp_shipment_action(shipment, action: str) -> dict:
     docname = metadata.get("karrio_shipment")
     if not docname:
         raise APIException(
-            _("This shipment is not linked to an ERP shipment."),
+            "This shipment is not linked to an ERP shipment.",
             code="erp_action_unlinked",
             status_code=409,
         )
@@ -156,18 +180,23 @@ def run_erp_shipment_action(shipment, action: str) -> dict:
     token = getattr(settings, "ERP_GATE_TOKEN", None)
     if not url or not token:
         raise APIException(
-            _(
-                "The ERP link is not configured (ERP_GATE_URL / ERP_GATE_TOKEN) — "
-                "run this action from the ERP instead."
-            ),
+            "The ERP link is not configured (ERP_GATE_URL / ERP_GATE_TOKEN) — "
+            "run this action from the ERP instead.",
             code="erp_gate_unconfigured",
             status_code=424,
         )
 
+    payload = {"dt": "Karrio Shipment", "dn": docname, "method": action}
+    if allowed_args:
+        # frappe.handler.run_doc_method splats a dict ``args`` into keyword
+        # arguments; sending it for every argument-taking action keeps the
+        # ERP method on that kwargs path instead of the positional fallback.
+        payload["args"] = arguments
+
     try:
         response = requests.post(
             url.rstrip("/") + RUN_DOC_METHOD_PATH,
-            json={"dt": "Karrio Shipment", "dn": docname, "method": action},
+            json=payload,
             headers={"Authorization": f"token {token}"},
             timeout=getattr(settings, "ERP_GATE_TIMEOUT", 5),
         )
@@ -176,9 +205,7 @@ def run_erp_shipment_action(shipment, action: str) -> dict:
             "ERP action %s unreachable for %s: %s", action, shipment.id, error
         )
         raise APIException(
-            _(
-                "ERP unreachable — try again in a moment or run this action from the ERP."
-            ),
+            "ERP unreachable — try again in a moment or run this action from the ERP.",
             code="erp_gate_unreachable",
             status_code=424,
         )
@@ -190,5 +217,5 @@ def run_erp_shipment_action(shipment, action: str) -> dict:
             status_code=409,
         )
 
-    message = ((response.json() or {}).get("message")) or _("Done.")
+    message = ((response.json() or {}).get("message")) or "Done."
     return {"message": message}

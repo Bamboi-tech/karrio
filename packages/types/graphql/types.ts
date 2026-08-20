@@ -6498,6 +6498,7 @@ export interface PaymentInput {
 export interface ChangeShipmentStatusMutationInput {
   id: string;
   status?: ManualShipmentStatusEnum | null;
+  reason?: string | null;
 }
 
 // null

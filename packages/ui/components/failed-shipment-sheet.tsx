@@ -10,6 +10,7 @@ import {
 import { StatusCodeBadge } from "@karrio/ui/components/status-code-badge";
 import { FailureReasons } from "@karrio/ui/components/failure-reasons";
 import { formatDateTime, failsafe, jsonify } from "@karrio/lib";
+import { toDisplayText } from "@karrio/ui/lib/error-text";
 import { useLocation } from "@karrio/hooks/location";
 import { X, Copy, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@karrio/ui/components/ui/button";
@@ -37,22 +38,26 @@ function parseLogData(data: any): any {
   return data;
 }
 
+// The log payload is untrusted JSON: any of these fields can arrive as an
+// object instead of a string (a serialized Django lazy translation proxy),
+// and React throws on an object child. toDisplayText guarantees a string, so
+// a malformed log can never take the sheet — or the page behind it — down.
 function AddressSection({ label, address }: { label: string; address: any }) {
   if (!address) return null;
 
-  const name = [address.person_name, address.company_name]
-    .filter(Boolean)
-    .join(" - ");
-  const line = [
-    address.address_line1,
-    address.address_line2,
-  ].filter(Boolean).join(", ");
-  const location = [
+  const join = (values: unknown[], separator: string) =>
+    values.map((value) => toDisplayText(value)).filter(Boolean).join(separator);
+
+  const name = join([address.person_name, address.company_name], " - ");
+  const line = join([address.address_line1, address.address_line2], ", ");
+  const location = join([
     address.city,
     address.state_code,
     address.postal_code,
     address.country_code,
-  ].filter(Boolean).join(", ");
+  ], ", ");
+  const email = toDisplayText(address.email);
+  const phone = toDisplayText(address.phone_number);
 
   return (
     <div>
@@ -60,11 +65,11 @@ function AddressSection({ label, address }: { label: string; address: any }) {
       {name && <p className="text-sm font-medium text-gray-900">{name}</p>}
       {line && <p className="text-sm text-gray-600">{line}</p>}
       {location && <p className="text-sm text-gray-600">{location}</p>}
-      {address.email && (
-        <p className="text-xs text-gray-500 mt-0.5">{address.email}</p>
+      {email && (
+        <p className="text-xs text-gray-500 mt-0.5">{email}</p>
       )}
-      {address.phone_number && (
-        <p className="text-xs text-gray-500">{address.phone_number}</p>
+      {phone && (
+        <p className="text-xs text-gray-500">{phone}</p>
       )}
     </div>
   );

@@ -25,6 +25,7 @@ export const BAMBOI_FEATURE_DEFAULTS: Record<string, boolean> = {
   btn_cancel_shipment: true,
   btn_record_delivery_outcome: true,
   btn_buy_label_dashboard: true,
+  btn_confirm_address: true,
   // Safety gates
   gate_shopify_hold_probe: true,
   gate_hold_block: true,

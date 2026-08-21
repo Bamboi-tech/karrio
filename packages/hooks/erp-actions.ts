@@ -22,6 +22,7 @@ export type ERPShipmentAction =
   | "mark-shipped"
   | "cancel-shipment"
   | "record-delivery-outcome"
+  | "confirm-address"
   | "unmark-shipped"
   | "unmark-out-for-delivery"
   | "unmark-delivered"
@@ -153,6 +154,10 @@ export function useShipmentERPActions(id?: string) {
   // filed delivery/failure/return can be re-recorded. The Karrio status is
   // NOT touched here — the caller moves the row back separately if needed.
   const undoDeliveryOutcome = runAction("undo-delivery-outcome");
+  // Overrules Google's hint through the ERP's own Confirm-as-correct door:
+  // the server re-validates live and only a Suspect verdict passes; the
+  // release is Address-wide and audited with the mandatory reason.
+  const confirmAddress = runAction<{ reason: string }>("confirm-address");
 
   return {
     markPicked,
@@ -165,5 +170,6 @@ export function useShipmentERPActions(id?: string) {
     unmarkOutForDelivery,
     unmarkDelivered,
     undoDeliveryOutcome,
+    confirmAddress,
   };
 }

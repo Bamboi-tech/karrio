@@ -112,7 +112,30 @@ export const AddressEditDialog = ({
               <p className="text-sm text-muted-foreground">{description}</p>
             )}
           </DialogHeader>
-          
+
+          {/* Google's own words, INSIDE the dialog: the operator opening
+              this form is exactly the person who needs the proposal, and
+              until now it only rendered on the page underneath. Mirrored by
+              the ERP as address_suggestion / address_validation_note; absent
+              keys mean Google offered nothing — then nothing renders. */}
+          {(() => {
+            const md = ((shipment as any)?.metadata || {}) as Record<string, unknown>;
+            const suggestion = typeof md["address_suggestion"] === "string" ? (md["address_suggestion"] as string) : null;
+            const note = typeof md["address_validation_note"] === "string" ? (md["address_validation_note"] as string) : null;
+            if (!suggestion && !note) return null;
+            return (
+              <div className="mx-4 mt-3 rounded border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm">
+                {suggestion && (
+                  <>
+                    <p className="font-semibold text-yellow-800">Google suggests</p>
+                    <p className="text-yellow-900">{suggestion}</p>
+                  </>
+                )}
+                {note && <p className="text-xs text-yellow-700 mt-1">{note}</p>}
+              </div>
+            );
+          })()}
+
           <div className="flex-1 overflow-y-auto mt-4 pb-6 px-4">
             <AddressForm
               ref={formRef}

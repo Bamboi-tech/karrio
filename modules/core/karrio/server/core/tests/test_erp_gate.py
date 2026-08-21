@@ -247,6 +247,7 @@ class TestShipmentActionRelay(TestCase):
             "unmark_out_for_delivery",
             "unmark_delivered",
             "undo_delivery_outcome",
+            "confirm_address",
         ):
             with self.subTest(action=action):
                 with mock.patch.object(
@@ -286,6 +287,7 @@ class TestShipmentActionRelay(TestCase):
             "unmark_out_for_delivery",
             "unmark_delivered",
             "undo_delivery_outcome",
+            "confirm_address",
         ):
             with self.subTest(action=action):
                 with mock.patch.object(erp_gate.requests, "post") as post:

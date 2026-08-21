@@ -22,6 +22,9 @@ import { CarrierImage } from "@karrio/ui/core/components/carrier-image";
 import { RecentActivity } from "@karrio/ui/components/recent-activity";
 import { CopiableLink } from "@karrio/ui/components/copiable-link";
 import { ShipmentMenu } from "@karrio/ui/components/shipment-menu";
+import { ReasonPromptDialog } from "@karrio/ui/components/reason-prompt-dialog";
+import { useShipmentERPActions } from "@karrio/hooks/erp-actions";
+import { useBamboiFeatures } from "@karrio/hooks/bamboi-features";
 import { useNotifier } from "@karrio/ui/core/components/notifier";
 import { formatDateTime, formatRef, isNone } from "@karrio/lib";
 import { useLoader } from "@karrio/ui/core/components/loader";
@@ -60,6 +63,9 @@ export const ShipmentComponent = ({
   } = useShipment(entity_id);
   const trackerId = shipment?.tracker_id;
   const addressReview = getAddressReview(shipment?.metadata, shipment?.meta);
+  const erpActions = useShipmentERPActions(entity_id);
+  const { isEnabled } = useBamboiFeatures();
+  const [confirmAddressOpen, setConfirmAddressOpen] = React.useState(false);
   const { query: trackerLogs } = useLogs(trackerId ? { entity_id: trackerId } : { entity_id: "__none__" });
   const { query: trackerEvents } = useEvents(trackerId ? { entity_id: trackerId } : { entity_id: "__none__" });
 
@@ -166,6 +172,22 @@ export const ShipmentComponent = ({
     } catch (message: any) {
       notifier.notify({ type: NotificationType.error, message });
       throw message;
+    }
+  };
+
+  // Rico's override of Google's hint: relayed to the ERP's own Confirm-as-
+  // correct door, so the server re-validates and only a Suspect verdict
+  // passes — the button is a courtesy, not the boundary.
+  const confirmAddressCorrect = async (reason: string) => {
+    try {
+      const { message } = await erpActions.confirmAddress.mutateAsync({
+        id: entity_id,
+        reason,
+      });
+      setConfirmAddressOpen(false);
+      notifier.notify({ type: NotificationType.success, message });
+    } catch (message: any) {
+      notifier.notify({ type: NotificationType.error, message });
     }
   };
 
@@ -614,6 +636,24 @@ export const ShipmentComponent = ({
                           />
                         )}
                       </div>
+                      {/* Overrule Google's hint: only offered on a Suspect
+                          verdict — Invalid has no confirm door, by design,
+                          and the ERP refuses it server-side regardless. */}
+                      {shipment.status === "draft" &&
+                        Boolean(shipment.metadata?.sales_order) &&
+                        addressReview?.status === "Suspect" &&
+                        !addressReview?.pending &&
+                        isEnabled("btn_confirm_address") && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setConfirmAddressOpen(true)}
+                            disabled={erpActions.confirmAddress.isLoading}
+                          >
+                            <i className="fas fa-check mr-2 text-xs"></i>
+                            Address is correct
+                          </Button>
+                        )}
                       {shipment.status === "draft" && Boolean(shipment.metadata?.sales_order) && (
                         <AddressEditDialog
                           header="Correct delivery address"
@@ -631,6 +671,18 @@ export const ShipmentComponent = ({
                         />
                       )}
                     </div>
+
+                    <ReasonPromptDialog
+                      open={confirmAddressOpen}
+                      onOpenChange={setConfirmAddressOpen}
+                      title="Address is correct"
+                      description="Overrules Google's hint for every order shipping to this address. Say how you verified it — the reason goes on the record, and the ERP re-checks the verdict before releasing."
+                      fieldLabel="How was this address verified?"
+                      placeholder="e.g. called the customer, checked with the neighbour"
+                      confirmLabel="Confirm address"
+                      onConfirm={confirmAddressCorrect}
+                      isLoading={erpActions.confirmAddress.isLoading}
+                    />
 
                     <AddressDescription address={shipment.recipient} />
 

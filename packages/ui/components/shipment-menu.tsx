@@ -11,6 +11,8 @@ import { useDocumentPrinter, FormatType } from "@karrio/hooks/resource-token";
 import { errorToMessages, formatRef, isNone, isNoneOrEmpty, p } from "@karrio/lib";
 import { useShipmentMutation } from "@karrio/hooks/shipment";
 import {
+  DELIVERY_OUTCOME_OPTIONS,
+  DeliveryOutcomeOption,
   useShipmentERPActions,
   isERPLinked,
   getERPStatus,
@@ -18,6 +20,7 @@ import {
 import { useBamboiFeatures } from "@karrio/hooks/bamboi-features";
 import { getShopifyHold, shopifyHoldTooltip } from "./shipment-hold";
 import { DeleteConfirmationDialog } from "./delete-confirmation-dialog";
+import { ReasonPromptDialog } from "./reason-prompt-dialog";
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAppMode } from "@karrio/hooks/app-mode";
@@ -27,10 +30,25 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import { Button } from "./ui/button";
 import { MoreHorizontal } from "lucide-react";
+
+// errorToMessages yields either strings or API message objects; flatten both
+// into one operator-readable line (same shape the bulk toolbar renders).
+const describeError = (error: unknown) =>
+  errorToMessages(error)
+    .map((message: unknown) =>
+      typeof message === "string"
+        ? message
+        : (message as { message?: string })?.message ||
+          JSON.stringify(message),
+    )
+    .join("; ");
 
 interface ShipmentMenuComponent
   extends React.InputHTMLAttributes<HTMLDivElement> {
@@ -77,6 +95,18 @@ export const ShipmentMenu = ({
   const erpSelfDelivery =
     ((shipment.metadata || {}) as Record<string, unknown>)["fulfilment_mode"] ===
     "self_delivery";
+  // Per-row twins of the bulk toolbar actions (buy & print / record outcome).
+  const [buyAndPrinting, setBuyAndPrinting] = useState(false);
+  const [outcomePrompt, setOutcomePrompt] =
+    useState<DeliveryOutcomeOption | null>(null);
+  const [outcomeLoading, setOutcomeLoading] = useState(false);
+  // An ERP-managed draft is cancelled THROUGH the ERP (it cancels the Karrio
+  // draft itself, clears the address-review flag and reports whether the
+  // Monta order still needs removing by hand) — never via Karrio's own void.
+  // Draft stage only, like the bulk Cancel button; on later stages the ERP's
+  // gate (gate_cancel_after_pick) is the enforcement anyway.
+  const erpDraft =
+    erpLinked && shipment.status === ShipmentStatusEnum.draft;
 
   const runERPAction =
     (mutation: typeof erpActions.markPicked, title: string) => async () => {
@@ -96,6 +126,82 @@ export const ShipmentMenu = ({
         throw error;
       }
     };
+
+  // The single-row twin of the bulk "Buy and print" run: ERP mark picked →
+  // buy the label → open it for printing. Mark picked comes BEFORE the
+  // purchase on purpose (same as the bulk loop): the ERP's mark_picked only
+  // accepts a shipment in status "Synced", and buying the label moves the
+  // ERP row to "Label Created" — pick after buy would always be refused.
+  // The mutation hooks invalidate the shipments cache themselves, so the row
+  // jumps to the Picked card on refetch.
+  const buyAndPrintLabel = async () => {
+    setBuyAndPrinting(true);
+    try {
+      await erpActions.markPicked.mutateAsync({ id: shipment.id });
+      await mutation.buyLabel.mutateAsync({
+        ...shipment,
+        id: shipment.id,
+        selected_rate_id:
+          shipment.selected_rate?.id ?? shipment.rates?.[0]?.id,
+      } as ShipmentType);
+      toast({
+        title: "Label purchased",
+        description:
+          "De rij verhuist vanzelf naar Picked; het label opent nu.",
+      });
+      documentPrinter.openShipmentLabel(shipment.id, {
+        format: (shipment.label_type || "pdf").toLowerCase() as FormatType,
+        doc: "label",
+      });
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Buy & print failed",
+        description: describeError(error),
+      });
+    } finally {
+      setBuyAndPrinting(false);
+    }
+  };
+
+  // The single-row twin of the bulk "Record outcome" run: two writes, ERP
+  // first — the ERP is where the reason is kept, and the Karrio status only
+  // follows a successful ERP write. A status-change refusal must never
+  // report the row as failed: the ERP already has the outcome on record.
+  const recordOutcome = async (option: DeliveryOutcomeOption, note = "") => {
+    setOutcomeLoading(true);
+    try {
+      await erpActions.recordDeliveryOutcome.mutateAsync({
+        id: shipment.id,
+        outcome: option.outcome,
+        note,
+      });
+      let moved = true;
+      try {
+        await mutation.changeStatus.mutateAsync({
+          id: shipment.id,
+          status: option.status,
+          ...(note ? { reason: note } : {}),
+        });
+      } catch {
+        moved = false;
+      }
+      toast({
+        title: `Marked ${option.label.toLowerCase()}`,
+        description: moved
+          ? `Recorded in the ERP and moved to ${formatRef(option.status.toString())}.`
+          : "Recorded in the ERP. The row stayed put because Karrio tracks it itself — the ERP has the outcome either way.",
+      });
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: `Record ${option.label.toLowerCase()} failed`,
+        description: describeError(error),
+      });
+    } finally {
+      setOutcomeLoading(false);
+    }
+  };
 
   const createLabel = (_: React.MouseEvent) => {
     toast({
@@ -256,6 +362,30 @@ export const ShipmentMenu = ({
               </DropdownMenuItem>
             ))}
 
+          {/* One-click twin of the bulk "Buy and print": pick in the ERP,
+              buy, open the label. ERP-managed carrier drafts only — own
+              delivery never buys a label — and held drafts get the same
+              tooltip refusal as Buy Label above. */}
+          {isNone(shipment.label_url) &&
+            shipment.status === ShipmentStatusEnum.draft &&
+            erpLinked &&
+            !erpSelfDelivery &&
+            isEnabled("btn_buy_label_dashboard") &&
+            (shopifyHold.held ? (
+              <span title={shopifyHoldTooltip(shopifyHold)}>
+                <DropdownMenuItem disabled>
+                  <span>Buy & Print Label (ERP)</span>
+                </DropdownMenuItem>
+              </span>
+            ) : (
+              <DropdownMenuItem
+                onClick={buyAndPrintLabel}
+                disabled={buyAndPrinting || documentPrinter.isLoading}
+              >
+                <span>Buy & Print Label (ERP)</span>
+              </DropdownMenuItem>
+            ))}
+
           {/* Bamboi fork: ERP warehouse actions. Visibility follows the
               mirrored erp_status; the ERP re-checks its own gates on every
               call, so a stale mirror can only hide a button, never bypass a
@@ -319,6 +449,42 @@ export const ShipmentMenu = ({
               <span>Mark Shipped (ERP)</span>
             </DropdownMenuItem>
           )}
+
+          {/* Carrier path, from Label Created onward: what the carrier
+              reported is not always what happened. Same options as the bulk
+              "Record outcome" dropdown; every one records its reason in the
+              ERP first and then moves the Karrio row. */}
+          {erpLinked &&
+            !erpSelfDelivery &&
+            isEnabled("btn_record_delivery_outcome") &&
+            [
+              "Label Created",
+              "In Transit",
+              "Out for Delivery",
+              "Delivered",
+              "Delivery Failed",
+              "Returned",
+            ].includes(erpStatus || "") && (
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger disabled={outcomeLoading}>
+                  <span>Record Delivery Outcome (ERP)</span>
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="w-40">
+                  {DELIVERY_OUTCOME_OPTIONS.map((option) => (
+                    <DropdownMenuItem
+                      key={option.outcome}
+                      onClick={() =>
+                        option.requiresReason
+                          ? setOutcomePrompt(option)
+                          : recordOutcome(option)
+                      }
+                    >
+                      <span>{option.label}</span>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+            )}
 
           {/* Undo family. Reversible bookkeeping undos go without a dialog;
               anything whose forward action already told the customer
@@ -452,10 +618,40 @@ export const ShipmentMenu = ({
             <span>Duplicate Shipment</span>
           </DropdownMenuItem>
 
-          {![
-            ShipmentStatusEnum.cancelled,
-            ShipmentStatusEnum.delivered,
-          ].includes(shipment.status as any) && (
+          {/* ERP-managed drafts cancel through the ERP (see erpDraft above);
+              runERPAction quotes the ERP's response message — it says whether
+              the Monta order still has to be removed by hand. */}
+          {erpDraft && isEnabled("btn_cancel_shipment") && (
+            <DropdownMenuItem
+              onClick={() => {
+                setConfirmAction({
+                  title: "Cancel Shipment",
+                  description:
+                    "De zending wordt geannuleerd in Karrio en in het ERP. Dit kan niet ongedaan gemaakt worden. Let op: de Sales Order zelf wordt NIET geannuleerd — alleen de zending.",
+                  confirmLabel: "Cancel Shipment",
+                  onConfirm: runERPAction(
+                    erpActions.cancelShipment,
+                    "Cancel shipment",
+                  ),
+                });
+                setConfirmDialogOpen(true);
+              }}
+              disabled={erpActions.cancelShipment.isLoading}
+              className="text-destructive focus:text-destructive"
+            >
+              <span>Cancel Shipment (ERP)</span>
+            </DropdownMenuItem>
+          )}
+
+          {/* Karrio's own cancel, for everything the ERP does not manage.
+              Hidden on ERP drafts even when the ERP cancel flag is off —
+              voiding the Karrio draft behind the ERP's back would leave the
+              ERP row and the Monta order dangling. */}
+          {!erpDraft &&
+            ![
+              ShipmentStatusEnum.cancelled,
+              ShipmentStatusEnum.delivered,
+            ].includes(shipment.status as any) && (
               <DropdownMenuItem
                 onClick={() => {
                   setConfirmAction({
@@ -599,6 +795,23 @@ export const ShipmentMenu = ({
           confirmLabel={confirmAction.title === "Cancel Shipment" ? "Cancel" : confirmAction.confirmLabel}
           cancelLabel={confirmAction.title === "Cancel Shipment" ? "Go Back" : "Cancel"}
           onConfirm={handleConfirm}
+        />
+      )}
+
+      {/* Mounted only while an outcome is pending, so the reason field is
+          empty again on every run (same pattern as the bulk toolbar). */}
+      {outcomePrompt && (
+        <ReasonPromptDialog
+          open={true}
+          onOpenChange={(open) => !open && setOutcomePrompt(null)}
+          title={`Mark as ${outcomePrompt.label}`}
+          description="De reden wordt vastgelegd in het ERP en bepaalt hoe de rij verder wordt afgehandeld."
+          fieldLabel="Reason"
+          placeholder="bijv. pakket beschadigd retour ontvangen"
+          confirmLabel={outcomePrompt.label}
+          cancelLabel="Terug"
+          onConfirm={(reason) => recordOutcome(outcomePrompt, reason)}
+          isLoading={outcomeLoading}
         />
       )}
     </div>

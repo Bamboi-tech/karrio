@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { ManualShipmentStatusEnum } from "@karrio/types";
 import { handleFailure } from "@karrio/lib";
 import { useKarrio } from "./karrio";
 
@@ -34,6 +35,49 @@ export type DeliveryOutcome =
   | "failed"
   | "delivered"
   | "returned";
+
+// How a post-purchase row can end, offered from Label Created onward.
+// Every option writes TWICE: the ERP records the outcome WITH its reason
+// (the truth the office reads back), and Karrio's own status is flipped so
+// the row actually moves card. Karrio has no "returned" status, so a return
+// lands on delivery_failed here and stays a return only in the ERP.
+// Shared by the bulk toolbar (core Shipments module) and the per-row menu.
+export type DeliveryOutcomeOption = {
+  outcome: DeliveryOutcome;
+  label: string;
+  status: ManualShipmentStatusEnum;
+  requiresReason: boolean;
+};
+
+export const DELIVERY_OUTCOME_OPTIONS: DeliveryOutcomeOption[] = [
+  {
+    outcome: "exception",
+    label: "Exception",
+    status: ManualShipmentStatusEnum.needs_attention,
+    requiresReason: true,
+  },
+  {
+    outcome: "failed",
+    label: "Failed",
+    status: ManualShipmentStatusEnum.delivery_failed,
+    requiresReason: true,
+  },
+  {
+    // Delivered would speak for itself, but overriding a TRACKED shipment's
+    // status requires a reason (the carrier owns that status; the override
+    // is audited on metadata.status_override) — so it prompts like the rest.
+    outcome: "delivered",
+    label: "Delivered",
+    status: ManualShipmentStatusEnum.delivered,
+    requiresReason: true,
+  },
+  {
+    outcome: "returned",
+    label: "Returned",
+    status: ManualShipmentStatusEnum.delivery_failed,
+    requiresReason: true,
+  },
+];
 
 export function isERPLinked(metadata: unknown): boolean {
   const values = (metadata || {}) as Record<string, unknown>;

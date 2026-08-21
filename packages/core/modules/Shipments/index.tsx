@@ -10,6 +10,7 @@ import {
   isNone,
   isNoneOrEmpty,
   formatCarrierSlug,
+  p,
   preventPropagation,
 } from "@karrio/lib";
 import {
@@ -25,7 +26,6 @@ import { useDocumentPrinter, FormatType } from "@karrio/hooks/resource-token";
 import { ShipmentsFilter } from "@karrio/ui/components/shipments-filter";
 import {
   AddressType,
-  ManualShipmentStatusEnum,
   RateType,
   ShipmentType,
 } from "@karrio/types";
@@ -61,7 +61,8 @@ import { useLoader } from "@karrio/ui/core/components/loader";
 import { AppLink } from "@karrio/ui/core/components/app-link";
 import { useShipments, useShipmentMutation } from "@karrio/hooks/shipment";
 import {
-  DeliveryOutcome,
+  DELIVERY_OUTCOME_OPTIONS,
+  DeliveryOutcomeOption,
   useShipmentERPActions,
 } from "@karrio/hooks/erp-actions";
 import { useBamboiFeatures } from "@karrio/hooks/bamboi-features";
@@ -144,6 +145,21 @@ const isSelfDelivery = (metadata: unknown) =>
   ((metadata || {}) as Record<string, unknown>)[FULFILMENT_MODE_KEY] ===
   "self_delivery";
 
+// The route line: the one fact that decides how a row ships, rendered once in
+// the service column. "Monta → PostNL" is the ERP-mirrored checkout choice
+// (metadata.shipping_method); older drafts miss that key until their next
+// metadata mirror and read plain "Monta". Non-ERP rows return null and keep
+// Karrio's own service rendering.
+const routeLabel = (metadata: unknown): string | null => {
+  const values = (metadata || {}) as Record<string, unknown>;
+  const mode = values[FULFILMENT_MODE_KEY] as string | undefined;
+  if (!mode) return null;
+  if (mode === "self_delivery") return "Eigen bezorging";
+  if (mode === "external") return "External (DHL)";
+  const method = (values["shipping_method"] as string | undefined)?.trim();
+  return method ? `Monta → ${method}` : "Monta";
+};
+
 // The name the warehouse actually works with. Karrio ids mean nothing on the
 // floor, so batch reports quote the Shopify order number and fall back to the
 // id only when the ERP has not mirrored one.
@@ -170,46 +186,11 @@ const describeError = (error: unknown) =>
     .join("; ");
 
 // How a post-purchase row can end, offered from the Shipped card onward.
-// Every option writes TWICE: the ERP records the outcome WITH its reason
-// (the truth the office reads back), and Karrio's own status is flipped so
-// the row actually moves card. Karrio has no "returned" status, so a return
-// lands on delivery_failed here and stays a return only in the ERP.
-type OutcomeOption = {
-  outcome: DeliveryOutcome;
-  label: string;
-  status: ManualShipmentStatusEnum;
-  requiresReason: boolean;
-};
+// The options (and the double-write contract) live in
+// @karrio/hooks/erp-actions so the per-row menu offers the exact same list.
+type OutcomeOption = DeliveryOutcomeOption;
 
-const OUTCOME_OPTIONS: OutcomeOption[] = [
-  {
-    outcome: "exception",
-    label: "Exception",
-    status: ManualShipmentStatusEnum.needs_attention,
-    requiresReason: true,
-  },
-  {
-    outcome: "failed",
-    label: "Failed",
-    status: ManualShipmentStatusEnum.delivery_failed,
-    requiresReason: true,
-  },
-  {
-    // Delivered would speak for itself, but overriding a TRACKED shipment's
-    // status requires a reason (the carrier owns that status; the override
-    // is audited on metadata.status_override) — so it prompts like the rest.
-    outcome: "delivered",
-    label: "Delivered",
-    status: ManualShipmentStatusEnum.delivered,
-    requiresReason: true,
-  },
-  {
-    outcome: "returned",
-    label: "Returned",
-    status: ManualShipmentStatusEnum.delivery_failed,
-    requiresReason: true,
-  },
-];
+const OUTCOME_OPTIONS = DELIVERY_OUTCOME_OPTIONS;
 
 export default function Page(pageProps: any) {
   const Component = (): JSX.Element => {
@@ -1173,15 +1154,32 @@ export default function Page(pageProps: any) {
                       className="service items-center py-1 px-0 text-xs font-bold text-gray-600"
                       onClick={() => previewShipment(shipment.id)}
                       title={
-                        isNone(getRate(shipment))
+                        routeLabel(shipment.metadata) ||
+                        (isNone(getRate(shipment))
                           ? "UNFULFILLED"
                           : formatRef(
                             ((shipment.meta as any)?.service_name ||
                               getRate(shipment).service) as string,
-                          )
+                          ))
                       }
                     >
                         <div className="flex items-center">
+                          {/* Own delivery rides our own van: no carrier, so
+                              instead of the letter-avatar fallback the row
+                              shows the Bamboi panda. Same footprint (28px,
+                              softly rounded like the avatar's rounded rect)
+                              so the column stays aligned. */}
+                          {isSelfDelivery(shipment.metadata) ? (
+                            <div className="mt-1 ml-1 mr-2">
+                              <img
+                                src={p`/bamboi_icon.png`}
+                                width={28}
+                                height={28}
+                                alt="Bamboi eigen bezorging"
+                                className="rounded-sm"
+                              />
+                            </div>
+                          ) : (
                           <CarrierImage
                             carrier_name={
                               shipment.meta?.custom_carrier_name ||
@@ -1206,6 +1204,7 @@ export default function Page(pageProps: any) {
                               )?.config?.brand_color
                             }
                           />
+                          )}
                           <div
                             className="text-ellipsis"
                             style={{ maxWidth: "190px", lineHeight: "16px" }}
@@ -1214,20 +1213,28 @@ export default function Page(pageProps: any) {
                               {!isNone(shipment.tracking_number) && (
                                 <span>{shipment.tracking_number}</span>
                               )}
+                              {/* No tracking yet: the route takes the top
+                                  line instead of a bare dash. */}
                               {isNone(shipment.tracking_number) && (
-                                <span> - </span>
+                                <span>{routeLabel(shipment.metadata) || " - "}</span>
                               )}
                             </span>
                             <br />
                             <span className="text-ellipsis">
-                              {!isNone(getRate(shipment).carrier_name) &&
-                                formatRef(
-                                  ((getRate(shipment).meta as any)
-                                    ?.service_name ||
-                                    getRate(shipment).service) as string,
-                                )}
-                              {isNone(getRate(shipment).carrier_name) &&
-                                "UNFULFILLED"}
+                              {/* The route renders exactly once: down here
+                                  only when the tracking number holds the top
+                                  line. MONTA FULFILLMENT/UNFULFILLED said
+                                  nothing the route does not. */}
+                              {routeLabel(shipment.metadata)
+                                ? !isNone(shipment.tracking_number) &&
+                                  routeLabel(shipment.metadata)
+                                : !isNone(getRate(shipment).carrier_name)
+                                  ? formatRef(
+                                    ((getRate(shipment).meta as any)
+                                      ?.service_name ||
+                                      getRate(shipment).service) as string,
+                                  )
+                                  : "UNFULFILLED"}
                             </span>
                           </div>
                         </div>

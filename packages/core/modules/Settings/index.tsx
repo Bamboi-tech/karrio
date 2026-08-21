@@ -9,6 +9,7 @@ import {
   MapPin,
   Package,
   FileText,
+  SlidersHorizontal,
 } from "lucide-react";
 import { Card, CardContent } from "@karrio/ui/components/ui/card";
 import { useAPIMetadata } from "@karrio/hooks/api-metadata";
@@ -69,6 +70,12 @@ const settingSections: SettingSection[] = [
         description: "Customize shipping labels, invoices, and other document templates.",
         icon: FileText,
         href: "/settings/templates",
+      },
+      {
+        title: "Bamboi",
+        description: "Warehouse feature flags: buttons, undo actions, and safety gates.",
+        icon: SlidersHorizontal,
+        href: "/settings/bamboi",
       },
     ],
   },

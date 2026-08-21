@@ -20,7 +20,11 @@ export type ERPShipmentAction =
   | "mark-out-for-delivery"
   | "mark-shipped"
   | "cancel-shipment"
-  | "record-delivery-outcome";
+  | "record-delivery-outcome"
+  | "unmark-shipped"
+  | "unmark-out-for-delivery"
+  | "unmark-delivered"
+  | "undo-delivery-outcome";
 
 // How a post-purchase shipment actually ended. Karrio has no "returned"
 // status, so the precise truth lives in the ERP and Karrio only carries the
@@ -87,6 +91,24 @@ export function useShipmentERPActions(id?: string) {
     outcome: DeliveryOutcome;
     note: string;
   }>("record-delivery-outcome");
+  // The undo family only rewinds the ERP row — anything already sent stays
+  // sent. The ERP spells out in its response message exactly what did NOT
+  // get undone, so callers should surface that message, not a generic line.
+  //
+  // Mark-shipped was pure bookkeeping, so undoing it is too: In Transit →
+  // Label Created, nothing customer-facing ever happened.
+  const unmarkShipped = runAction("unmark-shipped");
+  // Own-delivery only. Mark OFD created the Shopify fulfilment and mailed
+  // the customer; this undo does NOT retract either — it only rewinds the
+  // ERP status so the van run can be replanned.
+  const unmarkOutForDelivery = runAction("unmark-out-for-delivery");
+  // Own-delivery only. The delivered write-back and any customer mail stay
+  // as they are; only the ERP's Delivered status is rewound.
+  const unmarkDelivered = runAction("unmark-delivered");
+  // Carrier path: erases the recorded outcome (and its reason) so a wrongly
+  // filed delivery/failure/return can be re-recorded. The Karrio status is
+  // NOT touched here — the caller moves the row back separately if needed.
+  const undoDeliveryOutcome = runAction("undo-delivery-outcome");
 
   return {
     markPicked,
@@ -95,5 +117,9 @@ export function useShipmentERPActions(id?: string) {
     markShipped,
     cancelShipment,
     recordDeliveryOutcome,
+    unmarkShipped,
+    unmarkOutForDelivery,
+    unmarkDelivered,
+    undoDeliveryOutcome,
   };
 }

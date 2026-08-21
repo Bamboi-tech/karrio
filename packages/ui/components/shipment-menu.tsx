@@ -15,6 +15,7 @@ import {
   isERPLinked,
   getERPStatus,
 } from "@karrio/hooks/erp-actions";
+import { useBamboiFeatures } from "@karrio/hooks/bamboi-features";
 import { getShopifyHold, shopifyHoldTooltip } from "./shipment-hold";
 import { DeleteConfirmationDialog } from "./delete-confirmation-dialog";
 import React, { useState } from "react";
@@ -67,6 +68,10 @@ export const ShipmentMenu = ({
   // The ERP enforces its own gates; a refusal (hold, wrong status) surfaces
   // as a toast with the ERP's own message.
   const erpActions = useShipmentERPActions(shipment.id);
+  // Feature flags come from the ERP registry; until they load, isEnabled
+  // answers from the identical client-side defaults, so the menu renders the
+  // same before and after the fetch — no flicker.
+  const { isEnabled } = useBamboiFeatures();
   const erpLinked = isERPLinked(shipment.metadata);
   const erpStatus = getERPStatus(shipment.metadata);
   const erpSelfDelivery =
@@ -236,6 +241,9 @@ export const ShipmentMenu = ({
               disabled Radix item swallows pointer events. */}
           {isNone(shipment.label_url) &&
             shipment.status === ShipmentStatusEnum.draft &&
+            // The flag only governs the ERP-managed flow; a plain Karrio
+            // shipment keeps its Buy Label regardless.
+            (!erpLinked || isEnabled("btn_buy_label_dashboard")) &&
             (shopifyHold.held ? (
               <span title={shopifyHoldTooltip(shopifyHold)}>
                 <DropdownMenuItem disabled>
@@ -252,7 +260,7 @@ export const ShipmentMenu = ({
               mirrored erp_status; the ERP re-checks its own gates on every
               call, so a stale mirror can only hide a button, never bypass a
               rule. Mark picked / undo are reversible — no dialog. */}
-          {erpLinked && erpStatus === "Synced" && (
+          {erpLinked && erpStatus === "Synced" && isEnabled("btn_mark_picked") && (
             <DropdownMenuItem
               onClick={runERPAction(erpActions.markPicked, "Mark picked")}
               disabled={erpActions.markPicked.isLoading}
@@ -261,7 +269,7 @@ export const ShipmentMenu = ({
             </DropdownMenuItem>
           )}
 
-          {erpLinked && erpStatus === "Picked" && (
+          {erpLinked && erpStatus === "Picked" && isEnabled("undo_pick") && (
             <DropdownMenuItem
               onClick={runERPAction(erpActions.unmarkPicked, "Undo pick")}
               disabled={erpActions.unmarkPicked.isLoading}
@@ -277,6 +285,7 @@ export const ShipmentMenu = ({
               button. */}
           {erpLinked &&
             erpSelfDelivery &&
+            isEnabled("btn_mark_out_for_delivery") &&
             ["Synced", "Picked"].includes(erpStatus || "") && (
               <DropdownMenuItem
                 onClick={() => {
@@ -302,7 +311,7 @@ export const ShipmentMenu = ({
               ERP row moves to In Transit. Not customer-facing (no Shopify
               fulfillment, no mail) and the ERP re-checks the status gate, so
               no confirmation dialog. */}
-          {erpLinked && erpStatus === "Label Created" && (
+          {erpLinked && erpStatus === "Label Created" && isEnabled("btn_mark_shipped") && (
             <DropdownMenuItem
               onClick={runERPAction(erpActions.markShipped, "Mark shipped")}
               disabled={erpActions.markShipped.isLoading}
@@ -310,6 +319,110 @@ export const ShipmentMenu = ({
               <span>Mark Shipped (ERP)</span>
             </DropdownMenuItem>
           )}
+
+          {/* Undo family. Reversible bookkeeping undos go without a dialog;
+              anything whose forward action already told the customer
+              something gets a confirmation spelling out what stays sent.
+              The ERP's response message repeats that, and the toast quotes
+              it. */}
+
+          {/* Mark Shipped was carrier-path bookkeeping, so its undo is too:
+              In Transit → Label Created, nothing customer-facing. */}
+          {erpLinked && erpStatus === "In Transit" && isEnabled("undo_shipped") && (
+            <DropdownMenuItem
+              onClick={runERPAction(erpActions.unmarkShipped, "Undo shipped")}
+              disabled={erpActions.unmarkShipped.isLoading}
+            >
+              <span>Undo Shipped (ERP)</span>
+            </DropdownMenuItem>
+          )}
+
+          {/* Own delivery only. Mark OFD created the Shopify fulfilment and
+              mailed the customer — the undo rewinds the ERP status but can
+              retract neither, hence the dialog. */}
+          {erpLinked &&
+            erpSelfDelivery &&
+            erpStatus === "Out for Delivery" &&
+            isEnabled("undo_out_for_delivery") && (
+              <DropdownMenuItem
+                onClick={() => {
+                  setConfirmAction({
+                    title: "Undo Out for Delivery",
+                    description:
+                      "The Shopify fulfillment was already created and the customer was already notified — neither is retracted. This only moves the ERP row back so the delivery run can be replanned.",
+                    confirmLabel: "Undo Out for Delivery",
+                    onConfirm: runERPAction(
+                      erpActions.unmarkOutForDelivery,
+                      "Undo out for delivery",
+                    ),
+                  });
+                  setConfirmDialogOpen(true);
+                }}
+                disabled={erpActions.unmarkOutForDelivery.isLoading}
+              >
+                <span>Undo Out for Delivery (ERP)</span>
+              </DropdownMenuItem>
+            )}
+
+          {/* Own delivery only. The delivered write-back and customer mail
+              stay as they are; only the ERP's Delivered status is rewound. */}
+          {erpLinked &&
+            erpSelfDelivery &&
+            erpStatus === "Delivered" &&
+            isEnabled("undo_delivered") && (
+              <DropdownMenuItem
+                onClick={() => {
+                  setConfirmAction({
+                    title: "Undo Delivered",
+                    description:
+                      "The delivered write-back to Shopify and any customer notification already went out and stay as they are. This only rewinds the ERP row to Out for Delivery.",
+                    confirmLabel: "Undo Delivered",
+                    onConfirm: runERPAction(
+                      erpActions.unmarkDelivered,
+                      "Undo delivered",
+                    ),
+                  });
+                  setConfirmDialogOpen(true);
+                }}
+                disabled={erpActions.unmarkDelivered.isLoading}
+              >
+                <span>Undo Delivered (ERP)</span>
+              </DropdownMenuItem>
+            )}
+
+          {/* Carrier path: a wrongly recorded outcome (delivered / failed /
+              returned) can be erased and re-recorded. Also offered when the
+              Karrio row was parked on needs_attention while the ERP still
+              says In Transit — the mismatch that a mis-filed outcome leaves
+              behind. Confirmed because it erases the recorded reason. */}
+          {erpLinked &&
+            !erpSelfDelivery &&
+            isEnabled("undo_delivery_outcome") &&
+            (["Delivered", "Delivery Failed", "Returned"].includes(
+              erpStatus || "",
+            ) ||
+              (erpStatus === "In Transit" &&
+                (shipment.status as any) ===
+                  ManualShipmentStatusEnum.needs_attention)) && (
+              <DropdownMenuItem
+                onClick={() => {
+                  setConfirmAction({
+                    title: "Undo Delivery Outcome",
+                    description:
+                      "This erases the recorded outcome and its reason from the ERP so it can be re-recorded. Anything already written back to Shopify stays as it is, and the Karrio status is not changed here.",
+                    confirmLabel: "Undo Outcome",
+                    onConfirm: runERPAction(
+                      erpActions.undoDeliveryOutcome,
+                      "Undo delivery outcome",
+                    ),
+                  });
+                  setConfirmDialogOpen(true);
+                }}
+                disabled={erpActions.undoDeliveryOutcome.isLoading}
+              >
+                <span>Undo Delivery Outcome (ERP)</span>
+              </DropdownMenuItem>
+            )}
 
           {!isNone(shipment.label_url) && (
             <DropdownMenuItem

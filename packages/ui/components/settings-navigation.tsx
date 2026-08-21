@@ -47,6 +47,11 @@ const settingsItems = [
     label: "Document templates",
     href: "/settings/templates",
   },
+  {
+    key: "bamboi",
+    label: "Bamboi",
+    href: "/settings/bamboi",
+  },
 ];
 
 export function SettingsNavigation({ showOrganization }: SettingsNavigationProps) {

@@ -64,6 +64,7 @@ import {
   DeliveryOutcome,
   useShipmentERPActions,
 } from "@karrio/hooks/erp-actions";
+import { useBamboiFeatures } from "@karrio/hooks/bamboi-features";
 import { ConfirmationDialog } from "@karrio/ui/components/confirmation-dialog";
 import { ReasonPromptDialog } from "@karrio/ui/components/reason-prompt-dialog";
 import {
@@ -241,6 +242,9 @@ export default function Page(pageProps: any) {
     const mutation = useShipmentMutation();
     // Bamboi fork: warehouse actions relayed to the ERP (Ship Today phase 2).
     const erpActions = useShipmentERPActions();
+    // Same flags as the per-row menu: until the ERP registry loads, the
+    // identical client-side defaults answer, so the toolbar never flickers.
+    const { isEnabled } = useBamboiFeatures();
     const context = useShipments({
       status: [
         "created",
@@ -1010,7 +1014,7 @@ export default function Page(pageProps: any) {
                             not always what happened. Each option writes the
                             outcome (with its reason) to the ERP and then
                             moves the row to the matching Karrio card. */}
-                        {isPostPurchaseView && (
+                        {isPostPurchaseView && isEnabled("btn_record_delivery_outcome") && (
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <Button
@@ -1040,7 +1044,7 @@ export default function Page(pageProps: any) {
                             label, print once. Sequential per row (see
                             runBuyAndPrint) and only offered on the Today
                             card, where the operator is working the printlist. */}
-                        {isTodayView && (
+                        {isTodayView && isEnabled("btn_buy_label_dashboard") && (
                           <Button
                             variant="default"
                             size="sm"
@@ -1054,7 +1058,7 @@ export default function Page(pageProps: any) {
                         )}
                         {/* Picked card only: the parcel is with the carrier,
                             so the ERP row moves to In Transit. */}
-                        {isPickedView && (
+                        {isPickedView && isEnabled("btn_mark_shipped") && (
                           <Button
                             variant="outline"
                             size="sm"
@@ -1070,7 +1074,7 @@ export default function Page(pageProps: any) {
                             which cancels the Karrio draft itself and cleans
                             up behind it. Irreversible, so it is confirmed
                             first (see the dialog at the bottom). */}
-                        {isDraftStageView && (
+                        {isDraftStageView && isEnabled("btn_cancel_shipment") && (
                           <Button
                             variant="destructive"
                             size="sm"

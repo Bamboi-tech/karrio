@@ -319,6 +319,30 @@ class ShipmentERPAction(APIView):
         return Response(result)
 
 
+class ERPFeatures(APIView):
+    """Bamboi fork: relay the ERP's feature flags so the dashboard reads and
+    toggles them without talking to Frappe directly.
+
+    Thin by design — transport, fail-closed doctrine and payload validation
+    live in karrio.server.core.erp_gate; the ERP owns the flag registry.
+    """
+
+    throttle_scope = "carrier_request"
+
+    @openapi.extend_schema(exclude=True)
+    def get(self, request: Request):
+        from karrio.server.core.erp_gate import run_erp_features_list
+
+        return Response(run_erp_features_list())
+
+    @openapi.extend_schema(exclude=True)
+    def post(self, request: Request):
+        from karrio.server.core.erp_gate import run_erp_features_set
+
+        data = request.data if isinstance(request.data, dict) else {}
+        return Response(run_erp_features_set(data.get("key"), data.get("enabled")))
+
+
 class ShipmentDocs(AccessMixin, VirtualDownloadView):
     @openapi.extend_schema(exclude=True)
     def get(
@@ -466,6 +490,13 @@ router.urls.append(
         "shipments/<str:pk>/erp/<str:action>",
         ShipmentERPAction.as_view(),
         name="shipment-erp-action",
+    )
+)
+router.urls.append(
+    path(
+        "erp/features",
+        ERPFeatures.as_view(),
+        name="erp-features",
     )
 )
 router.urls.append(

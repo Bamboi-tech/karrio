@@ -89,8 +89,8 @@ def assert_erp_label_allowed(shipment) -> None:
 
 
 # ---------------------------------------------------------------------------
-# ERP shipment actions (Mark Picked / Undo pick / Mark Out for Delivery /
-# Mark Shipped / Cancel / Record delivery outcome)
+# ERP shipment actions (Mark Picked / Mark Out for Delivery / Mark Shipped /
+# Record delivery outcome / Cancel — each status step with its undo)
 # ---------------------------------------------------------------------------
 
 # Whitelisted @frappe.whitelist() doc methods on the ERP's Karrio Shipment,
@@ -106,9 +106,13 @@ ERP_SHIPMENT_ACTIONS = {
     "mark_picked": (),
     "unmark_picked": (),
     "mark_out_for_delivery": (),
+    "unmark_out_for_delivery": (),
     "mark_shipped": (),
+    "unmark_shipped": (),
+    "unmark_delivered": (),
     "cancel_shipment": (),
     "record_delivery_outcome": ("outcome", "note"),
+    "undo_delivery_outcome": (),
 }
 RUN_DOC_METHOD_PATH = "/api/method/frappe.handler.run_doc_method"
 
@@ -219,3 +223,90 @@ def run_erp_shipment_action(shipment, action: str, args: dict = None) -> dict:
 
     message = ((response.json() or {}).get("message")) or "Done."
     return {"message": message}
+
+
+# ---------------------------------------------------------------------------
+# ERP feature flags (list / toggle)
+# ---------------------------------------------------------------------------
+
+# Whitelisted @frappe.whitelist() module methods — the only feature-flag
+# surface the fork exposes. Same doctrine as the shipment actions: the ERP
+# owns the flags and their validation; the relay only carries them.
+FEATURES_LIST_PATH = "/api/method/karrio_shipping.api.features.list_features"
+FEATURES_SET_PATH = "/api/method/karrio_shipping.api.features.set_feature"
+
+
+def _post_erp_method(path: str, payload: dict, label: str):
+    """POST one whitelisted Frappe method and return the unwrapped ``message``.
+
+    Same fail-closed doctrine as the shipment relays: missing configuration
+    and an unreachable ERP raise 424, an ERP refusal raises 409 carrying the
+    ERP's own message.
+    """
+    url = getattr(settings, "ERP_GATE_URL", None)
+    token = getattr(settings, "ERP_GATE_TOKEN", None)
+    if not url or not token:
+        raise APIException(
+            "The ERP link is not configured (ERP_GATE_URL / ERP_GATE_TOKEN) — "
+            "manage this from the ERP instead.",
+            code="erp_gate_unconfigured",
+            status_code=424,
+        )
+
+    try:
+        response = requests.post(
+            url.rstrip("/") + path,
+            json=payload,
+            headers={"Authorization": f"token {token}"},
+            timeout=getattr(settings, "ERP_GATE_TIMEOUT", 5),
+        )
+    except requests.RequestException as error:
+        logger.warning("ERP %s unreachable: %s", label, error)
+        raise APIException(
+            "ERP unreachable — try again in a moment.",
+            code="erp_gate_unreachable",
+            status_code=424,
+        )
+
+    if response.status_code >= 400:
+        raise APIException(
+            _erp_error_message(response),
+            code="erp_action_refused",
+            status_code=409,
+        )
+
+    return (response.json() or {}).get("message")
+
+
+def run_erp_features_list() -> dict:
+    """Relay the ERP's feature-flag listing; returns ``{"features": [...]}``."""
+    message = _post_erp_method(FEATURES_LIST_PATH, {}, "features list")
+    features = message.get("features") if isinstance(message, dict) else message
+    return {"features": features or []}
+
+
+def run_erp_features_set(key, enabled) -> dict:
+    """Relay one feature toggle to the ERP; returns ``{"key", "enabled"}``.
+
+    The ERP validates the key against its own registry — an unknown key is
+    its refusal to surface, not ours. Only the payload shape is checked here
+    so a malformed request never reaches the ERP.
+    """
+    if not isinstance(key, str) or not key:
+        raise APIException(
+            "Feature flag 'key' must be a non-empty string.",
+            code="erp_feature_invalid",
+            status_code=400,
+        )
+    if not isinstance(enabled, bool):
+        raise APIException(
+            "Feature flag 'enabled' must be a boolean.",
+            code="erp_feature_invalid",
+            status_code=400,
+        )
+
+    message = _post_erp_method(
+        FEATURES_SET_PATH, {"key": key, "enabled": enabled}, "feature set"
+    )
+    result = message if isinstance(message, dict) else {}
+    return {"key": result.get("key", key), "enabled": result.get("enabled", enabled)}

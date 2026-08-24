@@ -92,6 +92,31 @@ def _sentry_traces_sampler(sampling_context):
     return SENTRY_TRACES_SAMPLE_RATE
 
 
+# The API root ("" -> metadata.view) is a GET-only, AllowAny endpoint, so every
+# internet background scanner that POSTs or HEADs it raises MethodNotAllowed.
+# Observed probes: WordPress `?rest_route=/batch/v1` batch-CVE payloads,
+# multipart bodies with a `bissa_cve` boundary, and spoofed-UA HEAD sweeps from
+# unrelated IPs. None of it is actionable, and DRF's custom_exception_handler
+# reports each probe twice — once via _capture_exception_to_telemetry and once
+# via the loguru Sentry sink — so both event shapes are matched below.
+SENTRY_ROOT_NOISE_EXCEPTIONS = {"MethodNotAllowed"}
+
+
+def _is_root_scanner_noise(event) -> bool:
+    """True for scanner-generated 4xx on the API root, which is pure noise."""
+    if event.get("transaction") != "/":
+        return False
+
+    values = (event.get("exception") or {}).get("values") or []
+    if any(v.get("type") in SENTRY_ROOT_NOISE_EXCEPTIONS for v in values):
+        return True
+
+    # The loguru sink re-reports the same exception as a bare message, keeping
+    # the type only in the context it attaches.
+    loguru_context = (event.get("contexts") or {}).get("loguru") or {}
+    return loguru_context.get("exception_type") in SENTRY_ROOT_NOISE_EXCEPTIONS
+
+
 def _sentry_before_send(event, hint):
     """Pre-process events before sending to Sentry.
 
@@ -100,6 +125,10 @@ def _sentry_before_send(event, hint):
     - Add custom tags
     - Filter out certain events
     """
+    # Drop unauthenticated scanner probes against the API root
+    if _is_root_scanner_noise(event):
+        return None
+
     # Scrub sensitive data from request bodies
     if "request" in event:
         request_data = event["request"]

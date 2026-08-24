@@ -91,12 +91,79 @@ export function getERPStatus(metadata: unknown): string | null {
   return typeof status === "string" && status.length > 0 ? status : null;
 }
 
+// The only ERP status Mark Picked is defined to act from (the ERP's own
+// _assert_status on mark_picked). Everything past it — Picked, Label Created,
+// In Transit — is a shipment that has already been picked or has moved beyond
+// picking, and asking again can only be refused.
+export const ERP_PICKABLE_STATUS = "Synced";
+
+// Would a Mark Picked on this row stand a chance? Only a mirrored status that
+// positively says the row already moved on answers no; an unmirrored shipment
+// still gets the call, because "we do not know" is not "we know it is too
+// late" and the ERP is the one allowed to decide.
+export function canMarkPicked(metadata: unknown): boolean {
+  const status = getERPStatus(metadata);
+  return status === null || status === ERP_PICKABLE_STATUS;
+}
+
+// Buy & print's first step, made survivable.
+//
+// Picking is bookkeeping: it moves an ERP status and writes a comment, and
+// tells nobody anything. Buying the label is the act with consequences, and
+// it carries the real gate — the ERP re-runs the whole composite label gate
+// (hold / refund / address / mode) on every purchase and fails closed. So a
+// pick that cannot be recorded must never cost the operator the label.
+//
+// It used to. mark-picked ran first and a refusal aborted the row, which made
+// buy & print un-repeatable: the second press on a row whose pick had already
+// landed (a print that jammed, a stale mirrored erp_status, a batch re-run)
+// was refused with "Mark Picked needs a shipment that is Synced (is: Picked /
+// Label Created)" and the label was never re-opened — 20 such refusals in
+// four days, all of them from this button.
+//
+// Now the call is skipped when the mirrored status already says it is moot,
+// and a refusal is handed back instead of thrown so the caller can buy the
+// label anyway and mention what did not get recorded.
+export async function pickForPurchase(
+  markPicked: {
+    mutateAsync: (variables: { id: string }) => Promise<{ message: string }>;
+  },
+  shipment: { id: string; metadata?: unknown },
+): Promise<{ picked: boolean; error: unknown }> {
+  if (!isERPLinked(shipment.metadata) || !canMarkPicked(shipment.metadata)) {
+    return { picked: false, error: null };
+  }
+  try {
+    await markPicked.mutateAsync({ id: shipment.id });
+    return { picked: true, error: null };
+  } catch (error) {
+    return { picked: false, error };
+  }
+}
+
+// The ERP mirrors its new erp_status back onto the Karrio shipment via a
+// background job, so a refetch fired straight from onSuccess races that
+// mirror: it usually still sees the OLD status and the row stays on the
+// wrong card until something else refreshes. Long enough for the ERP's RQ
+// job to land, short enough that the row moves while the operator is still
+// looking at the list.
+const ERP_MIRROR_GRACE_MS = 4000;
+
 export function useShipmentERPActions(id?: string) {
   const queryClient = useQueryClient();
   const karrio = useKarrio();
   const invalidateCache = () => {
     queryClient.invalidateQueries(["shipments"]);
     queryClient.invalidateQueries(["shipments", id]);
+  };
+  // Twice on purpose: immediately (cheap, and correct for everything the
+  // action changed server-side in Karrio itself) and once more after the
+  // mirror grace period, so the refetch that decides which card the row
+  // sits on sees the ERP-mirrored erp_status. No optimistic update — the
+  // ERP is the source of truth for its own status.
+  const invalidateAroundMirror = () => {
+    invalidateCache();
+    setTimeout(invalidateCache, ERP_MIRROR_GRACE_MS);
   };
 
   // Most actions are a bare POST; an action that needs arguments (the
@@ -114,7 +181,7 @@ export function useShipmentERPActions(id?: string) {
             )
             .then(({ data }) => data),
         ),
-      { onSuccess: invalidateCache },
+      { onSuccess: invalidateAroundMirror },
     );
 
   const markPicked = runAction("mark-picked");

@@ -44,7 +44,7 @@ import {
 import { Button } from "@karrio/ui/components/ui/button";
 import { Checkbox } from "@karrio/ui/components/ui/checkbox";
 import { Skeleton } from "@karrio/ui/components/ui/skeleton";
-import { ChevronDown, Loader2 } from "lucide-react";
+import { ChevronDown, Loader2, Package } from "lucide-react";
 import { CarrierImage } from "@karrio/ui/core/components/carrier-image";
 import { ShipmentsStatusBadge } from "@karrio/ui/components/shipments-status-badge";
 import {
@@ -64,6 +64,7 @@ import {
   DELIVERY_OUTCOME_OPTIONS,
   DeliveryOutcomeOption,
   useShipmentERPActions,
+  pickForPurchase,
 } from "@karrio/hooks/erp-actions";
 import { useBamboiFeatures } from "@karrio/hooks/bamboi-features";
 import { ConfirmationDialog } from "@karrio/ui/components/confirmation-dialog";
@@ -173,6 +174,27 @@ const shipmentLabel = (shipment: Pick<ShipmentType, "id" | "metadata">) => {
     : shipment.id;
 };
 
+// The operator's page-size choice for the worklist. Remembered across
+// sessions in localStorage; the URL (setVariablesToURL) carries it within
+// one. The footer only mounts after the client-side fetch, so reading
+// localStorage in the state initializer can never cause a hydration
+// mismatch.
+const PAGE_SIZE_OPTIONS = [20, 50, 100];
+const PAGE_SIZE_STORAGE_KEY = "shipments_page_size";
+const DEFAULT_PAGE_SIZE = 20;
+const initialPageSize = () => {
+  if (typeof window === "undefined") return DEFAULT_PAGE_SIZE;
+  try {
+    const stored = parseInt(
+      window.localStorage.getItem(PAGE_SIZE_STORAGE_KEY) || "",
+      10,
+    );
+    return PAGE_SIZE_OPTIONS.includes(stored) ? stored : DEFAULT_PAGE_SIZE;
+  } catch {
+    return DEFAULT_PAGE_SIZE;
+  }
+};
+
 // errorToMessages yields either strings or API message objects; flatten both
 // into one operator-readable line (same shape shipment-menu.tsx renders).
 const describeError = (error: unknown) =>
@@ -200,6 +222,13 @@ export default function Page(pageProps: any) {
     const [allChecked, setAllChecked] = React.useState(false);
     const [initialized, setInitialized] = React.useState(false);
     const [selection, setSelection] = React.useState<string[]>([]);
+    // Rows per page (20/50/100), fed into the query as filter.first.
+    const [pageSize, setPageSize] = React.useState<number>(initialPageSize);
+    // Anchor of the last individually clicked row checkbox, for shift+click
+    // range selection. Stored as a shipment id, not an index: ids survive
+    // refetches and the client-side re-narrowing/sorting of visibleShipments
+    // where positions do not.
+    const lastCheckedRef = React.useRef<string | null>(null);
     // Which sequential bulk run (if any) is in flight — the buttons disable
     // each other so two batches can never interleave over one selection.
     const [bulkAction, setBulkAction] = React.useState<
@@ -237,6 +266,7 @@ export default function Page(pageProps: any) {
         "out_for_delivery",
         "delivery_failed",
       ] as any,
+      first: pageSize,
       setVariablesToURL: true,
       preloadNextPage: true,
     });
@@ -311,18 +341,56 @@ export default function Page(pageProps: any) {
         setSelection(selection);
       }
     };
+    // Applied on the next render via filter.first; localStorage remembers
+    // the choice across sessions, the URL carries it within one. Back to
+    // offset 0 — the old offset may not even exist under the new page size.
+    const changePageSize = (size: number) => {
+      setPageSize(size);
+      try {
+        window.localStorage.setItem(PAGE_SIZE_STORAGE_KEY, `${size}`);
+      } catch {
+        // Storage refused (private mode) — the choice still applies now.
+      }
+      updateFilter({ first: size, offset: 0 });
+    };
     const handleCheckboxChange = (checked: boolean, name: string) => {
       if (name === "all") {
+        lastCheckedRef.current = null;
         setSelection(
           !checked ? [] : visibleShipments.map(({ node: { id } }) => id),
         );
       } else {
+        lastCheckedRef.current = name;
         setSelection(
           checked
             ? [...selection, name]
             : selection.filter((id) => id !== name),
         );
       }
+    };
+    // Shift+click selects (or deselects — the clicked checkbox's own
+    // direction decides) every row between the previous click and this one.
+    // Radix's onCheckedChange carries no modifier keys, so the shift
+    // detection lives on the checkbox's click event; preventDefault() stops
+    // Radix from also toggling (its composed handlers bail on
+    // defaultPrevented), making the range write below the only state change.
+    const handleSelectorClick = (event: React.MouseEvent, id: string) => {
+      const anchor = lastCheckedRef.current;
+      if (!event.shiftKey || !anchor || anchor === id) return;
+      const ids = visibleShipments.map(({ node: shipment }) => shipment.id);
+      const from = ids.indexOf(anchor);
+      const to = ids.indexOf(id);
+      // Anchor no longer on this page/view — fall back to a plain toggle.
+      if (from === -1 || to === -1) return;
+      event.preventDefault();
+      const range = ids.slice(Math.min(from, to), Math.max(from, to) + 1);
+      const selecting = !selection.includes(id);
+      setSelection(
+        selecting
+          ? Array.from(new Set([...selection, ...range]))
+          : selection.filter((selected) => !range.includes(selected)),
+      );
+      lastCheckedRef.current = id;
     };
     const computeDocFormat = (selection: string[]) => {
       const _shipment = (shipments?.edges || []).find(
@@ -391,6 +459,34 @@ export default function Page(pageProps: any) {
             </p>
           )}
         </div>
+      );
+    };
+
+    // Colli at a glance: how many labels a buy on this row is going to
+    // produce. parcels is filled by the ERP sync and, once the label is
+    // bought, equals the label count exactly. One collo is the norm and
+    // stays silent — only multi-colli rows get the chip, with the parcel
+    // contents (product title × quantity, no parsing of the titles) in the
+    // native title tooltip this file already uses everywhere.
+    const renderColli = (shipment: Pick<ShipmentType, "parcels">) => {
+      const parcels = shipment.parcels || [];
+      if (parcels.length <= 1) return null;
+      const contents = parcels
+        .flatMap((parcel) => parcel.items || [])
+        .map(
+          (item) =>
+            `${item.quantity ?? 1} × ${item.title || item.description || item.sku || "item"}`,
+        );
+      const title =
+        contents.length > 0 ? contents.join("\n") : `${parcels.length} colli`;
+      return (
+        <span
+          className="inline-flex items-center gap-0.5 rounded bg-gray-100 text-gray-600 text-xs font-semibold px-1 py-0.5 mr-1 shrink-0"
+          title={title}
+        >
+          <Package className="h-3 w-3" />
+          {parcels.length}×
+        </span>
       );
     };
 
@@ -693,6 +789,7 @@ export default function Page(pageProps: any) {
       setBulkAction("buy_and_print");
       const purchased: string[] = [];
       const failures: string[] = [];
+      const unrecordedPicks: string[] = [];
 
       for (const shipment of targets) {
         try {
@@ -701,7 +798,17 @@ export default function Page(pageProps: any) {
           // the ERP row to "Label Created" — pick after buy would always be
           // refused. This ordering is the whole reason the two calls are not
           // swapped.
-          await erpActions.markPicked.mutateAsync({ id: shipment.id });
+          //
+          // Best-effort, though (pickForPurchase): a row that is already
+          // picked is skipped rather than asked again, and a refused pick is
+          // collected instead of costing the row its label — the purchase
+          // runs the ERP's real gate by itself and fails closed.
+          const pick = await pickForPurchase(erpActions.markPicked, shipment);
+          if (pick.error) {
+            unrecordedPicks.push(
+              `${shipmentLabel(shipment)}: ${describeError(pick.error)}`,
+            );
+          }
           await mutation.buyLabel.mutateAsync({
             ...shipment,
             id: shipment.id,
@@ -726,6 +833,14 @@ export default function Page(pageProps: any) {
         documentPrinter.openBatchLabels(purchased, {
           format: (computeDocFormat(purchased) || "pdf")?.toLowerCase() as FormatType,
           doc: "label",
+        });
+      }
+      // Said out loud, not swallowed: the labels are bought, but these rows
+      // carry no pick in the ERP and the office should know which.
+      if (unrecordedPicks.length > 0) {
+        toast({
+          title: `${unrecordedPicks.length} pick(s) not recorded`,
+          description: `Het label is wel gekocht: ${unrecordedPicks.join(" | ")}`,
         });
       }
       reportBulkFailures("Buy and print", failures);
@@ -1142,11 +1257,16 @@ export default function Page(pageProps: any) {
                         : 'hover:bg-gray-50'
                     }`}
                   >
-                    <TableCell className="selector text-center items-center p-0 sticky-left">
+                    {/* select-none: a shift+click range must not also drag
+                        a text selection across the rows in between. */}
+                    <TableCell className="selector text-center items-center p-0 sticky-left select-none">
                       <div className="py-3 pl-2 pr-4">
                         <Checkbox
                           checked={selection.includes(shipment.id)}
                           onCheckedChange={(checked) => handleCheckboxChange(checked as boolean, shipment.id)}
+                          onClick={(event) =>
+                            handleSelectorClick(event, shipment.id)
+                          }
                         />
                       </div>
                     </TableCell>
@@ -1243,7 +1363,11 @@ export default function Page(pageProps: any) {
                       className="status items-center"
                       onClick={() => previewShipment(shipment.id)}
                     >
-                      <div style={{ paddingLeft: '7px', paddingRight: '7px' }}>
+                      <div
+                        className="flex items-center"
+                        style={{ paddingLeft: "7px", paddingRight: "7px" }}
+                      >
+                        {renderColli(shipment)}
                         <ShipmentsStatusBadge
                           status={shipment.status as string}
                           className="w-full justify-center text-center"
@@ -1374,10 +1498,12 @@ export default function Page(pageProps: any) {
             <div className="sticky bottom-0 left-0 right-0 z-10 bg-white border-t border-gray-200 pb-16 md:pb-0">
               <ListPagination
                 currentOffset={filter.offset as number || 0}
-                pageSize={20}
+                pageSize={(filter.first as number) || pageSize}
                 totalCount={shipments?.page_info?.count || 0}
                 hasNextPage={shipments?.page_info?.has_next_page || false}
                 onPageChange={(offset) => updateFilter({ offset })}
+                pageSizeOptions={PAGE_SIZE_OPTIONS}
+                onPageSizeChange={changePageSize}
                 className="px-2 py-3"
               />
             </div>

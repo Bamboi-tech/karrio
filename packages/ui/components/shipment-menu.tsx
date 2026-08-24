@@ -16,6 +16,7 @@ import {
   useShipmentERPActions,
   isERPLinked,
   getERPStatus,
+  pickForPurchase,
 } from "@karrio/hooks/erp-actions";
 import { useBamboiFeatures } from "@karrio/hooks/bamboi-features";
 import { getShopifyHold, shopifyHoldTooltip } from "./shipment-hold";
@@ -134,10 +135,14 @@ export const ShipmentMenu = ({
   // ERP row to "Label Created" — pick after buy would always be refused.
   // The mutation hooks invalidate the shipments cache themselves, so the row
   // jumps to the Picked card on refetch.
+  //
+  // The pick is best-effort though (pickForPurchase): a row that is already
+  // picked, or whose mirrored erp_status is stale, must still get its label
+  // and its print — the purchase runs the ERP's real gate by itself.
   const buyAndPrintLabel = async () => {
     setBuyAndPrinting(true);
     try {
-      await erpActions.markPicked.mutateAsync({ id: shipment.id });
+      const pick = await pickForPurchase(erpActions.markPicked, shipment);
       await mutation.buyLabel.mutateAsync({
         ...shipment,
         id: shipment.id,
@@ -146,8 +151,9 @@ export const ShipmentMenu = ({
       } as ShipmentType);
       toast({
         title: "Label purchased",
-        description:
-          "De rij verhuist vanzelf naar Picked; het label opent nu.",
+        description: pick.error
+          ? `Het label opent nu. De pick is NIET vastgelegd: ${describeError(pick.error)}`
+          : "De rij verhuist vanzelf naar Picked; het label opent nu.",
       });
       documentPrinter.openShipmentLabel(shipment.id, {
         format: (shipment.label_type || "pdf").toLowerCase() as FormatType,

@@ -64,6 +64,7 @@ import {
   DELIVERY_OUTCOME_OPTIONS,
   DeliveryOutcomeOption,
   useShipmentERPActions,
+  markShippedAndMove,
   pickForPurchase,
 } from "@karrio/hooks/erp-actions";
 import { useBamboiFeatures } from "@karrio/hooks/bamboi-features";
@@ -846,7 +847,9 @@ export default function Page(pageProps: any) {
       reportBulkFailures("Buy and print", failures);
     };
 
-    // Picked → In Transit in the ERP, carrier path only. Bookkeeping, so no
+    // Picked → In Transit in the ERP AND on the board: markShippedAndMove
+    // flips Karrio's own status too, so the rows leave the Picked card on
+    // the refetch instead of waiting for the carrier's first scan. No
     // confirmation; same sequential loop and per-row error collection.
     const runMarkShipped = async () => {
       const targets = selectedShipments();
@@ -854,11 +857,17 @@ export default function Page(pageProps: any) {
 
       setBulkAction("mark_shipped");
       const failures: string[] = [];
+      const unmoved: string[] = [];
       let succeeded = 0;
 
       for (const shipment of targets) {
         try {
-          await erpActions.markShipped.mutateAsync({ id: shipment.id });
+          const { moved } = await markShippedAndMove(
+            erpActions.markShipped,
+            mutation.changeStatus,
+            shipment,
+          );
+          if (!moved) unmoved.push(shipmentLabel(shipment));
           succeeded += 1;
         } catch (error) {
           failures.push(`${shipmentLabel(shipment)}: ${describeError(error)}`);
@@ -871,7 +880,15 @@ export default function Page(pageProps: any) {
       if (succeeded > 0) {
         toast({
           title: `${succeeded} shipment(s) marked shipped`,
-          description: "De ERP-status staat nu op In Transit.",
+          description: "De rijen verhuizen naar de Shipped-kaart.",
+        });
+      }
+      // ERP recorded the hand-over but Karrio refused the status flip — the
+      // row stays on Picked until the carrier scans. Named, not swallowed.
+      if (unmoved.length > 0) {
+        toast({
+          title: `${unmoved.length} row(s) not moved`,
+          description: `In het ERP verwerkt, maar de rij blijft op Picked tot de eerste carrier-scan: ${unmoved.join(", ")}`,
         });
       }
       reportBulkFailures("Mark shipped", failures);

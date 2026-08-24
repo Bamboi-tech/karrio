@@ -141,6 +141,61 @@ export async function pickForPurchase(
   }
 }
 
+// Mark shipped used to be ERP bookkeeping only, and the UX said otherwise:
+// the success toast spoke of In Transit while the row stayed on the Picked
+// card, because the cards follow Karrio's OWN status and nothing in the flow
+// changed it — only the carrier's first scan did, hours later. So the action
+// now moves both, in the same order recordDeliveryOutcome settled on: ERP
+// first (that write carries the gate and the truth), then Karrio's status so
+// the row is on the Shipped card before the operator looks up.
+//
+// The status flip is guarded twice:
+// - only from a pre-transit status — a row the tracker already advanced (or
+//   finished: Delivered) must never be dragged back to In Transit by a late
+//   click, which the ERP tolerates as a no-op ("already in transit");
+// - tracked shipments require a reason for a manual override, so the click
+//   supplies one; the server stamps who/when onto metadata.status_override.
+export const MARK_SHIPPED_STATUS_REASON =
+  "Mark shipped: handed to the carrier before the first tracker scan";
+
+// "created" is what the REST list returns post-purchase, "purchased" what the
+// GraphQL enum calls the same state; rows arrive here from both.
+const PRE_TRANSIT_STATUSES = ["created", "purchased"];
+
+export async function markShippedAndMove(
+  markShipped: {
+    mutateAsync: (variables: { id: string }) => Promise<{ message: string }>;
+  },
+  changeStatus: {
+    mutateAsync: (variables: {
+      id: string;
+      status: ManualShipmentStatusEnum;
+      reason?: string;
+    }) => Promise<unknown>;
+  },
+  shipment: { id: string; status?: string },
+): Promise<{ message: string; moved: boolean }> {
+  const { message } = await markShipped.mutateAsync({ id: shipment.id });
+  if (!PRE_TRANSIT_STATUSES.includes(shipment.status || "")) {
+    // The tracker already moved the row off the Picked card — the ERP write
+    // (or its "already in transit" no-op) was all there was left to do.
+    return { message, moved: true };
+  }
+  try {
+    await changeStatus.mutateAsync({
+      id: shipment.id,
+      status: ManualShipmentStatusEnum.in_transit,
+      reason: MARK_SHIPPED_STATUS_REASON,
+    });
+    return { message, moved: true };
+  } catch {
+    // Same contract as recordDeliveryOutcome: the ERP has the hand-over on
+    // record, so a status-change refusal downgrades the toast, never the
+    // action — the row simply moves when the carrier scans.
+    return { message, moved: false };
+  }
+}
+
 // The ERP mirrors its new erp_status back onto the Karrio shipment via a
 // background job, so a refetch fired straight from onSuccess races that
 // mirror: it usually still sees the OLD status and the row stays on the
@@ -187,9 +242,10 @@ export function useShipmentERPActions(id?: string) {
   const markPicked = runAction("mark-picked");
   const unmarkPicked = runAction("unmark-picked");
   const markOutForDelivery = runAction("mark-out-for-delivery");
-  // Bookkeeping only: moves the ERP row to "In Transit" once the carrier has
-  // the parcel. Carrier path only, and the ERP requires status
-  // "Label Created" — a purchased label, not a draft.
+  // Moves the ERP row to "In Transit" once the carrier has the parcel.
+  // Carrier path only, and the ERP requires status "Label Created" — a
+  // purchased label, not a draft. Callers go through markShippedAndMove so
+  // the Karrio status (and with it the dashboard card) follows immediately.
   const markShipped = runAction("mark-shipped");
   // Deliberately NOT Karrio's own cancel: the ERP cancels the Karrio draft
   // itself, clears the address-review flag and reports back whether the Monta

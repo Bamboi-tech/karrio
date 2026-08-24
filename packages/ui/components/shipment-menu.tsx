@@ -16,6 +16,7 @@ import {
   useShipmentERPActions,
   isERPLinked,
   getERPStatus,
+  markShippedAndMove,
   pickForPurchase,
 } from "@karrio/hooks/erp-actions";
 import { useBamboiFeatures } from "@karrio/hooks/bamboi-features";
@@ -127,6 +128,31 @@ export const ShipmentMenu = ({
         throw error;
       }
     };
+
+  // Not runERPAction: mark shipped writes twice (ERP, then Karrio's own
+  // status so the row moves to the Shipped card right away — see
+  // markShippedAndMove). The toast says which of the two happened.
+  const markShipped = async () => {
+    try {
+      const { message, moved } = await markShippedAndMove(
+        erpActions.markShipped,
+        mutation.changeStatus,
+        shipment,
+      );
+      toast({
+        title: "Mark shipped",
+        description: moved
+          ? message
+          : `${message} The row stays on Picked until the carrier's first scan (status change was refused).`,
+      });
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Mark shipped failed",
+        description: describeError(error),
+      });
+    }
+  };
 
   // The single-row twin of the bulk "Buy and print" run: ERP mark picked →
   // buy the label → open it for printing. Mark picked comes BEFORE the
@@ -443,14 +469,17 @@ export const ShipmentMenu = ({
               </DropdownMenuItem>
             )}
 
-          {/* Carrier path bookkeeping: the parcel is with the carrier, so the
-              ERP row moves to In Transit. Not customer-facing (no Shopify
-              fulfillment, no mail) and the ERP re-checks the status gate, so
-              no confirmation dialog. */}
+          {/* Carrier path: the parcel is with the carrier, so the ERP row
+              moves to In Transit and the Karrio row to the Shipped card.
+              Not customer-facing (no Shopify fulfillment, no mail) and the
+              ERP re-checks the status gate, so no confirmation dialog. */}
           {erpLinked && erpStatus === "Label Created" && isEnabled("btn_mark_shipped") && (
             <DropdownMenuItem
-              onClick={runERPAction(erpActions.markShipped, "Mark shipped")}
-              disabled={erpActions.markShipped.isLoading}
+              onClick={markShipped}
+              disabled={
+                erpActions.markShipped.isLoading ||
+                mutation.changeStatus.isLoading
+              }
             >
               <span>Mark Shipped (ERP)</span>
             </DropdownMenuItem>

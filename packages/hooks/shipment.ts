@@ -134,7 +134,14 @@ export function useShipments({
   React.useEffect(() => {
     if (preloadNextPage === false) return;
     if (query.data?.shipments.page_info.has_next_page) {
-      const _filter = { ...filter, offset: (filter.offset as number) + 20 };
+      // The next page starts one page-size further, not a hardcoded 20 —
+      // the shipments list lets the operator pick 20/50/100 via filter.first.
+      const _filter = {
+        ...filter,
+        offset:
+          ((filter.offset as number) || 0) +
+          ((filter.first as number) || PAGE_SIZE),
+      };
       queryClient.prefetchQuery(["shipments", _filter], () =>
         fetch({ filter: _filter }),
       );

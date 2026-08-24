@@ -34,9 +34,18 @@ export const ShipmentsStatusBadge = ({
       ready_for_pickup: "bg-cyan-500 text-white",
       on_hold: "bg-yellow-50 text-yellow-500",
       delivery_delayed: "bg-yellow-50 text-yellow-500",
-      needs_attention: "bg-yellow-50 text-yellow-500", 
+      needs_attention: "bg-yellow-50 text-yellow-500",
       delivery_failed: "bg-red-50 text-red-500",
       failed: "bg-red-50 text-red-500",
+      // Bamboi card language (see cardStatus in the Shipments module): the
+      // All card labels rows by the card they live on, not the Karrio
+      // status. Colors follow the lifecycle the cards already imply —
+      // printing work in violet, labeled-and-waiting in blue (like
+      // "created", which Picked renames), problems in red.
+      today: "bg-violet-50 text-violet-500",
+      planned: "bg-indigo-50 text-indigo-500",
+      picked: "bg-blue-50 text-blue-500",
+      exception: "bg-red-50 text-red-500",
     };
     
     return styles[status as keyof typeof styles] || "bg-gray-50 text-gray-500";

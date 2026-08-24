@@ -100,6 +100,23 @@ const TODAY_SENTINEL = "_print_today";
 // count is exact. The sentinel only keeps the card highlighted.
 const HOLD_SENTINEL = "_on_hold";
 
+// The All card and the initial query share this list. "draft" rides along
+// since the All card started speaking card language (cardStatus below):
+// a draft row there names its own card — Today, Planned, On hold, Needs
+// Attention — instead of the Karrio status, so there is no longer any
+// reason to keep drafts off the All card.
+const ALL_STATUSES = [
+  "draft",
+  "created",
+  "shipped",
+  "delivered",
+  "in_transit",
+  "cancelled",
+  "needs_attention",
+  "out_for_delivery",
+  "delivery_failed",
+];
+
 // Planning metadata mirrored onto every draft by the ERP (karrio_shipping):
 // the day the parcel leaves (shipment_date), where that day came from
 // (shipment_date_source: "monta" = Monta's planned day, anything else is a
@@ -134,6 +151,35 @@ const hasAddressReviewFlag = (metadata: unknown) =>
 
 const getPrintDate = (metadata: unknown) =>
   asISODate(((metadata || {}) as Record<string, unknown>)[PRINT_DATE_KEY]);
+
+// The status badge on the All card speaks card language, not Karrio
+// language. Five cards — Needs Attention, Complete, On hold, Planned,
+// Today — are all Karrio status "draft" under the hood (deliberately: we
+// never renamed the Karrio status itself, that would ripple through the
+// server), so the raw badge said "draft" on rows the warehouse knows by
+// their card name. Same predicates as the card narrowing in
+// visibleShipments, so the label always names the card the row lives on.
+// Complete never appears: it is the roll-up of Planned + Today, and the
+// more specific of the two wins on a single row.
+const cardStatus = (shipment: Pick<ShipmentType, "status" | "metadata">) => {
+  const status = shipment.status as string;
+  if (status === "draft") {
+    if (hasAddressReviewFlag(shipment.metadata)) return "needs_attention";
+    if (getShopifyHold(shipment.metadata).held) return "on_hold";
+    const printDate = getPrintDate(shipment.metadata);
+    if (printDate && printDate > amsterdamToday()) return "planned";
+    return "today";
+  }
+  // "created" (REST) / "purchased" (GraphQL) is the labeled-not-scanned
+  // state the board calls Picked.
+  if (status === "created" || status === "purchased") return "picked";
+  if (["shipped", "in_transit", "out_for_delivery"].includes(status))
+    return "shipped";
+  if (["needs_attention", "delivery_failed"].includes(status))
+    return "exception";
+  // delivered / cancelled already carry the card's name.
+  return status;
+};
 
 // Amsterdam calendar days between two ISO dates. Both parse as UTC midnight,
 // so the difference is an exact whole number of days.
@@ -257,16 +303,7 @@ export default function Page(pageProps: any) {
     // identical client-side defaults answer, so the toolbar never flickers.
     const { isEnabled } = useBamboiFeatures();
     const context = useShipments({
-      status: [
-        "created",
-        "shipped",
-        "delivered",
-        "in_transit",
-        "cancelled",
-        "needs_attention",
-        "out_for_delivery",
-        "delivery_failed",
-      ] as any,
+      status: ALL_STATUSES as any,
       first: pageSize,
       setVariablesToURL: true,
       preloadNextPage: true,
@@ -416,6 +453,14 @@ export default function Page(pageProps: any) {
         ).length === selection.length
       );
     };
+    // The All card carries drafts since it learned card language, and a
+    // draft has no label to print — one in the selection would poison the
+    // whole batch, so Print Labels greys out instead of failing halfway.
+    const selectionHasDraft = (selection: string[]) =>
+      (shipments?.edges || []).some(
+        ({ node: shipment }) =>
+          selection.includes(shipment.id) && shipment.status === "draft",
+      );
     const getRate = (shipment: any) =>
       shipment.selected_rate ||
       (shipment?.rates || []).find(
@@ -580,16 +625,7 @@ export default function Page(pageProps: any) {
     const getFilterOptions = () => [
       {
         label: "All",
-        value: [
-          "created",
-          "shipped",
-          "delivered",
-          "in_transit",
-          "cancelled",
-          "needs_attention",
-          "out_for_delivery",
-          "delivery_failed",
-        ],
+        value: ALL_STATUSES,
       },
       {
         // The address worklist: every DRAFT whose delivery address is
@@ -696,6 +732,11 @@ export default function Page(pageProps: any) {
     const matchesCard = (statuses: string[]) =>
       statusFilter.length === statuses.length &&
       statuses.every((status) => statusFilter.includes(status));
+    // The one view where the status column renders: every other card IS a
+    // status, so a per-row badge there repeats the card header at best — and
+    // at worst says "draft" on five differently-named cards, which is
+    // exactly the confusion that got the column hidden.
+    const isAllView = matchesCard(ALL_STATUSES);
     // Shipped / Delivered / Exception — the post-purchase cards, where a
     // delivery can still turn out differently than the carrier reported.
     const isPostPurchaseView =
@@ -1101,7 +1142,7 @@ export default function Page(pageProps: any) {
                   </TableHead>
 
                   {selection.length > 0 && (
-                    <TableHead className="p-2" colSpan={10}>
+                    <TableHead className="p-2" colSpan={isAllView ? 10 : 9}>
                       <div className="flex items-center gap-2 flex-wrap">
                         {/* Hidden on the five draft-stage cards: no row
                             there can have a label yet (buying one moves the
@@ -1112,7 +1153,11 @@ export default function Page(pageProps: any) {
                           <Button
                             variant="outline"
                             size="sm"
-                            disabled={!compatibleTypeSelection(selection) || documentPrinter.isLoading}
+                            disabled={
+                              !compatibleTypeSelection(selection) ||
+                              selectionHasDraft(selection) ||
+                              documentPrinter.isLoading
+                            }
                             className="px-3"
                             onClick={() => documentPrinter.openBatchLabels(
                               selection,
@@ -1239,7 +1284,11 @@ export default function Page(pageProps: any) {
                       <TableHead className="service text-xs items-center">
                         SHIPPING SERVICE
                       </TableHead>
-                      <TableHead className="status items-center"></TableHead>
+                      {isAllView && (
+                        <TableHead className="status text-xs items-center">
+                          STATUS
+                        </TableHead>
+                      )}
                       <TableHead className="recipient text-xs items-center">
                         RECIPIENT
                       </TableHead>
@@ -1342,6 +1391,11 @@ export default function Page(pageProps: any) {
                             }
                           />
                           )}
+                          {/* Colli count used to live in the status cell,
+                              but that cell only renders on the All card now
+                              — and multi-colli matters most while printing,
+                              on exactly the cards without a status column. */}
+                          {renderColli(shipment)}
                           <div
                             className="text-ellipsis"
                             style={{ maxWidth: "190px", lineHeight: "16px" }}
@@ -1376,21 +1430,22 @@ export default function Page(pageProps: any) {
                           </div>
                         </div>
                     </TableCell>
-                    <TableCell
-                      className="status items-center"
-                      onClick={() => previewShipment(shipment.id)}
-                    >
-                      <div
-                        className="flex items-center"
-                        style={{ paddingLeft: "7px", paddingRight: "7px" }}
+                    {isAllView && (
+                      <TableCell
+                        className="status items-center"
+                        onClick={() => previewShipment(shipment.id)}
                       >
-                        {renderColli(shipment)}
-                        <ShipmentsStatusBadge
-                          status={shipment.status as string}
-                          className="w-full justify-center text-center"
-                        />
-                      </div>
-                    </TableCell>
+                        <div
+                          className="flex items-center"
+                          style={{ paddingLeft: "7px", paddingRight: "7px" }}
+                        >
+                          <ShipmentsStatusBadge
+                            status={cardStatus(shipment)}
+                            className="w-full justify-center text-center"
+                          />
+                        </div>
+                      </TableCell>
+                    )}
                     <TableCell
                       className="recipient items-center text-xs font-bold text-gray-600 relative"
                       onClick={() => previewShipment(shipment.id)}

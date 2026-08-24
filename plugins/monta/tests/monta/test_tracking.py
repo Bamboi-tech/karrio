@@ -7,6 +7,7 @@ from .fixture import gateway
 import karrio.sdk as karrio
 import karrio.lib as lib
 import karrio.core.models as models
+import karrio.providers.monta.units as units
 
 
 class TestMontaTracking(unittest.TestCase):
@@ -63,6 +64,50 @@ class TestMontaTracking(unittest.TestCase):
             )
 
             self.assertListEqual(lib.to_dict(parsed_response), ParsedErrorResponse)
+
+
+class TestMontaStatusMapping(unittest.TestCase):
+    """Every event TypeCode Monta documents on the /orderevents feed must map
+    to a sane Karrio status — including the ones whose keywords mislead."""
+
+    def test_documented_event_codes(self):
+        for code, expected in {
+            "EnRoute": "in_transit",
+            "AvailablePickup": "ready_for_pickup",
+            "Delivered": "delivered",
+            "Collected": "delivered",
+            "DeliveryFailed": "delivery_failed",
+            "NoDeliveryStatusFromCarrier": "unknown",
+            "Returned": "return_to_sender",
+            "Unblocked": "pending",
+            "VerifyingBlocked": "on_hold",
+            "LineDeleted": "unknown",
+            "OrderDeleted": "cancelled",
+            "Backorder": "pending",
+            "OutOfBackorder": "pending",
+            "Picking": "picked_up",
+            "Packing": "picked_up",
+            "Shipped": "in_transit",
+        }.items():
+            self.assertEqual(units.to_tracking_status(code), expected, code)
+
+    def test_unblocked_is_not_on_hold_despite_the_blocked_substring(self):
+        # Regression: seen live — Unblocked events matched the BLOCKED keyword.
+        self.assertEqual(
+            units.to_tracking_status("Unblocked", "Order released from hold"),
+            "pending",
+        )
+
+    def test_undocumented_blocked_code_still_lands_on_hold(self):
+        self.assertEqual(units.to_tracking_status("Blocked"), "on_hold")
+
+    def test_collected_in_free_text_does_not_mean_delivered(self):
+        # Only the exact event code maps; a description mentioning "collected"
+        # next to a real carrier code must not override that code.
+        self.assertEqual(
+            units.to_tracking_status("EnRoute", "Collected by carrier driver"),
+            "in_transit",
+        )
 
 
 if __name__ == "__main__":

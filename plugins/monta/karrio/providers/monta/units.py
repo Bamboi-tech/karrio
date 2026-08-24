@@ -79,9 +79,15 @@ class TrackingStatus(lib.Enum):
     """Maps Monta order event TypeCodes and collo DeliveryStatusCodes to
     normalized Karrio statuses.
 
-    Monta does not publish a closed enum for these codes, so matching is done
-    on normalized keywords (see `to_tracking_status`). Declaration order
-    matters: more specific statuses must come before broader keywords
+    Monta's API docs list the event types the /orderevents feed emits
+    (EnRoute, AvailablePickup, Delivered, Collected, DeliveryFailed,
+    NoDeliveryStatusFromCarrier, Returned, Unblocked, VerifyingBlocked,
+    LineDeleted, OrderDeleted, Backorder, OutOfBackorder, Picking, Packing,
+    Shipped), but production also emits codes outside that list (Blocked) and
+    collo DeliveryStatusCodes have no published enum at all. So the exact
+    documented codes are pinned in EXACT_EVENT_STATUS and everything else is
+    matched on normalized keywords (see `to_tracking_status`). Declaration
+    order matters: more specific statuses must come before broader keywords
     (e.g. RETURNEDTOSENDER before DELIVERED).
     """
 
@@ -131,10 +137,42 @@ class TrackingStatus(lib.Enum):
     pending = ["RECEIVED", "VERIFIED", "OPEN", "NEW", "BACKORDER", "CREATED", "PENDING"]
 
 
+# Exact verdicts for the event TypeCodes Monta documents on the /orderevents
+# feed. These take precedence over the keyword scan because keywords would
+# mislead on several of them:
+# - UNBLOCKED contains BLOCKED and would land on on_hold — the exact opposite;
+# - LINEDELETED contains DELETED and would land on cancelled, while a deleted
+#   order line says nothing about the shipment's transport status;
+# - NODELIVERYSTATUSFROMCARRIER is explicitly "we know nothing";
+# - COLLECTED as the bare event code is the consumer collecting the parcel
+#   (it follows AvailablePickup), but the word inside a free-text description
+#   could equally be a carrier collection — so only the exact code maps;
+# - PACKING/AVAILABLEPICKUP simply have no matching keyword of their own.
+EXACT_EVENT_STATUS = {
+    "UNBLOCKED": "pending",
+    "VERIFYINGBLOCKED": "on_hold",
+    "LINEDELETED": "unknown",
+    "ORDERDELETED": "cancelled",
+    "NODELIVERYSTATUSFROMCARRIER": "unknown",
+    "COLLECTED": "delivered",
+    "AVAILABLEPICKUP": "ready_for_pickup",
+    "PACKING": "picked_up",
+}
+
+
 def to_tracking_status(*codes: str) -> str:
     """Resolve the first matching normalized Karrio status for the given
-    Monta event/delivery status codes or descriptions."""
+    Monta event/delivery status codes or descriptions.
+
+    The first value is the code itself (callers pass the code before the
+    free-text description): when it is one of the exactly documented event
+    codes, that verdict wins (EXACT_EVENT_STATUS). Only then are all values
+    scanned against the keyword lists.
+    """
     normalized = [_normalize(code) for code in codes if code]
+
+    if normalized and normalized[0] in EXACT_EVENT_STATUS:
+        return EXACT_EVENT_STATUS[normalized[0]]
 
     for status in list(TrackingStatus):
         keywords = [_normalize(keyword) for keyword in status.value]

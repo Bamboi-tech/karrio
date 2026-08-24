@@ -33,17 +33,20 @@ import {
 } from "@karrio/types/graphql/ee/types";
 import { gqlstr } from "@karrio/lib";
 import { useKarrio, useAuthenticatedQuery, useAuthenticatedMutation } from "./karrio";
+import { useAPIMetadata } from "./api-metadata";
 import { useSyncedSession } from "./session";
 
 // OAuth Apps queries (for developers page)
 export function useOAuthApps(filter?: OAuthAppFilter) {
   const karrio = useKarrio();
+  const { metadata } = useAPIMetadata();
 
   const query = useAuthenticatedQuery({
     staleTime: 5000,
     refetchOnWindowFocus: false,
     queryKey: ["oauth-apps", filter],
     queryFn: () => karrio.graphql.request<GetOAuthApps>(gqlstr(GET_OAUTH_APPS), { variables: { filter } }),
+    enabled: metadata?.APPS_MANAGEMENT === true,
   });
 
   return {
@@ -56,13 +59,14 @@ export function useOAuthApps(filter?: OAuthAppFilter) {
 
 export function useOAuthApp(id: string) {
   const karrio = useKarrio();
+  const { metadata } = useAPIMetadata();
 
   const query = useAuthenticatedQuery({
     staleTime: 5000,
     refetchOnWindowFocus: false,
     queryKey: ["oauth-app", id],
     queryFn: () => karrio.graphql.request<GetOAuthApp>(gqlstr(GET_OAUTH_APP), { variables: { id } }),
-    enabled: !!id,
+    enabled: metadata?.APPS_MANAGEMENT === true && !!id,
   });
 
   return {
@@ -73,12 +77,14 @@ export function useOAuthApp(id: string) {
 // App Installations queries (for app store)
 export function useAppInstallations(filter?: AppInstallationFilter) {
   const karrio = useKarrio();
+  const { metadata } = useAPIMetadata();
 
   const query = useAuthenticatedQuery({
     staleTime: 5000,
     refetchOnWindowFocus: false,
     queryKey: ["app-installations", filter],
     queryFn: () => karrio.graphql.request<GetAppInstallations>(gqlstr(GET_APP_INSTALLATIONS), { variables: { filter } }),
+    enabled: metadata?.APPS_MANAGEMENT === true,
   });
 
   return {
@@ -91,13 +97,14 @@ export function useAppInstallations(filter?: AppInstallationFilter) {
 
 export function useAppInstallationByAppId(appId: string, enabled = true) {
   const karrio = useKarrio();
+  const { metadata } = useAPIMetadata();
 
   const query = useAuthenticatedQuery({
     staleTime: 5000,
     refetchOnWindowFocus: false,
     queryKey: ["app-installation-by-app-id", appId],
     queryFn: () => karrio.graphql.request<GetAppInstallationByAppId>(gqlstr(GET_APP_INSTALLATION_BY_APP_ID), { variables: { app_id: appId } }),
-    enabled: enabled && !!appId,
+    enabled: metadata?.APPS_MANAGEMENT === true && enabled && !!appId,
   });
 
   return {
@@ -118,6 +125,7 @@ export function usePrivateApps(filter?: OAuthAppFilter) {
 
 export function useInstalledApps(filter?: AppInstallationFilter) {
   const karrio = useKarrio();
+  const { metadata } = useAPIMetadata();
 
   const query = useAuthenticatedQuery({
     staleTime: 5000,
@@ -134,6 +142,7 @@ export function useInstalledApps(filter?: AppInstallationFilter) {
         return { app_installations: { edges: [] } };
       }
     },
+    enabled: metadata?.APPS_MANAGEMENT === true,
   });
 
   return {

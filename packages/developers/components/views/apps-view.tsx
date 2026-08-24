@@ -32,7 +32,9 @@ export function AppsView() {
   const { oauth: oauthApps } = useAppStore();
   const { createOAuthApp, deleteOAuthApp } = useAppMutations();
   const myApps = oauthApps.query.data?.oauth_apps?.edges?.map(edge => edge.node) || [];
-  const isLoading = oauthApps.query.isLoading;
+  // A disabled query (APPS_MANAGEMENT off) stays in `loading` with an idle
+  // fetchStatus — don't spin forever on it.
+  const isLoading = oauthApps.query.isLoading && oauthApps.query.fetchStatus !== "idle";
 
   const createAppForm = useForm({
     defaultValues: {

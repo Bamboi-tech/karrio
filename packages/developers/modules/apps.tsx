@@ -36,7 +36,9 @@ export default function AppsPage() {
     const myApps = oauthApps.query.data?.oauth_apps?.edges?.map(edge => edge.node) || [];
 
     // Loading states
-    const isLoadingOAuth = oauthApps.query.isLoading;
+    // A disabled query (APPS_MANAGEMENT off) stays in `loading` with an idle
+    // fetchStatus — don't spin forever on it.
+    const isLoadingOAuth = oauthApps.query.isLoading && oauthApps.query.fetchStatus !== "idle";
 
     // Form for creating new OAuth app
     const createAppForm = useForm({

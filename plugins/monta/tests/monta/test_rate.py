@@ -278,6 +278,11 @@ RateRequest = {
     },
 }
 
+# NOTE on the date fields (Monta, 24-08-2026): PlannedShipmentDate is the
+# planned ship day; DeliveryDate is the ACTUAL delivery day registered
+# afterwards from carrier feedback (not PlannedShipmentDate + transit), so a
+# live pre-shipment order normally serves it as null — this fixture models a
+# fully populated read for passthrough coverage only.
 OrderResponse = """{
     "WebshopOrderId": "SAL-ORD-2026-00001",
     "Reference": "SAL-ORD-2026-00001",

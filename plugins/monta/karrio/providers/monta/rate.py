@@ -52,6 +52,12 @@ def _extract_details(
         service=provider_units.ShippingService.monta_fulfillment.name,
         total_charge=0.0,
         currency="EUR",
+        # Date semantics (Monta, 24-08-2026): planned_shipment_date is the
+        # planned ship day (ship_on_planned_date false = on or before it,
+        # true = exactly on it); estimated_delivery_from/to is Monta's
+        # delivery forecast; monta_delivery_date (DeliveryDate) is the ACTUAL
+        # delivery day registered afterwards from carrier feedback — never a
+        # forecast, so pre-shipment it is normally null.
         meta=dict(
             service_name=provider_units.ShippingService.monta_fulfillment.value,
             webshop_order_id=order.WebshopOrderId,
@@ -79,9 +85,11 @@ def _actionable_date_hint(
 
     Monta rejects an order whose DeliveryDateRequested is in the past, and a
     stale PlannedShipmentDate is equally dead weight. Dropping the hint is
-    always safe: Monta then computes its own dates, which round-trip back via
-    the rate meta (monta_delivery_date, planned_shipment_date) and the
-    post-upsert order read. The comparison is on the date part against today
+    always safe: DeliveryDateRequested is only a request toward Monta's
+    shipping process (per Monta, 24-08-2026 — it does not make Monta compute
+    or return dates), and Monta plans its own PlannedShipmentDate regardless,
+    which reaches consumers via the rate meta and the post-upsert order read
+    when Monta serves it. The comparison is on the date part against today
     in UTC; an unparseable value is dropped for the same reason — we cannot
     prove it is still actionable.
     """

@@ -87,6 +87,21 @@ compose:
         EMAIL_FROM_ADDRESS: "{{ email_from_address }}"
         SENTRY_DSN: "{{ sentry_dsn | default('') }}"
         SENTRY_ENVIRONMENT: "{{ env | default('staging') }}"
+        # How often background_trackers_update re-reads a tracker at the
+        # carrier. Monta pushes nothing to us: Karrio GETs /order/{id}/events
+        # and /order/{id}/colli, so this interval IS the delay between a
+        # parcel going out for delivery and track.bamboi.eu saying so.
+        #
+        # Unset, the default is 7200 -- worse than it looks, because the
+        # crontab is minute="*/{seconds/60}" clamped to 59, so 7200 collapses
+        # to */59: two runs an hour, 59 and 1 minute apart. Keep any value
+        # here under 3540 or it lands on that same */59.
+        #
+        # Only the worker registers the periodic task, so only the worker
+        # needs it. GET-only toward Monta -- no order upsert, so this cannot
+        # reset Monta's verification the way a rating call does (424-storm,
+        # 2026-08-14).
+        TRACKING_PULSE: "1200"
         # ERP label gate (Ship Today phase 2): every purchase of an
         # ERP-linked shipment asks the ERP first and fails closed when it
         # cannot answer. Token = ERPNext "Karrio Dashboard" user api_key:api_secret.

@@ -155,7 +155,7 @@ export const ShipmentMenu = ({
     }
   };
 
-  // The single-row twin of the bulk "Buy and print" run: ERP mark picked →
+  // The single-row twin of the bulk "Pick and print" run: ERP mark picked →
   // buy the label → open it for printing. Mark picked comes BEFORE the
   // purchase on purpose (same as the bulk loop): the ERP's mark_picked only
   // accepts a shipment in status "Synced", and buying the label moves the
@@ -189,7 +189,7 @@ export const ShipmentMenu = ({
     } catch (error) {
       toast({
         variant: "destructive",
-        title: "Buy & print failed",
+        title: "Pick & print failed",
         description: describeError(error),
       });
     } finally {
@@ -395,7 +395,7 @@ export const ShipmentMenu = ({
               </DropdownMenuItem>
             ))}
 
-          {/* One-click twin of the bulk "Buy and print": pick in the ERP,
+          {/* One-click twin of the bulk "Pick and print": pick in the ERP,
               buy, open the label. ERP-managed carrier drafts only — own
               delivery never buys a label — and held drafts get the same
               tooltip refusal as Buy Label above. */}
@@ -407,7 +407,7 @@ export const ShipmentMenu = ({
             (shopifyHold.held ? (
               <span title={shopifyHoldTooltip(shopifyHold)}>
                 <DropdownMenuItem disabled>
-                  <span>Buy & Print Label (ERP)</span>
+                  <span>Pick & Print Label (ERP)</span>
                 </DropdownMenuItem>
               </span>
             ) : (
@@ -415,7 +415,7 @@ export const ShipmentMenu = ({
                 onClick={buyAndPrintLabel}
                 disabled={buyAndPrinting || documentPrinter.isLoading}
               >
-                <span>Buy & Print Label (ERP)</span>
+                <span>Pick & Print Label (ERP)</span>
               </DropdownMenuItem>
             ))}
 

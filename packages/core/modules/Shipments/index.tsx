@@ -942,7 +942,7 @@ export default function Page(pageProps: any) {
           description: `Het label is wel gekocht: ${unrecordedPicks.join(" | ")}`,
         });
       }
-      reportBulkFailures("Buy and print", failures);
+      reportBulkFailures("Pick and print", failures);
     };
 
     // Today's own-delivery (and pick-without-print) run: record the pick in
@@ -1400,7 +1400,7 @@ export default function Page(pageProps: any) {
                             onClick={runBuyAndPrint}
                           >
                             {bulkAction === "buy_and_print" && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                            Buy and print
+                            Pick and print
                           </Button>
                         )}
                         {/* Picked card only: the parcel is with the carrier,

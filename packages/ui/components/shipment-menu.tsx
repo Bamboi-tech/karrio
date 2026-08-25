@@ -16,6 +16,7 @@ import {
   useShipmentERPActions,
   isERPLinked,
   getERPStatus,
+  canMarkPicked,
   markShippedAndMove,
   pickForPurchase,
 } from "@karrio/hooks/erp-actions";
@@ -421,8 +422,14 @@ export const ShipmentMenu = ({
           {/* Bamboi fork: ERP warehouse actions. Visibility follows the
               mirrored erp_status; the ERP re-checks its own gates on every
               call, so a stale mirror can only hide a button, never bypass a
-              rule. Mark picked / undo are reversible — no dialog. */}
-          {erpLinked && erpStatus === "Synced" && isEnabled("btn_mark_picked") && (
+              rule. Mark picked / undo are reversible — no dialog. The pick is
+              offered on canMarkPicked (mirrored Synced OR no mirror yet, on a
+              Karrio draft): an unmirrored row still gets the call, because
+              "we do not know" is not "too late" and the ERP decides. */}
+          {erpLinked &&
+            shipment.status === ShipmentStatusEnum.draft &&
+            canMarkPicked(shipment.metadata) &&
+            isEnabled("btn_mark_picked") && (
             <DropdownMenuItem
               onClick={runERPAction(erpActions.markPicked, "Mark picked")}
               disabled={erpActions.markPicked.isLoading}

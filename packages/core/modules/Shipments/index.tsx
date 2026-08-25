@@ -66,6 +66,9 @@ import {
   useShipmentERPActions,
   markShippedAndMove,
   pickForPurchase,
+  isERPLinked,
+  canMarkPicked,
+  getERPStatus,
 } from "@karrio/hooks/erp-actions";
 import { useBamboiFeatures } from "@karrio/hooks/bamboi-features";
 import { ConfirmationDialog } from "@karrio/ui/components/confirmation-dialog";
@@ -166,6 +169,10 @@ const cardStatus = (shipment: Pick<ShipmentType, "status" | "metadata">) => {
   if (status === "draft") {
     if (hasAddressReviewFlag(shipment.metadata)) return "needs_attention";
     if (getShopifyHold(shipment.metadata).held) return "on_hold";
+    // A draft the ERP already moved on (own delivery: picked, on the van,
+    // delivered) is named by its erp_status — see ERP_DRAFT_CARDS.
+    const erpCard = erpDraftCard(shipment.metadata);
+    if (erpCard) return erpCard;
     const printDate = getPrintDate(shipment.metadata);
     if (printDate && printDate > amsterdamToday()) return "planned";
     return "today";
@@ -192,6 +199,24 @@ const FULFILMENT_MODE_KEY = "fulfilment_mode";
 const isSelfDelivery = (metadata: unknown) =>
   ((metadata || {}) as Record<string, unknown>)[FULFILMENT_MODE_KEY] ===
   "self_delivery";
+
+// Own delivery never buys a label, so its Karrio status stays "draft" for the
+// parcel's whole life — but the board must still move those rows: a picked
+// parcel belongs on Picked, a van on the road on Shipped. For drafts the
+// mirrored erp_status therefore decides the card. Anything unmapped (Synced,
+// no mirror yet) stays in the print worklist; a terminal/exception erp_status
+// (Returned, Delivery Failed) at least leaves the worklist instead of posing
+// as work — seen live: two Returned test rows from 7 Aug squatting on Today.
+const ERP_DRAFT_CARDS: Record<string, string> = {
+  Picked: "picked",
+  "Out for Delivery": "shipped",
+  Delivered: "delivered",
+  "Delivery Failed": "exception",
+  Returned: "exception",
+  Cancelled: "cancelled",
+};
+const erpDraftCard = (metadata: unknown): string | null =>
+  ERP_DRAFT_CARDS[getERPStatus(metadata) || ""] || null;
 
 // The route line: the one fact that decides how a row ships, rendered once in
 // the service column. "Monta → PostNL" is the ERP-mirrored checkout choice
@@ -280,7 +305,9 @@ export default function Page(pageProps: any) {
     // each other so two batches can never interleave over one selection.
     const [bulkAction, setBulkAction] = React.useState<
       | "buy_and_print"
+      | "mark_picked"
       | "mark_shipped"
+      | "mark_out_for_delivery"
       | "cancel_shipment"
       | "record_outcome"
       | null
@@ -288,6 +315,9 @@ export default function Page(pageProps: any) {
     // Cancelling cannot be undone, and the outcome actions record a reason —
     // both go through a dialog before the batch starts.
     const [cancelDialogOpen, setCancelDialogOpen] = React.useState(false);
+    // Mark out for delivery creates the Shopify fulfillment and mails the
+    // customer — irreversible, so it is confirmed like Cancel is.
+    const [ofdDialogOpen, setOfdDialogOpen] = React.useState(false);
     const [outcomePrompt, setOutcomePrompt] =
       React.useState<OutcomeOption | null>(null);
     const { previewShipment } = useContext(ShipmentPreviewSheetContext);
@@ -679,9 +709,13 @@ export default function Page(pageProps: any) {
       },
       {
         // Labeled but not yet handed to the carrier ("purchased" is aliased
-        // to "created" by useShipments).
+        // to "created" by useShipments) — plus own-delivery drafts whose
+        // mirrored erp_status says Picked: own delivery never buys a label,
+        // so "draft" rides along and visibleShipments narrows the drafts to
+        // the picked ones. Same accepted per-page narrowing limitation as
+        // Complete/Planned/Today.
         label: "Picked",
-        value: ["created"],
+        value: ["created", "draft"],
       },
       {
         label: "Shipped",
@@ -711,11 +745,14 @@ export default function Page(pageProps: any) {
     const isPlannedView = statusFilter.includes(PLANNED_SENTINEL);
     const isTodayView = statusFilter.includes(TODAY_SENTINEL);
     const isHoldView = statusFilter.includes(HOLD_SENTINEL);
-    // The Picked card is exactly status=["created"]. Membership alone would
-    // also match the All card (which contains "created" among eight other
-    // statuses), so the bulk Mark shipped button keys on the exact filter.
+    // The Picked card is exactly status=["created","draft"] (the drafts are
+    // the own-delivery picked rows, narrowed in visibleShipments). Membership
+    // alone would also match the All card (which contains both among eight
+    // other statuses), so the bulk buttons key on the exact filter.
     const isPickedView =
-      statusFilter.length === 1 && statusFilter[0] === "created";
+      statusFilter.length === 2 &&
+      statusFilter.includes("created") &&
+      statusFilter.includes("draft");
     const isNeedsAttentionView = statusFilter.includes(ADDRESS_REVIEW_SENTINEL);
     // The five draft-stage cards. A row on any of them is still a draft — a
     // purchased shipment is no longer "draft" — so it can never have a label
@@ -759,6 +796,15 @@ export default function Page(pageProps: any) {
           ({ node: shipment }) => getShopifyHold(shipment.metadata).held,
         );
       }
+      if (isPickedView) {
+        // "created" rows are picked by definition; a draft is only here when
+        // its erp_status says so (own delivery — see ERP_DRAFT_CARDS).
+        return edges.filter(
+          ({ node: shipment }) =>
+            shipment.status !== "draft" ||
+            erpDraftCard(shipment.metadata) === "picked",
+        );
+      }
       if (!isCompleteView && !isPlannedView && !isTodayView) return edges;
       const today = amsterdamToday();
       const narrowed = edges.filter(({ node: shipment }) => {
@@ -766,6 +812,10 @@ export default function Page(pageProps: any) {
         // Held orders are parked on the On hold card — never in the print
         // worklist, elapsed print_date or not.
         if (getShopifyHold(shipment.metadata).held) return false;
+        // A draft the ERP already moved on (own delivery picked / on the
+        // van / delivered / returned) has left the print worklist — its card
+        // is named by erpDraftCard, matching the cardStatus badge.
+        if (erpDraftCard(shipment.metadata)) return false;
         if (isCompleteView) return true;
         const printDate = getPrintDate(shipment.metadata);
         if (isPlannedView) return !!printDate && printDate > today;
@@ -785,7 +835,14 @@ export default function Page(pageProps: any) {
         if (!printB) return 1;
         return printA < printB ? -1 : printA > printB ? 1 : 0;
       });
-    }, [shipments, isCompleteView, isPlannedView, isTodayView, isHoldView]);
+    }, [
+      shipments,
+      isCompleteView,
+      isPlannedView,
+      isTodayView,
+      isHoldView,
+      isPickedView,
+    ]);
 
     // The selected rows of the current page, in the order the operator sees
     // them. Bulk actions work over visibleShipments (not shipments.edges), so
@@ -888,12 +945,127 @@ export default function Page(pageProps: any) {
       reportBulkFailures("Buy and print", failures);
     };
 
+    // Today's own-delivery (and pick-without-print) run: record the pick in
+    // the ERP, nothing else — no label, no Shopify call, no customer mail.
+    // The ERP mirrors erp_status=Picked back onto the metadata, which is what
+    // moves the row to the Picked card on the delayed refetch
+    // (invalidateAroundMirror in the mutation hook). Rows the mirrored status
+    // already rules out are named up front instead of refused one by one.
+    const runMarkPicked = async () => {
+      const selected = selectedShipments();
+      const pickable = ({ metadata }: { metadata?: unknown }) =>
+        isERPLinked(metadata) && canMarkPicked(metadata);
+      const skipped = selected.filter((shipment) => !pickable(shipment));
+      const targets = selected.filter(pickable);
+
+      if (skipped.length > 0) {
+        toast({
+          title: `${skipped.length} row(s) skipped`,
+          description: `Niet pickbaar (geen ERP-koppeling, of al voorbij Synced): ${skipped
+            .map(shipmentLabel)
+            .join(", ")}`,
+        });
+      }
+      if (targets.length === 0) return;
+
+      setBulkAction("mark_picked");
+      const failures: string[] = [];
+      let succeeded = 0;
+
+      for (const shipment of targets) {
+        try {
+          await erpActions.markPicked.mutateAsync({ id: shipment.id });
+          succeeded += 1;
+        } catch (error) {
+          failures.push(`${shipmentLabel(shipment)}: ${describeError(error)}`);
+        }
+      }
+
+      setBulkAction(null);
+      queryClient.invalidateQueries(["shipments"]);
+
+      if (succeeded > 0) {
+        toast({
+          title: `${succeeded} shipment(s) marked picked`,
+          description:
+            "De rijen verhuizen naar de Picked-kaart. Er is niets naar Shopify of de klant gestuurd.",
+        });
+      }
+      reportBulkFailures("Mark picked", failures);
+    };
+
+    // Own delivery's departure: the ERP creates the Shopify fulfillment and
+    // notifies the customer, so this only ever runs behind the confirmation
+    // dialog. Self-delivery rows only — a carrier row's hand-over is Mark
+    // shipped — and the ERP re-checks its own gates per row.
+    const runMarkOutForDelivery = async () => {
+      const selected = selectedShipments();
+      const skipped = selected.filter(
+        ({ metadata }) => !isSelfDelivery(metadata),
+      );
+      const targets = selected.filter(({ metadata }) =>
+        isSelfDelivery(metadata),
+      );
+
+      if (skipped.length > 0) {
+        toast({
+          title: `${skipped.length} carrier shipment(s) skipped`,
+          description: `Vervoerderszendingen vertrekken met Mark shipped: ${skipped
+            .map(shipmentLabel)
+            .join(", ")}`,
+        });
+      }
+      if (targets.length === 0) return;
+
+      setBulkAction("mark_out_for_delivery");
+      const failures: string[] = [];
+      let succeeded = 0;
+
+      for (const shipment of targets) {
+        try {
+          await erpActions.markOutForDelivery.mutateAsync({ id: shipment.id });
+          succeeded += 1;
+        } catch (error) {
+          failures.push(`${shipmentLabel(shipment)}: ${describeError(error)}`);
+        }
+      }
+
+      setBulkAction(null);
+      queryClient.invalidateQueries(["shipments"]);
+
+      if (succeeded > 0) {
+        toast({
+          title: `${succeeded} shipment(s) out for delivery`,
+          description:
+            "De Shopify-fulfillment is aangemaakt en de klant is op de hoogte. De rijen verhuizen naar de Shipped-kaart.",
+        });
+      }
+      reportBulkFailures("Mark out for delivery", failures);
+    };
+
     // Picked → In Transit in the ERP AND on the board: markShippedAndMove
     // flips Karrio's own status too, so the rows leave the Picked card on
     // the refetch instead of waiting for the carrier's first scan. No
     // confirmation; same sequential loop and per-row error collection.
+    // Own-delivery rows are named and skipped — their departure is Mark out
+    // for delivery, and the ERP would refuse them one by one anyway.
     const runMarkShipped = async () => {
-      const targets = selectedShipments();
+      const selected = selectedShipments();
+      const skipped = selected.filter(({ metadata }) =>
+        isSelfDelivery(metadata),
+      );
+      const targets = selected.filter(
+        ({ metadata }) => !isSelfDelivery(metadata),
+      );
+
+      if (skipped.length > 0) {
+        toast({
+          title: `${skipped.length} own-delivery shipment(s) skipped`,
+          description: `Eigen bezorging vertrekt met Mark out for delivery: ${skipped
+            .map(shipmentLabel)
+            .join(", ")}`,
+        });
+      }
       if (targets.length === 0) return;
 
       setBulkAction("mark_shipped");
@@ -1198,6 +1370,23 @@ export default function Page(pageProps: any) {
                             </DropdownMenuContent>
                           </DropdownMenu>
                         )}
+                        {/* Pick without printing: own delivery never buys a
+                            label, and a carrier row may be picked before its
+                            label run too. ERP bookkeeping only — the rows
+                            move to the Picked card via the mirrored
+                            erp_status. */}
+                        {isTodayView && isEnabled("btn_mark_picked") && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={bulkAction !== null}
+                            className="px-3"
+                            onClick={runMarkPicked}
+                          >
+                            {bulkAction === "mark_picked" && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+                            Mark picked
+                          </Button>
+                        )}
                         {/* Today's warehouse run: pick in the ERP, buy the
                             label, print once. Sequential per row (see
                             runBuyAndPrint) and only offered on the Today
@@ -1215,7 +1404,8 @@ export default function Page(pageProps: any) {
                           </Button>
                         )}
                         {/* Picked card only: the parcel is with the carrier,
-                            so the ERP row moves to In Transit. */}
+                            so the ERP row moves to In Transit. Own-delivery
+                            rows in the selection are skipped by name. */}
                         {isPickedView && isEnabled("btn_mark_shipped") && (
                           <Button
                             variant="outline"
@@ -1226,6 +1416,22 @@ export default function Page(pageProps: any) {
                           >
                             {bulkAction === "mark_shipped" && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
                             Mark shipped
+                          </Button>
+                        )}
+                        {/* Picked card, own delivery's departure. Creates the
+                            Shopify fulfillment and notifies the customer, so
+                            it is confirmed first (dialog at the bottom);
+                            carrier rows in the selection are skipped by name. */}
+                        {isPickedView && isEnabled("btn_mark_out_for_delivery") && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={bulkAction !== null}
+                            className="px-3"
+                            onClick={() => setOfdDialogOpen(true)}
+                          >
+                            {bulkAction === "mark_out_for_delivery" && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+                            Mark out for delivery
                           </Button>
                         )}
                         {/* Draft cards only: hand the cancel to the ERP,
@@ -1589,6 +1795,17 @@ export default function Page(pageProps: any) {
             </div>
           </div>
         )}
+
+        <ConfirmationDialog
+          open={ofdDialogOpen}
+          onOpenChange={setOfdDialogOpen}
+          title="Mark out for delivery?"
+          description={`De eigen-bezorgingsrijen in de selectie gaan de bus op: voor elk wordt de Shopify-fulfillment aangemaakt en de klant op de hoogte gebracht. Dit kan niet ongedaan gemaakt worden. Vervoerderszendingen in de selectie worden overgeslagen.`}
+          confirmLabel="Mark out for delivery"
+          cancelLabel="Terug"
+          onConfirm={runMarkOutForDelivery}
+          isLoading={bulkAction === "mark_out_for_delivery"}
+        />
 
         <ConfirmationDialog
           open={cancelDialogOpen}

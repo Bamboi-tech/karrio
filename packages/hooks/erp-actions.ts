@@ -20,6 +20,7 @@ export type ERPShipmentAction =
   | "unmark-picked"
   | "mark-out-for-delivery"
   | "mark-shipped"
+  | "mark-delivered"
   | "cancel-shipment"
   | "record-delivery-outcome"
   | "confirm-address"
@@ -247,6 +248,12 @@ export function useShipmentERPActions(id?: string) {
   // purchased label, not a draft. Callers go through markShippedAndMove so
   // the Karrio status (and with it the dashboard card) follows immediately.
   const markShipped = runAction("mark-shipped");
+  // Own-delivery only: the parcel was handed to the customer. The ERP is
+  // strict (self_delivery + status "Out for Delivery") and this is the moment
+  // the delivered write-back fires and Shopify mails the customer — which is
+  // why the menu puts a confirmation dialog in front, not a reason prompt:
+  // there is no carrier owning the status, so nothing is being overridden.
+  const markDelivered = runAction("mark-delivered");
   // Deliberately NOT Karrio's own cancel: the ERP cancels the Karrio draft
   // itself, clears the address-review flag and reports back whether the Monta
   // order still has to be removed by hand — that note is the response
@@ -287,6 +294,7 @@ export function useShipmentERPActions(id?: string) {
     unmarkPicked,
     markOutForDelivery,
     markShipped,
+    markDelivered,
     cancelShipment,
     recordDeliveryOutcome,
     unmarkShipped,

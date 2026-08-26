@@ -22,6 +22,7 @@ export const BAMBOI_FEATURE_DEFAULTS: Record<string, boolean> = {
   btn_mark_picked: true,
   btn_mark_out_for_delivery: true,
   btn_mark_shipped: true,
+  btn_mark_delivered: true,
   btn_cancel_shipment: true,
   btn_record_delivery_outcome: true,
   btn_buy_label_dashboard: true,

@@ -492,6 +492,36 @@ export const ShipmentMenu = ({
             </DropdownMenuItem>
           )}
 
+          {/* Own delivery only: the parcel was handed to the customer. One
+              click, no reason prompt — there is no carrier owning the status,
+              so nothing is overridden (the carrier path keeps its Record
+              Delivery Outcome dialog below). This is the moment the delivered
+              write-back fires and Shopify mails the customer, hence the
+              confirmation dialog. */}
+          {erpLinked &&
+            erpSelfDelivery &&
+            erpStatus === "Out for Delivery" &&
+            isEnabled("btn_mark_delivered") && (
+              <DropdownMenuItem
+                onClick={() => {
+                  setConfirmAction({
+                    title: "Mark Delivered",
+                    description:
+                      "The parcel was handed to the customer: this sends the delivered write-back to Shopify and the customer's delivery mail. Neither can be retracted.",
+                    confirmLabel: "Mark Delivered",
+                    onConfirm: runERPAction(
+                      erpActions.markDelivered,
+                      "Mark delivered",
+                    ),
+                  });
+                  setConfirmDialogOpen(true);
+                }}
+                disabled={erpActions.markDelivered.isLoading}
+              >
+                <span>Mark Delivered (ERP)</span>
+              </DropdownMenuItem>
+            )}
+
           {/* Carrier path, from Label Created onward: what the carrier
               reported is not always what happened. Same options as the bulk
               "Record outcome" dropdown; every one records its reason in the

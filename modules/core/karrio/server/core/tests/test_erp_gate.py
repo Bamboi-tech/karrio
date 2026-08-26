@@ -275,6 +275,7 @@ class TestShipmentActionRelay(TestCase):
         for spelling in (
             "unmark-shipped",
             "unmark-out-for-delivery",
+            "mark-delivered",
             "unmark-delivered",
             "undo-delivery-outcome",
         ):

@@ -109,6 +109,7 @@ ERP_SHIPMENT_ACTIONS = {
     "unmark_out_for_delivery": (),
     "mark_shipped": (),
     "unmark_shipped": (),
+    "mark_delivered": (),
     "unmark_delivered": (),
     "cancel_shipment": (),
     "record_delivery_outcome": ("outcome", "note"),

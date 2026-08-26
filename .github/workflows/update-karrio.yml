@@ -38,6 +38,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 30m window comfortably covers the ~12m ansible run. Without this the
+      # monitoring digest reports every deploy restart as an unplanned outage.
+      - name: Snooze monitoring alerts during deploy
+        uses: ./.github/actions/snooze-monitoring
+        continue-on-error: true
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          policy_match: ${{ inputs.env == 'production' && 'Karrio|VM ' || 'VM ' }}
+
       - name: Deploy summary
         run: |
           echo "### Ansible deploy targets" >> "$GITHUB_STEP_SUMMARY"

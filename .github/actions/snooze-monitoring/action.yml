@@ -1,0 +1,77 @@
+name: Snooze Cloud Monitoring alerts
+description: >
+  Creates a Cloud Monitoring snooze covering matching alert policies so planned
+  deploys don't email uptime/VM alerts. The snooze expires on its own after
+  duration_minutes; there is nothing to clean up. Best-effort: a failure here
+  never fails the deploy. Requires the service account behind credentials_json
+  to have roles/monitoring.snoozeEditor + roles/monitoring.viewer.
+
+inputs:
+  credentials_json:
+    description: GCP service account key JSON (use secrets.GCP_SA_KEY)
+    required: true
+  project_id:
+    description: GCP project holding the alert policies
+    required: false
+    default: bamboi-tech
+  policy_match:
+    description: >
+      Regex tested against alert policy display names; only matching policies
+      are snoozed. Empty snoozes every policy in the project.
+    required: false
+    default: ""
+  duration_minutes:
+    description: Snooze length in minutes, starting now
+    required: false
+    default: "30"
+
+runs:
+  using: composite
+  steps:
+    # No token_format here: requesting an access_token from auth@v2 routes through
+    # the iamcredentials generateAccessToken API, which needs that API enabled plus
+    # a tokenCreator self-grant. gcloud mints the token straight from the key.
+    - name: Authenticate to Google Cloud
+      id: auth
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ inputs.credentials_json }}
+
+    - name: Create snooze
+      shell: bash
+      env:
+        PROJECT_ID: ${{ inputs.project_id }}
+        POLICY_MATCH: ${{ inputs.policy_match }}
+        DURATION_MINUTES: ${{ inputs.duration_minutes }}
+      run: |
+        set -uo pipefail
+
+        ACCESS_TOKEN=$(gcloud auth print-access-token) || {
+          echo "::warning::snooze-monitoring: could not mint access token, alerts stay live during this deploy"
+          exit 0
+        }
+
+        POLICIES=$(curl -sf -H "Authorization: Bearer $ACCESS_TOKEN" \
+          "https://monitoring.googleapis.com/v3/projects/${PROJECT_ID}/alertPolicies" \
+          | jq -c --arg re "${POLICY_MATCH:-.}" \
+              '[.alertPolicies[] | select(.displayName | test($re)) | .name]')
+        if [ -z "${POLICIES:-}" ] || [ "$(jq length <<<"$POLICIES")" -eq 0 ]; then
+          echo "::warning::snooze-monitoring: no alert policies matched '${POLICY_MATCH}', skipping snooze"
+          exit 0
+        fi
+
+        START=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        END=$(date -u -d "+${DURATION_MINUTES} minutes" +%Y-%m-%dT%H:%M:%SZ)
+        BODY=$(jq -n --argjson policies "$POLICIES" \
+          --arg start "$START" --arg end "$END" \
+          --arg name "deploy: ${GITHUB_WORKFLOW} run ${GITHUB_RUN_ID}" \
+          '{displayName: $name, criteria: {policies: $policies}, interval: {startTime: $start, endTime: $end}}')
+
+        RESPONSE=$(curl -sf -X POST \
+          -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
+          -d "$BODY" "https://monitoring.googleapis.com/v3/projects/${PROJECT_ID}/snoozes") || {
+          echo "::warning::snooze-monitoring: snooze creation failed, alerts stay live during this deploy"
+          exit 0
+        }
+        echo "Snoozed until ${END}: $(jq -r '.name' <<<"$RESPONSE")"
+        jq -r '.criteria.policies[]' <<<"$BODY" | sed 's/^/  - /'

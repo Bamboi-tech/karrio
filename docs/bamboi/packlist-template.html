@@ -1,0 +1,75 @@
+<!--
+  Bamboi packlist — ready to paste into Settings → Templates.
+
+  Setup (one-time, no deploy):
+    1. Dashboard → Settings → Templates → Create template.
+    2. Name: Packlist — the slug MUST end up as exactly "packlist"
+       (the slug is what the Pick-and-print run looks for; the template's
+       presence is the feature switch).
+    3. Related object: Shipment. Active: on.
+    4. Paste everything below the marker line as the template body.
+    5. Preview with ?shipments=sample, then save.
+
+  The renderer gives each shipment its own page (page-break between
+  shipments) with the variables: shipment, line_items, orders, carrier.
+  Bulma CSS is injected by the PDF renderer; the layout below only adds
+  print-friendly touches on top of it.
+-->
+<!-- ======================= template body below ======================= -->
+<style>
+  .packlist { font-size: 11pt; }
+  .packlist h1 { font-size: 16pt; margin-bottom: 0.2cm; }
+  .packlist .meta { color: #555; margin-bottom: 0.5cm; }
+  .packlist table { width: 100%; border-collapse: collapse; }
+  .packlist th, .packlist td { border-bottom: 1px solid #ccc; padding: 4px 8px; text-align: left; }
+  .packlist th.qty, .packlist td.qty { width: 2cm; text-align: right; }
+  .packlist td.check { width: 1cm; }
+  .packlist .box { border: 1px solid #ccc; display: inline-block; width: 0.4cm; height: 0.4cm; }
+</style>
+
+<div class="packlist">
+  <h1>
+    Packlist
+    {% for order in orders %}
+      — order {{ order.order_id }}
+    {% endfor %}
+  </h1>
+
+  <div class="meta">
+    <strong>{{ shipment.recipient.person_name or shipment.recipient.company_name }}</strong><br />
+    {{ shipment.recipient.address_line1 }}{% if shipment.recipient.address_line2 %}, {{ shipment.recipient.address_line2 }}{% endif %},
+    {{ shipment.recipient.postal_code }} {{ shipment.recipient.city }}<br />
+    Shipment {{ shipment.id }}
+    {% if shipment.metadata and shipment.metadata.sales_order %}
+      · ERP {{ shipment.metadata.sales_order }}
+    {% endif %}
+    {% if shipment.tracking_number %}
+      · Tracking {{ shipment.tracking_number }}
+    {% endif %}
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th class="qty">Qty</th>
+        <th>Item</th>
+        <th>SKU</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in line_items %}
+      <tr>
+        <td class="qty">{{ item.quantity or 1 }}</td>
+        <td>{{ item.title or item.description or item.sku }}</td>
+        <td>{{ item.sku or "" }}</td>
+        <td class="check"><span class="box"></span></td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="4">No order lines on this shipment — pick from the ERP sales order.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

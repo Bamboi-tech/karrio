@@ -381,6 +381,13 @@ export default function Page(pageProps: any) {
       related_object: "shipment" as any,
       active: true,
     });
+    // The packlist rides along with "Pick and print": an active shipment
+    // document template whose slug is exactly "packlist". Its presence IS the
+    // feature switch — no template configured, no packlist, and the run
+    // behaves as before. Authored on the Settings → Templates page.
+    const packlistTemplate = (document_templates?.edges || []).find(
+      ({ node }) => node.slug === "packlist",
+    )?.node;
 
     const updateFilter = (extra: Partial<any> = {}) => {
       const query = {
@@ -933,6 +940,15 @@ export default function Page(pageProps: any) {
           format: (computeDocFormat(purchased) || "pdf")?.toLowerCase() as FormatType,
           doc: "label",
         });
+        // One packlist PDF for the whole run, one page per shipment with its
+        // order lines (the template renderer joins per-shipment pages). This
+        // is the run's second window.open — the browser may ask once to
+        // allow popups for the dashboard before both tabs open.
+        if (packlistTemplate) {
+          documentPrinter.openTemplate(packlistTemplate.id, {
+            shipments: purchased.join(","),
+          });
+        }
       }
       // Said out loud, not swallowed: the labels are bought, but these rows
       // carry no pick in the ERP and the office should know which.

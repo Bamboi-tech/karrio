@@ -27,6 +27,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # The pg_dump can starve the small VM enough to fail uptime probes;
+      # the backup only targets production, so always mute the Karrio +
+      # VM policies. Recent runs take ~2m — 15m is ample.
+      - name: Snooze monitoring alerts during backup
+        uses: ./.github/actions/snooze-monitoring
+        continue-on-error: true
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          policy_match: "Karrio|VM "
+          duration_minutes: "15"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:

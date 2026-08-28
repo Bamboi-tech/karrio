@@ -6,8 +6,10 @@
 # "Update Karrio (Ansible)" workflow or pinning it in ansible/vars/<env>.yaml.
 #
 # Required repo secret:
-#   GCP_SA_KEY — JSON key of github-actions-gar@bamboi-tech.iam.gserviceaccount.com
-#                (same secret as erpnext-chatwoot's build workflows)
+#   GCP_GAR_KEY — JSON key of karrio-gar-push@bamboi-tech.iam.gserviceaccount.com
+#                 (artifactregistry.writer on the bamboi-karrio repo ONLY — this
+#                 fork is public, so the push key deliberately can do nothing
+#                 else; GCP_SA_KEY here is the snooze-only key and cannot push)
 name: Build Karrio Images
 
 on:
@@ -91,7 +93,7 @@ jobs:
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          credentials_json: ${{ secrets.GCP_GAR_KEY }}
 
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
@@ -139,7 +141,7 @@ jobs:
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          credentials_json: ${{ secrets.GCP_GAR_KEY }}
 
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet

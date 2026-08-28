@@ -5,7 +5,7 @@ letsencrypt_email: tools@bamboi.eu
 
 # Custom image tag from the "Build Karrio Images" workflow (e.g. 2026.1.31-ab12cd3).
 # Keep staging and production on the SAME tag. Empty = deploy fails fast with a hint.
-karrio_tag: "2026.1.31-46fd7f9"
+karrio_tag: "2026.1.31-85eaeeb"
 karrio_server_image: europe-north2-docker.pkg.dev/bamboi-tech/bamboi-karrio/karrio-server
 karrio_dashboard_image: europe-north2-docker.pkg.dev/bamboi-tech/bamboi-karrio/karrio-dashboard
 caddy_image: caddy:2.8.4

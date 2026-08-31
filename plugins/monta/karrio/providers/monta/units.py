@@ -12,6 +12,7 @@ class ConnectionConfig(lib.Enum):
     include_return_labels = lib.OptionEnum("include_return_labels", bool, True)
     omit_collo_weight = lib.OptionEnum("omit_collo_weight", bool, False)
     label_file_type = lib.OptionEnum("label_file_type", str, "PDF")
+    portrait_labels = lib.OptionEnum("portrait_labels", bool, False)
     shipping_options = lib.OptionEnum("shipping_options", list)
     shipping_services = lib.OptionEnum("shipping_services", list)
 

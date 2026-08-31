@@ -53,6 +53,19 @@ def _extract_details(
     return_labels = response.get("return_labels") or []
     label_files = [label["file"] for label in labels if label.get("file")]
 
+    # Opt-in (connection config `portrait_labels`): normalize label orientation
+    # at ingest, the one spot every consumer sits behind — dashboard print,
+    # ERP attachment and PrintNode all serve this stored document. Per file and
+    # failsafe: the order is already marked shipped in Monta by the time labels
+    # arrive, so a PDF that will not parse must cost its rotation, never the
+    # purchase.
+    if label_type == "PDF" and settings.connection_config.portrait_labels.state:
+        label_files = [
+            lib.failsafe(lambda encoded=encoded: provider_utils.portraitize_pdf(encoded))
+            or encoded
+            for encoded in label_files
+        ]
+
     tracking_numbers = [
         collo["TrackAndTraceCode"] for collo in colli if collo.get("TrackAndTraceCode")
     ]

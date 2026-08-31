@@ -74,6 +74,13 @@ import { useBamboiFeatures } from "@karrio/hooks/bamboi-features";
 import { ConfirmationDialog } from "@karrio/ui/components/confirmation-dialog";
 import { ReasonPromptDialog } from "@karrio/ui/components/reason-prompt-dialog";
 import {
+  BuyResult,
+  PicklistDialog,
+  PicklistShipmentLike,
+  PrintConfirmation,
+} from "@karrio/ui/components/picklist-dialog";
+import { useKarrio } from "@karrio/hooks/karrio";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -320,6 +327,25 @@ export default function Page(pageProps: any) {
     const [ofdDialogOpen, setOfdDialogOpen] = React.useState(false);
     const [outcomePrompt, setOutcomePrompt] =
       React.useState<OutcomeOption | null>(null);
+    // The pick list: null = closed, otherwise the frozen shipment scope it
+    // was opened over (frozen so a refetch mid-pick cannot reshuffle the
+    // rack walk under the picker's feet). Structurally typed: the list rows
+    // (edges nodes) are not the full ShipmentType, and the dialog only reads
+    // id/metadata/parcels anyway.
+    const [picklistShipments, setPicklistShipments] = React.useState<
+      PicklistShipmentLike[] | null
+    >(null);
+    // Labels bought in the popup so far, for its "open the PDFs" fallback
+    // (the day PrintNode or the printer is down).
+    const [picklistPurchasedIds, setPicklistPurchasedIds] = React.useState<
+      string[]
+    >([]);
+    // The frozen scope as FULL rows: the popup's structural type strips the
+    // fields buyLabel needs (rates, options, ...), so the buy handler reads
+    // the originals from here instead of casting the narrowed state back up.
+    const picklistRowsRef = React.useRef<ReturnType<typeof selectedShipments>>(
+      [],
+    );
     const { previewShipment } = useContext(ShipmentPreviewSheetContext);
     const { user_connections } = useCarrierConnections();
     const { system_connections } = useSystemConnections();
@@ -327,6 +353,7 @@ export default function Page(pageProps: any) {
     const queryClient = useQueryClient();
     const { toast } = useToast();
     const mutation = useShipmentMutation();
+    const karrio = useKarrio();
     // Bamboi fork: warehouse actions relayed to the ERP (Ship Today phase 2).
     const erpActions = useShipmentERPActions();
     // Same flags as the per-row menu: until the ERP registry loads, the
@@ -381,14 +408,6 @@ export default function Page(pageProps: any) {
       related_object: "shipment" as any,
       active: true,
     });
-    // The packlist rides along with "Pick and print": an active shipment
-    // document template whose slug is exactly "packlist". Its presence IS the
-    // feature switch — no template configured, no packlist, and the run
-    // behaves as before. Authored on the Settings → Templates page.
-    const packlistTemplate = (document_templates?.edges || []).find(
-      ({ node }) => node.slug === "packlist",
-    )?.node;
-
     const updateFilter = (extra: Partial<any> = {}) => {
       const query = {
         ...filter,
@@ -870,31 +889,34 @@ export default function Page(pageProps: any) {
       });
     };
 
-    // Today's one-click warehouse run: ERP mark picked → buy the label → one
-    // print job at the end. Strictly SEQUENTIAL: parallel purchases would
-    // race Monta's verification window and the ERP's row locks. A failing
-    // row is collected and the batch continues, exactly like the ERP's
-    // mark_picked_bulk.
-    const runBuyAndPrint = async () => {
+    // Pick & Print opens the run popup and nothing else: no purchase leaves
+    // this handler anymore. Buying moved into the popup's per-row Print so
+    // the labels always come out next to the stack of boxes they belong to.
+    // The scope is frozen at open — purchases move rows off this card, and a
+    // live scope would shrink the list while the picker is walking it. Own
+    // delivery rides along: it buys no label, but its items must be picked
+    // for the van all the same.
+    const openPickAndPrint = () => {
       const selected = selectedShipments();
-      // Own delivery never buys a carrier label — name the rows instead of
-      // letting the server refuse them one by one.
-      const skipped = selected.filter(({ metadata }) => isSelfDelivery(metadata));
-      const targets = selected.filter(({ metadata }) => !isSelfDelivery(metadata));
+      if (selected.length === 0) return;
+      picklistRowsRef.current = selected;
+      setPicklistPurchasedIds([]);
+      setPicklistShipments([...selected]);
+    };
 
-      if (skipped.length > 0) {
-        toast({
-          title: `${skipped.length} own-delivery shipment(s) skipped`,
-          description: `Eigen bezorging koopt geen label: ${skipped
-            .map(shipmentLabel)
-            .join(", ")}`,
-        });
-      }
-      if (targets.length === 0) return;
+    // One popup row's purchase run (a SKU stack, or one mixed order).
+    // Strictly SEQUENTIAL: parallel purchases would race Monta's
+    // verification window and the ERP's row locks. A failing shipment is
+    // collected and the row continues, exactly like the ERP's
+    // mark_picked_bulk.
+    const buyPicklistShipments = async (ids: string[]): Promise<BuyResult> => {
+      const byId = new Map(picklistRowsRef.current.map((row) => [row.id, row]));
+      const targets = ids.flatMap((id) => byId.get(id) ?? []);
 
       setBulkAction("buy_and_print");
       const purchased: string[] = [];
       const failures: string[] = [];
+      const failedIds: string[] = [];
       const unrecordedPicks: string[] = [];
 
       for (const shipment of targets) {
@@ -924,41 +946,90 @@ export default function Page(pageProps: any) {
           purchased.push(shipment.id);
         } catch (error) {
           failures.push(`${shipmentLabel(shipment)}: ${describeError(error)}`);
+          failedIds.push(shipment.id);
         }
       }
 
       setBulkAction(null);
       queryClient.invalidateQueries(["shipments"]);
 
+      // The physical print is PrintNode's job (the ERP auto-prints on the
+      // purchase webhook); the popup's footer keeps a PDF fallback over
+      // everything bought so far for the day the printer is down.
       if (purchased.length > 0) {
-        toast({
-          title: `${purchased.length} label(s) purchased`,
-          description:
-            "De rijen verhuizen vanzelf naar Picked; de labels openen nu.",
-        });
-        documentPrinter.openBatchLabels(purchased, {
-          format: (computeDocFormat(purchased) || "pdf")?.toLowerCase() as FormatType,
-          doc: "label",
-        });
-        // One packlist PDF for the whole run, one page per shipment with its
-        // order lines (the template renderer joins per-shipment pages). This
-        // is the run's second window.open — the browser may ask once to
-        // allow popups for the dashboard before both tabs open.
-        if (packlistTemplate) {
-          documentPrinter.openTemplate(packlistTemplate.id, {
-            shipments: purchased.join(","),
-          });
-        }
+        setPicklistPurchasedIds((current) => [...current, ...purchased]);
       }
       // Said out loud, not swallowed: the labels are bought, but these rows
       // carry no pick in the ERP and the office should know which.
       if (unrecordedPicks.length > 0) {
         toast({
           title: `${unrecordedPicks.length} pick(s) not recorded`,
-          description: `Het label is wel gekocht: ${unrecordedPicks.join(" | ")}`,
+          description: `The label was bought anyway: ${unrecordedPicks.join(" | ")}`,
         });
       }
-      reportBulkFailures("Pick and print", failures);
+      reportBulkFailures("Pick & Print", failures);
+      return { purchased, failures, failedIds };
+    };
+
+    // The popup's green tick: poll the bought shipments until the ERP has
+    // mirrored printed_at — stamped only after PrintNode accepted the jobs —
+    // or give up. The purchase webhook, the ERP's auto-print and the mirror
+    // are all asynchronous, hence the patience.
+    const PRINT_CONFIRM_TIMEOUT_MS = 45_000;
+    const PRINT_CONFIRM_POLL_MS = 3_000;
+    const awaitPrinted = async (ids: string[]): Promise<PrintConfirmation> => {
+      const deadline = Date.now() + PRINT_CONFIRM_TIMEOUT_MS;
+      const pending = new Set(ids);
+      const printed: string[] = [];
+      while (pending.size > 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, PRINT_CONFIRM_POLL_MS));
+        for (const id of Array.from(pending)) {
+          try {
+            const { data } = await karrio.axios.get<{
+              metadata?: Record<string, unknown>;
+            }>(`/v1/shipments/${id}`);
+            if ((data?.metadata || {})["printed_at"]) {
+              pending.delete(id);
+              printed.push(id);
+            }
+          } catch {
+            // Transient read failure: keep polling until the deadline; the
+            // verdict is the printer's, not the network's.
+          }
+        }
+      }
+      return { printed, unconfirmed: Array.from(pending) };
+    };
+
+    // The popup's closing confirmation. Carrier rows recorded their pick at
+    // purchase; the own-delivery rows get theirs here, so "alles bevestigd"
+    // also means "alles geregistreerd". Best-effort, same as everywhere: a
+    // refused pick is reported, never a blocker.
+    const confirmPicklistRun = async (ownIds: string[]) => {
+      const byId = new Map(picklistRowsRef.current.map((row) => [row.id, row]));
+      const targets = ownIds
+        .flatMap((id) => byId.get(id) ?? [])
+        .filter(({ metadata }) => isERPLinked(metadata) && canMarkPicked(metadata));
+
+      const failures: string[] = [];
+      let recorded = 0;
+      for (const shipment of targets) {
+        try {
+          await erpActions.markPicked.mutateAsync({ id: shipment.id });
+          recorded += 1;
+        } catch (error) {
+          failures.push(`${shipmentLabel(shipment)}: ${describeError(error)}`);
+        }
+      }
+
+      toast({
+        title: "Pick & Print run confirmed",
+        description:
+          recorded > 0
+            ? `${recorded} own-delivery pick(s) recorded in the ERP.`
+            : "All rows confirmed.",
+      });
+      reportBulkFailures("Own-delivery picks", failures);
     };
 
     // Today's own-delivery (and pick-without-print) run: record the pick in
@@ -1403,9 +1474,10 @@ export default function Page(pageProps: any) {
                             Mark picked
                           </Button>
                         )}
-                        {/* Today's warehouse run: pick in the ERP, buy the
-                            label, print once. Sequential per row (see
-                            runBuyAndPrint) and only offered on the Today
+                        {/* Today's warehouse run: opens the Pick & Print
+                            popup over the selection. Picking, buying and
+                            printing all happen in there, per SKU stack (see
+                            buyPicklistShipments) — only offered on the Today
                             card, where the operator is working the printlist. */}
                         {isTodayView && isEnabled("btn_buy_label_dashboard") && (
                           <Button
@@ -1413,10 +1485,10 @@ export default function Page(pageProps: any) {
                             size="sm"
                             disabled={bulkAction !== null || documentPrinter.isLoading}
                             className="px-3"
-                            onClick={runBuyAndPrint}
+                            onClick={openPickAndPrint}
                           >
                             {bulkAction === "buy_and_print" && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                            Pick and print
+                            Pick &amp; Print
                           </Button>
                         )}
                         {/* Picked card only: the parcel is with the carrier,
@@ -1832,6 +1904,24 @@ export default function Page(pageProps: any) {
           cancelLabel="Terug"
           onConfirm={runCancelShipments}
           isLoading={bulkAction === "cancel_shipment"}
+        />
+
+        <PicklistDialog
+          open={picklistShipments !== null}
+          onOpenChange={(open) => !open && setPicklistShipments(null)}
+          shipments={picklistShipments || []}
+          onBuyShipments={buyPicklistShipments}
+          onAwaitPrinted={awaitPrinted}
+          onConfirmAll={confirmPicklistRun}
+          onOpenLabels={
+            picklistPurchasedIds.length > 0
+              ? () =>
+                  documentPrinter.openBatchLabels(picklistPurchasedIds, {
+                    format: (computeDocFormat(picklistPurchasedIds) || "pdf")?.toLowerCase() as FormatType,
+                    doc: "label",
+                  })
+              : null
+          }
         />
 
         {/* Mounted only while an outcome is pending, so the reason field is

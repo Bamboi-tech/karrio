@@ -31,6 +31,32 @@ ERP_LINK_KEYS = ("karrio_shipment", "sales_order")
 GATE_PATH = "/api/method/karrio_shipping.api.gates.assert_label_allowed"
 
 
+class ERPRefusal(APIException):
+    """The ERP answered and said no.
+
+    Its own reason is relayed unchanged, so the operator reads in the
+    dashboard exactly what the ERP button would have shown. A refusal is the
+    gate doing its job, not a fault: Sentry drops this type (settings.apm,
+    SENTRY_EXPECTED_EXCEPTIONS). The 424s for an unreachable or unconfigured
+    ERP stay plain APIException and keep reporting, because that is the
+    outage the doctrine above calls rare and loud.
+    """
+
+
+def _erp_timeout():
+    """``(connect, read)`` for every ERP call.
+
+    Connecting is fast or broken, so it stays short. Reading waits on Frappe
+    actually running the method, a document save plus its hooks under a busy
+    gunicorn, which overran the old flat 5 s on 2026-08-31 while the ERP was
+    merely slow (KARRIO-PROD-PYTHON-DJANGO-N, mark_picked).
+    """
+    return (
+        getattr(settings, "ERP_GATE_CONNECT_TIMEOUT", 5),
+        getattr(settings, "ERP_GATE_TIMEOUT", 30),
+    )
+
+
 def is_erp_linked(shipment) -> bool:
     metadata = getattr(shipment, "metadata", None) or {}
     return any(key in metadata for key in ERP_LINK_KEYS)
@@ -67,7 +93,7 @@ def assert_erp_label_allowed(shipment) -> None:
                 "sales_order": metadata.get("sales_order"),
             },
             headers={"Authorization": f"token {token}"},
-            timeout=getattr(settings, "ERP_GATE_TIMEOUT", 5),
+            timeout=_erp_timeout(),
         )
         response.raise_for_status()
         result = (response.json() or {}).get("message") or {}
@@ -81,7 +107,7 @@ def assert_erp_label_allowed(shipment) -> None:
         )
 
     if not result.get("allowed"):
-        raise APIException(
+        raise ERPRefusal(
             result.get("reason") or "ERP refused the label purchase for this shipment.",
             code="erp_gate_blocked",
             status_code=409,
@@ -207,7 +233,19 @@ def run_erp_shipment_action(shipment, action: str, args: dict = None) -> dict:
             url.rstrip("/") + RUN_DOC_METHOD_PATH,
             json=payload,
             headers={"Authorization": f"token {token}"},
-            timeout=getattr(settings, "ERP_GATE_TIMEOUT", 5),
+            timeout=_erp_timeout(),
+        )
+    except requests.ReadTimeout as error:
+        # The request reached the ERP and the ERP went quiet: Frappe may well
+        # have finished the action after we stopped listening. Saying
+        # "unreachable" here sent the operator straight into a retry that the
+        # ERP then refused for being in the wrong status.
+        logger.warning("ERP action %s timed out for %s: %s", action, shipment.id, error)
+        raise APIException(
+            "The ERP did not answer in time — the action may still have gone through. "
+            "Reload the shipment before retrying, or run it from the ERP.",
+            code="erp_gate_timeout",
+            status_code=424,
         )
     except requests.RequestException as error:
         logger.warning(
@@ -220,7 +258,7 @@ def run_erp_shipment_action(shipment, action: str, args: dict = None) -> dict:
         )
 
     if response.status_code >= 400:
-        raise APIException(
+        raise ERPRefusal(
             _erp_error_message(response),
             code="erp_action_refused",
             status_code=409,
@@ -263,7 +301,7 @@ def _post_erp_method(path: str, payload: dict, label: str):
             url.rstrip("/") + path,
             json=payload,
             headers={"Authorization": f"token {token}"},
-            timeout=getattr(settings, "ERP_GATE_TIMEOUT", 5),
+            timeout=_erp_timeout(),
         )
     except requests.RequestException as error:
         logger.warning("ERP %s unreachable: %s", label, error)
@@ -274,7 +312,7 @@ def _post_erp_method(path: str, payload: dict, label: str):
         )
 
     if response.status_code >= 400:
-        raise APIException(
+        raise ERPRefusal(
             _erp_error_message(response),
             code="erp_action_refused",
             status_code=409,

@@ -78,6 +78,35 @@ class TestLabelGate(TestCase):
                 erp_gate.assert_erp_label_allowed(_shipment(ERP_META))
         self.assertEqual(caught.exception.status_code, 424)
 
+    def test_refusal_is_typed_so_sentry_can_drop_it(self):
+        with mock.patch.object(
+            erp_gate.requests,
+            "post",
+            return_value=_response(
+                payload={"message": {"allowed": False, "reason": "held"}}
+            ),
+        ):
+            with self.assertRaises(erp_gate.ERPRefusal):
+                erp_gate.assert_erp_label_allowed(_shipment(ERP_META))
+
+    def test_unreachable_is_not_a_refusal(self):
+        with mock.patch.object(
+            erp_gate.requests, "post", side_effect=requests.ConnectionError("down")
+        ):
+            with self.assertRaises(APIException) as caught:
+                erp_gate.assert_erp_label_allowed(_shipment(ERP_META))
+        self.assertNotIsInstance(caught.exception, erp_gate.ERPRefusal)
+
+    @override_settings(ERP_GATE_CONNECT_TIMEOUT=3, ERP_GATE_TIMEOUT=45)
+    def test_erp_calls_split_connect_and_read_timeouts(self):
+        with mock.patch.object(
+            erp_gate.requests,
+            "post",
+            return_value=_response(payload={"message": {"allowed": True}}),
+        ) as post:
+            erp_gate.assert_erp_label_allowed(_shipment(ERP_META))
+        self.assertEqual(post.call_args.kwargs["timeout"], (3, 45))
+
     @override_settings(ERP_GATE_URL=None, ERP_GATE_TOKEN=None)
     def test_unconfigured_gate_fails_closed_for_linked_shipments(self):
         with self.assertRaises(APIException) as caught:
@@ -161,6 +190,38 @@ class TestShipmentActionRelay(TestCase):
                     _shipment(ERP_META), "mark_out_for_delivery"
                 )
         self.assertEqual(caught.exception.status_code, 424)
+
+    def test_read_timeout_says_the_action_may_have_landed(self):
+        with mock.patch.object(
+            erp_gate.requests, "post", side_effect=requests.ReadTimeout("slow")
+        ):
+            with self.assertRaises(APIException) as caught:
+                erp_gate.run_erp_shipment_action(_shipment(ERP_META), "mark_picked")
+        self.assertEqual(caught.exception.status_code, 424)
+        self.assertEqual(caught.exception.code, "erp_gate_timeout")
+        self.assertIn("may still have gone through", str(caught.exception.detail))
+        self.assertNotIsInstance(caught.exception, erp_gate.ERPRefusal)
+
+    def test_connect_timeout_is_still_unreachable(self):
+        with mock.patch.object(
+            erp_gate.requests, "post", side_effect=requests.ConnectTimeout("down")
+        ):
+            with self.assertRaises(APIException) as caught:
+                erp_gate.run_erp_shipment_action(_shipment(ERP_META), "mark_picked")
+        self.assertEqual(caught.exception.code, "erp_gate_unreachable")
+
+    def test_erp_refusal_is_typed_so_sentry_can_drop_it(self):
+        with mock.patch.object(
+            erp_gate.requests,
+            "post",
+            return_value=_response(
+                409, {"exception": "ValidationError: SO-1 is on_hold in Shopify"}
+            ),
+        ):
+            with self.assertRaises(erp_gate.ERPRefusal) as caught:
+                erp_gate.run_erp_shipment_action(_shipment(ERP_META), "mark_picked")
+        self.assertEqual(caught.exception.status_code, 409)
+        self.assertIn("SO-1 is on_hold", str(caught.exception.detail))
 
     def test_cancel_shipment_is_relayed(self):
         message = "Shipment cancelled."
@@ -260,14 +321,16 @@ class TestShipmentActionRelay(TestCase):
                     )
                 self.assertEqual(result, {"message": "Done."})
                 _args, kwargs = post.call_args
-                self.assertEqual(
-                    kwargs["json"],
-                    {
-                        "dt": "Karrio Shipment",
-                        "dn": ERP_META["karrio_shipment"],
-                        "method": action,
-                    },
-                )
+                expected = {
+                    "dt": "Karrio Shipment",
+                    "dn": ERP_META["karrio_shipment"],
+                    "method": action,
+                }
+                if erp_gate.ERP_SHIPMENT_ACTIONS[action]:
+                    # Argument-taking actions always carry an args object so
+                    # Frappe stays on the kwargs path (see the relay).
+                    expected["args"] = {}
+                self.assertEqual(kwargs["json"], expected)
 
     def test_dashboard_spellings_resolve_to_whitelisted_actions(self):
         """The route translates kebab-case; every dashboard spelling must land

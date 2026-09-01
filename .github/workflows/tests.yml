@@ -210,6 +210,9 @@ jobs:
           npm ci
           npm run build -w apps/dashboard
 
+      - name: Unit tests
+        run: npm run test -w packages/ui
+
   mcp-ci:
     runs-on: depot-ubuntu-24.04
 

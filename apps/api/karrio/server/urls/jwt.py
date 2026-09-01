@@ -6,6 +6,7 @@ from rest_framework import serializers, exceptions, status
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from rest_framework_simplejwt import views as jwt_views, serializers as jwt
+from rest_framework_simplejwt.exceptions import TokenError
 from two_factor.utils import default_device
 
 import karrio.server.openapi as openapi
@@ -103,6 +104,26 @@ def _build_token_response(access_token, refresh_token):
     response["Cache-Control"] = "no-store"
     response["CDN-Cache-Control"] = "no-store"
     return response
+
+
+def _validate_or_401(serializer):
+    """Run serializer validation, answering token failures with a 401.
+
+    simplejwt's TokenViewBase.post wraps validation in exactly this
+    try/except. The cookie-aware ``post`` overrides below replaced that method
+    and lost it, so an expired or malformed refresh token escaped as a bare
+    TokenError: a 500 to the dashboard and a Sentry error
+    (KARRIO-PROD-PYTHON-DJANGO-K) for what is an ordinary session ending.
+
+    DRF's own AuthenticationFailed rather than simplejwt's InvalidToken: the
+    latter wraps its detail in a dict, which custom_exception_handler renders
+    as a code-less error entry; a plain string becomes one clean
+    ``{code: token_not_valid, message: ...}``.
+    """
+    try:
+        serializer.is_valid(raise_exception=True)
+    except TokenError as error:
+        raise exceptions.AuthenticationFailed(error.args[0], code="token_not_valid")
 
 
 # --- Serializers ---
@@ -249,7 +270,7 @@ class TokenObtainPair(jwt_views.TokenObtainPairView):
     )
     def post(self, *args, **kwargs):
         serializer = self.get_serializer(data=self.request.data)
-        serializer.is_valid(raise_exception=True)
+        _validate_or_401(serializer)
 
         data = serializer.validated_data
         response = _build_token_response(data["access"], data["refresh"])
@@ -273,7 +294,7 @@ class TokenRefresh(jwt_views.TokenRefreshView):
         refresh_token = get_refresh_token(self.request)
 
         serializer = self.get_serializer(data={"refresh": refresh_token})
-        serializer.is_valid(raise_exception=True)
+        _validate_or_401(serializer)
 
         data = serializer.validated_data
         access = data["access"]
@@ -321,7 +342,7 @@ class VerifiedTokenPair(jwt_views.TokenVerifyView):
             "refresh": refresh_token,
             "otp_token": self.request.data.get("otp_token"),
         })
-        serializer.is_valid(raise_exception=True)
+        _validate_or_401(serializer)
 
         data = serializer.validated_data
         access = data["access"]

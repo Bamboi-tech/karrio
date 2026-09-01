@@ -92,29 +92,63 @@ def _sentry_traces_sampler(sampling_context):
     return SENTRY_TRACES_SAMPLE_RATE
 
 
-# The API root ("" -> metadata.view) is a GET-only, AllowAny endpoint, so every
-# internet background scanner that POSTs or HEADs it raises MethodNotAllowed.
-# Observed probes: WordPress `?rest_route=/batch/v1` batch-CVE payloads,
-# multipart bodies with a `bissa_cve` boundary, and spoofed-UA HEAD sweeps from
-# unrelated IPs. None of it is actionable, and DRF's custom_exception_handler
-# reports each probe twice — once via _capture_exception_to_telemetry and once
-# via the loguru Sentry sink — so both event shapes are matched below.
-SENTRY_ROOT_NOISE_EXCEPTIONS = {"MethodNotAllowed"}
+# Handled 4xx that are never actionable. DRF's custom_exception_handler
+# reports each handled exception twice — once via
+# _capture_exception_to_telemetry and once via the loguru Sentry sink — so
+# _event_exception_types reads both event shapes.
+#
+# API root ("" -> metadata.view): a GET-only, AllowAny, JSON-only endpoint.
+# Internet background scanners that POST or HEAD it raise MethodNotAllowed
+# (WordPress `?rest_route=/batch/v1` batch-CVE payloads, multipart bodies
+# with a `bissa_cve` boundary, spoofed-UA HEAD sweeps); browsers and crawlers
+# that GET it with `Accept: text/html` raise NotAcceptable.
+SENTRY_ROOT_NOISE_EXCEPTIONS = {"MethodNotAllowed", "NotAcceptable"}
+
+# Token endpoints: an expired or malformed token is a session ending, a wrong
+# password a failed login. The dashboard's server-side refresh hits the
+# expired case every time a session outlives its refresh token.
+SENTRY_TOKEN_TRANSACTIONS = {"/api/token", "/api/token/refresh", "/api/token/verified"}
+SENTRY_TOKEN_NOISE_EXCEPTIONS = {
+    "InvalidToken",
+    "TokenError",
+    "ExpiredTokenError",
+    "AuthenticationFailed",
+}
+
+# Bamboi fork: the ERP gate/relay answering "no" (hold, refund, wrong status)
+# is the gate working, and the operator reads the ERP's reason in the
+# dashboard. An unreachable or unconfigured ERP is a plain APIException and
+# keeps reporting. See karrio.server.core.erp_gate.ERPRefusal.
+SENTRY_EXPECTED_EXCEPTIONS = {"ERPRefusal"}
 
 
-def _is_root_scanner_noise(event) -> bool:
-    """True for scanner-generated 4xx on the API root, which is pure noise."""
-    if event.get("transaction") != "/":
-        return False
-
+def _event_exception_types(event) -> set:
+    """Exception type names on an event, in both shapes Karrio produces."""
     values = (event.get("exception") or {}).get("values") or []
-    if any(v.get("type") in SENTRY_ROOT_NOISE_EXCEPTIONS for v in values):
-        return True
-
+    types = {value.get("type") for value in values if value.get("type")}
     # The loguru sink re-reports the same exception as a bare message, keeping
     # the type only in the context it attaches.
     loguru_context = (event.get("contexts") or {}).get("loguru") or {}
-    return loguru_context.get("exception_type") in SENTRY_ROOT_NOISE_EXCEPTIONS
+    if loguru_context.get("exception_type"):
+        types.add(loguru_context["exception_type"])
+    return types
+
+
+def _is_sentry_noise(event) -> bool:
+    """True for scanner probes on the API root, token expiry on the auth
+    endpoints and ERP refusals — handled 4xx nobody will ever act on."""
+    transaction = event.get("transaction")
+    types = _event_exception_types(event)
+    if types & SENTRY_EXPECTED_EXCEPTIONS:
+        return True
+    if transaction == "/" and types & SENTRY_ROOT_NOISE_EXCEPTIONS:
+        return True
+    if (
+        transaction in SENTRY_TOKEN_TRANSACTIONS
+        and types & SENTRY_TOKEN_NOISE_EXCEPTIONS
+    ):
+        return True
+    return False
 
 
 def _sentry_before_send(event, hint):
@@ -125,8 +159,8 @@ def _sentry_before_send(event, hint):
     - Add custom tags
     - Filter out certain events
     """
-    # Drop unauthenticated scanner probes against the API root
-    if _is_root_scanner_noise(event):
+    # Drop scanner probes, token expiry and ERP refusals before scrubbing
+    if _is_sentry_noise(event):
         return None
 
     # Scrub sensitive data from request bodies

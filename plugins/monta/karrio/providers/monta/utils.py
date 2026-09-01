@@ -1,6 +1,8 @@
+import io
 import re
 import base64
 import typing
+import PyPDF2
 import karrio.lib as lib
 import karrio.core as core
 
@@ -35,6 +37,54 @@ class Settings(core.Settings):
             self.config or {},
             option_type=ConnectionConfig,
         )
+
+
+def portraitize_pdf(encoded: str) -> str:
+    """Rotate landscape PDF pages upright; portrait input passes through.
+
+    Monta relays the carrier's label PDF untouched, and PostNL draws its A6
+    labels in landscape while the label roll (and every other carrier here)
+    is portrait. Printed as-is, the driver or PrintNode shrinks the landscape
+    page to fit the portrait sticker and the barcode drops below scan size —
+    rotating the page is lossless, scaling is not.
+
+    A fully-portrait document is returned byte-identical: re-saving a PDF
+    that needs no change would only churn checksums and caches downstream.
+    """
+    reader = PyPDF2.PdfReader(io.BytesIO(base64.b64decode(encoded)))
+
+    if not any(map(_is_landscape, reader.pages)):
+        return encoded
+
+    writer = PyPDF2.PdfWriter()
+    for page in reader.pages:
+        writer.add_page(_portraitized(page) if _is_landscape(page) else page)
+
+    buffer = io.BytesIO()
+    writer.write(buffer)
+
+    return base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+
+def _portraitized(page: PyPDF2.PageObject) -> PyPDF2.PageObject:
+    # Two ways a page renders landscape, two different fixes. A page that is
+    # landscape only because of its /Rotate flag (portrait mediabox, rotate
+    # 90/270) goes back to the orientation it was authored in — clearing the
+    # flag is exact, while blindly adding 90 would land on /Rotate 180 and
+    # print the label upside down. A genuinely landscape mediabox has no
+    # authored portrait to return to; a quarter turn clockwise is the
+    # convention (PostNL's A6 reads upright that way).
+    if page.rotation % 180 == 90:
+        return page.rotate(-(page.rotation % 360))
+    return page.rotate(90)
+
+
+def _is_landscape(page: PyPDF2.PageObject) -> bool:
+    # A page may already carry a /Rotate flag; the mediabox aspect ratio only
+    # tells the truth after accounting for it.
+    swapped = page.rotation % 180 == 90
+    wide = float(page.mediabox.width) > float(page.mediabox.height)
+    return wide != swapped
 
 
 def error_decoder(error) -> str:

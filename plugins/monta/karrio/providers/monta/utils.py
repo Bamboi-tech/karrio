@@ -58,12 +58,25 @@ def portraitize_pdf(encoded: str) -> str:
 
     writer = PyPDF2.PdfWriter()
     for page in reader.pages:
-        writer.add_page(page.rotate(90) if _is_landscape(page) else page)
+        writer.add_page(_portraitized(page) if _is_landscape(page) else page)
 
     buffer = io.BytesIO()
     writer.write(buffer)
 
     return base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+
+def _portraitized(page: PyPDF2.PageObject) -> PyPDF2.PageObject:
+    # Two ways a page renders landscape, two different fixes. A page that is
+    # landscape only because of its /Rotate flag (portrait mediabox, rotate
+    # 90/270) goes back to the orientation it was authored in — clearing the
+    # flag is exact, while blindly adding 90 would land on /Rotate 180 and
+    # print the label upside down. A genuinely landscape mediabox has no
+    # authored portrait to return to; a quarter turn clockwise is the
+    # convention (PostNL's A6 reads upright that way).
+    if page.rotation % 180 == 90:
+        return page.rotate(-(page.rotation % 360))
+    return page.rotate(90)
 
 
 def _is_landscape(page: PyPDF2.PageObject) -> bool:

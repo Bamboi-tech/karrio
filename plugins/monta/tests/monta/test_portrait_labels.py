@@ -29,11 +29,20 @@ portrait_gateway = karrio.gateway["monta"].create(
 
 def _pdf(width: float, height: float, rotate: int = 0) -> str:
     writer = PyPDF2.PdfWriter()
-    page = writer.add_blank_page(width=width, height=height)
-    if rotate:
-        page.rotate(rotate)
+    writer.add_blank_page(width=width, height=height)
     buffer = io.BytesIO()
     writer.write(buffer)
+    if rotate:
+        # PyPDF2 does not serialize rotate() on a page still owned by a
+        # writer — the flag survives only on a reader page. Round-trip so the
+        # fixture genuinely carries /Rotate instead of silently dropping it
+        # (which had this file's prerotated test passing against a plain
+        # portrait page).
+        reader = PyPDF2.PdfReader(io.BytesIO(buffer.getvalue()))
+        rotated = PyPDF2.PdfWriter()
+        rotated.add_page(reader.pages[0].rotate(rotate))
+        buffer = io.BytesIO()
+        rotated.write(buffer)
     return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 
@@ -55,13 +64,33 @@ class TestPortraitizePdf(unittest.TestCase):
     def test_portrait_input_passes_through_byte_identical(self):
         self.assertEqual(provider_utils.portraitize_pdf(PORTRAIT), PORTRAIT)
 
-    def test_prerotated_landscape_is_not_rotated_twice(self):
-        # Portrait mediabox already flagged /Rotate 90 renders landscape:
-        # one more quarter turn makes it upright, a second would undo it.
-        encoded = provider_utils.portraitize_pdf(_pdf(298, 420, rotate=90))
-        page = _first_page(encoded)
+    def test_prerotated_landscape_comes_back_upright(self):
+        # Portrait mediabox already flagged /Rotate 90 renders landscape.
+        # Clearing the flag restores the authored portrait; adding 90 instead
+        # would land on /Rotate 180 — portrait, but printed upside down, which
+        # the old % 180 assertion could not tell apart from upright.
+        prerotated = _pdf(298, 420, rotate=90)
+        self.assertEqual(_first_page(prerotated).rotation % 360, 90)  # fixture sanity
 
-        self.assertTrue(page.rotation % 180 == 0)
+        page = _first_page(provider_utils.portraitize_pdf(prerotated))
+
+        self.assertEqual(page.rotation % 360, 0)
+
+    def test_mixed_document_rotates_only_its_landscape_pages(self):
+        # One file, three pages: landscape, portrait, prerotated. Rotation is
+        # per page — the portrait page must ride along untouched.
+        writer = PyPDF2.PdfWriter()
+        for encoded in (LANDSCAPE, PORTRAIT, _pdf(298, 420, rotate=90)):
+            writer.add_page(_first_page(encoded))
+        buffer = io.BytesIO()
+        writer.write(buffer)
+        mixed = base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+        pages = PyPDF2.PdfReader(
+            io.BytesIO(base64.b64decode(provider_utils.portraitize_pdf(mixed)))
+        ).pages
+
+        self.assertEqual([page.rotation % 360 for page in pages], [90, 0, 0])
 
 
 class TestExtractDetailsPortrait(unittest.TestCase):

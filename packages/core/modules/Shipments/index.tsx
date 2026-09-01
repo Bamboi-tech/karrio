@@ -24,11 +24,7 @@ import { useDocumentTemplates } from "@karrio/hooks/document-template";
 import { useCarrierConnections } from "@karrio/hooks/user-connection";
 import { useDocumentPrinter, FormatType } from "@karrio/hooks/resource-token";
 import { ShipmentsFilter } from "@karrio/ui/components/shipments-filter";
-import {
-  AddressType,
-  RateType,
-  ShipmentType,
-} from "@karrio/types";
+import { AddressType, RateType, ShipmentType } from "@karrio/types";
 import { ShipmentMenu } from "@karrio/ui/components/shipment-menu";
 import { FiltersCard } from "@karrio/ui/components/filters-card";
 import { ListPagination } from "@karrio/ui/components/list-pagination";
@@ -39,7 +35,7 @@ import {
   TableBody,
   TableHead,
   TableRow,
-  TableCell
+  TableCell,
 } from "@karrio/ui/components/ui/table";
 import { Button } from "@karrio/ui/components/ui/button";
 import { Checkbox } from "@karrio/ui/components/ui/checkbox";
@@ -281,8 +277,7 @@ const describeError = (error: unknown) =>
     .map((message: unknown) =>
       typeof message === "string"
         ? message
-        : (message as { message?: string })?.message ||
-          JSON.stringify(message),
+        : (message as { message?: string })?.message || JSON.stringify(message),
     )
     .join("; ");
 
@@ -972,22 +967,26 @@ export default function Page(pageProps: any) {
     };
 
     // The popup's green tick: poll the bought shipments until the ERP has
-    // mirrored printed_at — stamped only after PrintNode accepted the jobs —
-    // or give up. The purchase webhook, the ERP's auto-print and the mirror
-    // are all asynchronous, hence the patience.
-    const PRINT_CONFIRM_TIMEOUT_MS = 45_000;
+    // mirrored printed_at — stamped only after PrintNode reported the jobs
+    // DELIVERED to the printer host ("done"), not merely accepted — or give
+    // up. The window is wide on purpose: behind it sit the purchase webhook
+    // (short queue, re-enqueued up to 5× on row locks), the ERP's auto-print
+    // and its own delivery-confirmation poll. Every request carries its own
+    // timeout so one stalled connection cannot hold the dialog past the
+    // deadline, and the first check runs immediately — the mirror often
+    // already landed by the time the purchase returns.
+    const PRINT_CONFIRM_TIMEOUT_MS = 90_000;
     const PRINT_CONFIRM_POLL_MS = 3_000;
     const awaitPrinted = async (ids: string[]): Promise<PrintConfirmation> => {
       const deadline = Date.now() + PRINT_CONFIRM_TIMEOUT_MS;
       const pending = new Set(ids);
       const printed: string[] = [];
-      while (pending.size > 0 && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, PRINT_CONFIRM_POLL_MS));
+      while (pending.size > 0) {
         for (const id of Array.from(pending)) {
           try {
             const { data } = await karrio.axios.get<{
               metadata?: Record<string, unknown>;
-            }>(`/v1/shipments/${id}`);
+            }>(`/v1/shipments/${id}`, { timeout: 10_000 });
             if ((data?.metadata || {})["printed_at"]) {
               pending.delete(id);
               printed.push(id);
@@ -997,6 +996,10 @@ export default function Page(pageProps: any) {
             // verdict is the printer's, not the network's.
           }
         }
+        if (pending.size === 0 || Date.now() >= deadline) break;
+        await new Promise((resolve) =>
+          setTimeout(resolve, PRINT_CONFIRM_POLL_MS),
+        );
       }
       return { printed, unconfirmed: Array.from(pending) };
     };
@@ -1009,7 +1012,9 @@ export default function Page(pageProps: any) {
       const byId = new Map(picklistRowsRef.current.map((row) => [row.id, row]));
       const targets = ownIds
         .flatMap((id) => byId.get(id) ?? [])
-        .filter(({ metadata }) => isERPLinked(metadata) && canMarkPicked(metadata));
+        .filter(
+          ({ metadata }) => isERPLinked(metadata) && canMarkPicked(metadata),
+        );
 
       const failures: string[] = [];
       let recorded = 0;
@@ -1386,263 +1391,307 @@ export default function Page(pageProps: any) {
           <>
             <StickyTableWrapper>
               <Table className="shipments-table">
-              <TableHeader>
-                <TableRow>
-                  <TableHead
-                    className="selector text-center p-0 items-center sticky-left"
-                    onClick={preventPropagation}
-                  >
-                    <div className="py-2 pl-2 pr-4">
-                      <Checkbox
-                        checked={allChecked}
-                        onCheckedChange={(checked) => handleCheckboxChange(checked as boolean, "all")}
-                      />
-                    </div>
-                  </TableHead>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead
+                      className="selector text-center p-0 items-center sticky-left"
+                      onClick={preventPropagation}
+                    >
+                      <div className="py-2 pl-2 pr-4">
+                        <Checkbox
+                          checked={allChecked}
+                          onCheckedChange={(checked) =>
+                            handleCheckboxChange(checked as boolean, "all")
+                          }
+                        />
+                      </div>
+                    </TableHead>
 
-                  {selection.length > 0 && (
-                    <TableHead className="p-2" colSpan={isAllView ? 10 : 9}>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {/* Hidden on the five draft-stage cards: no row
+                    {selection.length > 0 && (
+                      <TableHead className="p-2" colSpan={isAllView ? 10 : 9}>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {/* Hidden on the five draft-stage cards: no row
                             there can have a label yet (buying one moves the
                             shipment out of "draft"), so the button would be
                             dead. Its slot is taken by the outcome dropdown
                             on the post-purchase cards. */}
-                        {!isDraftStageView && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            disabled={
-                              !compatibleTypeSelection(selection) ||
-                              selectionHasDraft(selection) ||
-                              documentPrinter.isLoading
-                            }
-                            className="px-3"
-                            onClick={() => documentPrinter.openBatchLabels(
-                              selection,
-                              { format: (computeDocFormat(selection) || "pdf")?.toLowerCase() as FormatType, doc: "label" }
-                            )}
-                          >
-                            {documentPrinter.isLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                            Print Labels
-                          </Button>
-                        )}
-                        {/* Shipped card onward: what the carrier reported is
+                          {!isDraftStageView && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={
+                                !compatibleTypeSelection(selection) ||
+                                selectionHasDraft(selection) ||
+                                documentPrinter.isLoading
+                              }
+                              className="px-3"
+                              onClick={() =>
+                                documentPrinter.openBatchLabels(selection, {
+                                  format: (
+                                    computeDocFormat(selection) || "pdf"
+                                  )?.toLowerCase() as FormatType,
+                                  doc: "label",
+                                })
+                              }
+                            >
+                              {documentPrinter.isLoading && (
+                                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                              )}
+                              Print Labels
+                            </Button>
+                          )}
+                          {/* Shipped card onward: what the carrier reported is
                             not always what happened. Each option writes the
                             outcome (with its reason) to the ERP and then
                             moves the row to the matching Karrio card. */}
-                        {isPostPurchaseView && isEnabled("btn_record_delivery_outcome") && (
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
+                          {isPostPurchaseView &&
+                            isEnabled("btn_record_delivery_outcome") && (
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={bulkAction !== null}
+                                    className="px-3"
+                                  >
+                                    {bulkAction === "record_outcome" && (
+                                      <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                    )}
+                                    Record outcome
+                                    <ChevronDown className="h-3 w-3 ml-1" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent
+                                  align="start"
+                                  className="w-48"
+                                >
+                                  {OUTCOME_OPTIONS.map((option) => (
+                                    <DropdownMenuItem
+                                      key={option.outcome}
+                                      onClick={() => selectOutcome(option)}
+                                    >
+                                      {option.label}
+                                    </DropdownMenuItem>
+                                  ))}
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            )}
+                          {/* Pick without printing: own delivery never buys a
+                            label, and a carrier row may be picked before its
+                            label run too. ERP bookkeeping only — the rows
+                            move to the Picked card via the mirrored
+                            erp_status. */}
+                          {isTodayView && isEnabled("btn_mark_picked") && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={bulkAction !== null}
+                              className="px-3"
+                              onClick={runMarkPicked}
+                            >
+                              {bulkAction === "mark_picked" && (
+                                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                              )}
+                              Mark picked
+                            </Button>
+                          )}
+                          {/* Today's warehouse run: opens the Pick & Print
+                            popup over the selection. Picking, buying and
+                            printing all happen in there, per SKU stack (see
+                            buyPicklistShipments) — only offered on the Today
+                            card, where the operator is working the printlist. */}
+                          {isTodayView &&
+                            isEnabled("btn_buy_label_dashboard") && (
+                              <Button
+                                variant="default"
+                                size="sm"
+                                disabled={
+                                  bulkAction !== null ||
+                                  documentPrinter.isLoading
+                                }
+                                className="px-3"
+                                onClick={openPickAndPrint}
+                              >
+                                {bulkAction === "buy_and_print" && (
+                                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                )}
+                                Pick &amp; Print
+                              </Button>
+                            )}
+                          {/* Picked card only: the parcel is with the carrier,
+                            so the ERP row moves to In Transit. Own-delivery
+                            rows in the selection are skipped by name. */}
+                          {isPickedView && isEnabled("btn_mark_shipped") && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={bulkAction !== null}
+                              className="px-3"
+                              onClick={runMarkShipped}
+                            >
+                              {bulkAction === "mark_shipped" && (
+                                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                              )}
+                              Mark shipped
+                            </Button>
+                          )}
+                          {/* Picked card, own delivery's departure. Creates the
+                            Shopify fulfillment and notifies the customer, so
+                            it is confirmed first (dialog at the bottom);
+                            carrier rows in the selection are skipped by name. */}
+                          {isPickedView &&
+                            isEnabled("btn_mark_out_for_delivery") && (
                               <Button
                                 variant="outline"
                                 size="sm"
                                 disabled={bulkAction !== null}
                                 className="px-3"
+                                onClick={() => setOfdDialogOpen(true)}
                               >
-                                {bulkAction === "record_outcome" && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                                Record outcome
-                                <ChevronDown className="h-3 w-3 ml-1" />
+                                {bulkAction === "mark_out_for_delivery" && (
+                                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                )}
+                                Mark out for delivery
                               </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="start" className="w-48">
-                              {OUTCOME_OPTIONS.map((option) => (
-                                <DropdownMenuItem
-                                  key={option.outcome}
-                                  onClick={() => selectOutcome(option)}
-                                >
-                                  {option.label}
-                                </DropdownMenuItem>
-                              ))}
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        )}
-                        {/* Pick without printing: own delivery never buys a
-                            label, and a carrier row may be picked before its
-                            label run too. ERP bookkeeping only — the rows
-                            move to the Picked card via the mirrored
-                            erp_status. */}
-                        {isTodayView && isEnabled("btn_mark_picked") && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            disabled={bulkAction !== null}
-                            className="px-3"
-                            onClick={runMarkPicked}
-                          >
-                            {bulkAction === "mark_picked" && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                            Mark picked
-                          </Button>
-                        )}
-                        {/* Today's warehouse run: opens the Pick & Print
-                            popup over the selection. Picking, buying and
-                            printing all happen in there, per SKU stack (see
-                            buyPicklistShipments) — only offered on the Today
-                            card, where the operator is working the printlist. */}
-                        {isTodayView && isEnabled("btn_buy_label_dashboard") && (
-                          <Button
-                            variant="default"
-                            size="sm"
-                            disabled={bulkAction !== null || documentPrinter.isLoading}
-                            className="px-3"
-                            onClick={openPickAndPrint}
-                          >
-                            {bulkAction === "buy_and_print" && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                            Pick &amp; Print
-                          </Button>
-                        )}
-                        {/* Picked card only: the parcel is with the carrier,
-                            so the ERP row moves to In Transit. Own-delivery
-                            rows in the selection are skipped by name. */}
-                        {isPickedView && isEnabled("btn_mark_shipped") && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            disabled={bulkAction !== null}
-                            className="px-3"
-                            onClick={runMarkShipped}
-                          >
-                            {bulkAction === "mark_shipped" && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                            Mark shipped
-                          </Button>
-                        )}
-                        {/* Picked card, own delivery's departure. Creates the
-                            Shopify fulfillment and notifies the customer, so
-                            it is confirmed first (dialog at the bottom);
-                            carrier rows in the selection are skipped by name. */}
-                        {isPickedView && isEnabled("btn_mark_out_for_delivery") && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            disabled={bulkAction !== null}
-                            className="px-3"
-                            onClick={() => setOfdDialogOpen(true)}
-                          >
-                            {bulkAction === "mark_out_for_delivery" && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                            Mark out for delivery
-                          </Button>
-                        )}
-                        {/* Draft cards only: hand the cancel to the ERP,
+                            )}
+                          {/* Draft cards only: hand the cancel to the ERP,
                             which cancels the Karrio draft itself and cleans
                             up behind it. Irreversible, so it is confirmed
                             first (see the dialog at the bottom). */}
-                        {isDraftStageView && isEnabled("btn_cancel_shipment") && (
+                          {isDraftStageView &&
+                            isEnabled("btn_cancel_shipment") && (
+                              <Button
+                                variant="destructive"
+                                size="sm"
+                                disabled={bulkAction !== null}
+                                className="px-3"
+                                onClick={() => setCancelDialogOpen(true)}
+                              >
+                                {bulkAction === "cancel_shipment" && (
+                                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                )}
+                                Cancel
+                              </Button>
+                            )}
                           <Button
-                            variant="destructive"
+                            variant="outline"
                             size="sm"
-                            disabled={bulkAction !== null}
+                            disabled={documentPrinter.isLoading}
                             className="px-3"
-                            onClick={() => setCancelDialogOpen(true)}
+                            onClick={() =>
+                              documentPrinter.openBatchLabels(selection, {
+                                format: "pdf",
+                                doc: "invoice",
+                              })
+                            }
                           >
-                            {bulkAction === "cancel_shipment" && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                            Cancel
+                            {documentPrinter.isLoading && (
+                              <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                            )}
+                            Print Invoices
                           </Button>
-                        )}
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={documentPrinter.isLoading}
-                          className="px-3"
-                          onClick={() => documentPrinter.openBatchLabels(
-                            selection,
-                            { format: "pdf", doc: "invoice" }
+                          {(document_templates?.edges || []).map(
+                            ({ node: template }) => (
+                              <Button
+                                key={template.id}
+                                variant="outline"
+                                size="sm"
+                                disabled={documentPrinter.isLoading}
+                                className="px-3"
+                                onClick={() =>
+                                  documentPrinter.openTemplate(template.id, {
+                                    shipments: selection.join(","),
+                                  })
+                                }
+                              >
+                                {documentPrinter.isLoading && (
+                                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                )}
+                                Print {template.name}
+                              </Button>
+                            ),
                           )}
-                        >
-                          {documentPrinter.isLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                          Print Invoices
-                        </Button>
-                        {(document_templates?.edges || []).map(
-                          ({ node: template }) => (
-                            <Button
-                              key={template.id}
-                              variant="outline"
-                              size="sm"
-                              disabled={documentPrinter.isLoading}
-                              className="px-3"
-                              onClick={() => documentPrinter.openTemplate(
-                                template.id,
-                                { shipments: selection.join(",") }
-                              )}
-                            >
-                              {documentPrinter.isLoading && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                              Print {template.name}
-                            </Button>
-                          ),
-                        )}
-                      </div>
-                    </TableHead>
-                  )}
+                        </div>
+                      </TableHead>
+                    )}
 
-                  {selection.length === 0 && (
-                    <>
-                      <TableHead className="service text-xs items-center">
-                        SHIPPING SERVICE
-                      </TableHead>
-                      {isAllView && (
-                        <TableHead className="status text-xs items-center">
-                          STATUS
+                    {selection.length === 0 && (
+                      <>
+                        <TableHead className="service text-xs items-center">
+                          SHIPPING SERVICE
                         </TableHead>
-                      )}
-                      <TableHead className="recipient text-xs items-center">
-                        RECIPIENT
-                      </TableHead>
-                      <TableHead className="address text-xs items-center">
-                        ADDRESS
-                      </TableHead>
-                      <TableHead className="rate text-xs items-center">
-                        RATE
-                      </TableHead>
-                      <TableHead className="reference text-xs items-center">
-                        REFERENCE
-                      </TableHead>
-                      <TableHead className="ship-date text-xs items-center">
-                        SHIP DATE
-                      </TableHead>
-                      <TableHead className="delivery-date text-xs items-center">
-                        DELIVERY
-                      </TableHead>
-                      <TableHead className="date text-xs items-center">DATE</TableHead>
-                      <TableHead className="action sticky-right"></TableHead>
-                    </>
-                  )}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {visibleShipments.map(({ node: shipment }) => (
-                  <TableRow 
-                    key={shipment.id} 
-                    className={`items cursor-pointer transition-colors duration-150 ease-in-out ${
-                      selection.includes(shipment.id) 
-                        ? 'bg-blue-50 hover:bg-blue-100' 
-                        : 'hover:bg-gray-50'
-                    }`}
-                  >
-                    {/* select-none: a shift+click range must not also drag
-                        a text selection across the rows in between. */}
-                    <TableCell className="selector text-center items-center p-0 sticky-left select-none">
-                      <div className="py-3 pl-2 pr-4">
-                        <Checkbox
-                          checked={selection.includes(shipment.id)}
-                          onCheckedChange={(checked) => handleCheckboxChange(checked as boolean, shipment.id)}
-                          onClick={(event) =>
-                            handleSelectorClick(event, shipment.id)
-                          }
-                        />
-                      </div>
-                    </TableCell>
-                    <TableCell
-                      className="service items-center py-1 px-0 text-xs font-bold text-gray-600"
-                      onClick={() => previewShipment(shipment.id)}
-                      title={
-                        routeLabel(shipment.metadata) ||
-                        (isNone(getRate(shipment))
-                          ? "UNFULFILLED"
-                          : formatRef(
-                            ((shipment.meta as any)?.service_name ||
-                              getRate(shipment).service) as string,
-                          ))
-                      }
+                        {isAllView && (
+                          <TableHead className="status text-xs items-center">
+                            STATUS
+                          </TableHead>
+                        )}
+                        <TableHead className="recipient text-xs items-center">
+                          RECIPIENT
+                        </TableHead>
+                        <TableHead className="address text-xs items-center">
+                          ADDRESS
+                        </TableHead>
+                        <TableHead className="rate text-xs items-center">
+                          RATE
+                        </TableHead>
+                        <TableHead className="reference text-xs items-center">
+                          REFERENCE
+                        </TableHead>
+                        <TableHead className="ship-date text-xs items-center">
+                          SHIP DATE
+                        </TableHead>
+                        <TableHead className="delivery-date text-xs items-center">
+                          DELIVERY
+                        </TableHead>
+                        <TableHead className="date text-xs items-center">
+                          DATE
+                        </TableHead>
+                        <TableHead className="action sticky-right"></TableHead>
+                      </>
+                    )}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {visibleShipments.map(({ node: shipment }) => (
+                    <TableRow
+                      key={shipment.id}
+                      className={`items cursor-pointer transition-colors duration-150 ease-in-out ${
+                        selection.includes(shipment.id)
+                          ? "bg-blue-50 hover:bg-blue-100"
+                          : "hover:bg-gray-50"
+                      }`}
                     >
+                      {/* select-none: a shift+click range must not also drag
+                        a text selection across the rows in between. */}
+                      <TableCell className="selector text-center items-center p-0 sticky-left select-none">
+                        <div className="py-3 pl-2 pr-4">
+                          <Checkbox
+                            checked={selection.includes(shipment.id)}
+                            onCheckedChange={(checked) =>
+                              handleCheckboxChange(
+                                checked as boolean,
+                                shipment.id,
+                              )
+                            }
+                            onClick={(event) =>
+                              handleSelectorClick(event, shipment.id)
+                            }
+                          />
+                        </div>
+                      </TableCell>
+                      <TableCell
+                        className="service items-center py-1 px-0 text-xs font-bold text-gray-600"
+                        onClick={() => previewShipment(shipment.id)}
+                        title={
+                          routeLabel(shipment.metadata) ||
+                          (isNone(getRate(shipment))
+                            ? "UNFULFILLED"
+                            : formatRef(
+                                ((shipment.meta as any)?.service_name ||
+                                  getRate(shipment).service) as string,
+                              ))
+                        }
+                      >
                         <div className="flex items-center">
                           {/* Own delivery rides our own van: no carrier, so
                               instead of the letter-avatar fallback the row
@@ -1660,30 +1709,30 @@ export default function Page(pageProps: any) {
                               />
                             </div>
                           ) : (
-                          <CarrierImage
-                            carrier_name={
-                              shipment.meta?.custom_carrier_name ||
-                              shipment.meta?.carrier ||
-                              getRate(shipment).meta?.rate_provider ||
-                              getRate(shipment).carrier_name ||
-                              formatCarrierSlug(references.APP_NAME)
-                            }
-                            containerClassName="mt-1 ml-1 mr-2"
-                            height={28}
-                            width={28}
-                            text_color={
-                              (
-                                shipment.selected_rate_carrier ||
-                                getCarrier(getRate(shipment))
-                              )?.config?.text_color
-                            }
-                            background={
-                              (
-                                shipment.selected_rate_carrier ||
-                                getCarrier(getRate(shipment))
-                              )?.config?.brand_color
-                            }
-                          />
+                            <CarrierImage
+                              carrier_name={
+                                shipment.meta?.custom_carrier_name ||
+                                shipment.meta?.carrier ||
+                                getRate(shipment).meta?.rate_provider ||
+                                getRate(shipment).carrier_name ||
+                                formatCarrierSlug(references.APP_NAME)
+                              }
+                              containerClassName="mt-1 ml-1 mr-2"
+                              height={28}
+                              width={28}
+                              text_color={
+                                (
+                                  shipment.selected_rate_carrier ||
+                                  getCarrier(getRate(shipment))
+                                )?.config?.text_color
+                              }
+                              background={
+                                (
+                                  shipment.selected_rate_carrier ||
+                                  getCarrier(getRate(shipment))
+                                )?.config?.brand_color
+                              }
+                            />
                           )}
                           {/* Colli count used to live in the status cell,
                               but that cell only renders on the All card now
@@ -1701,7 +1750,9 @@ export default function Page(pageProps: any) {
                               {/* No tracking yet: the route takes the top
                                   line instead of a bare dash. */}
                               {isNone(shipment.tracking_number) && (
-                                <span>{routeLabel(shipment.metadata) || " - "}</span>
+                                <span>
+                                  {routeLabel(shipment.metadata) || " - "}
+                                </span>
                               )}
                             </span>
                             <br />
@@ -1715,35 +1766,35 @@ export default function Page(pageProps: any) {
                                   routeLabel(shipment.metadata)
                                 : !isNone(getRate(shipment).carrier_name)
                                   ? formatRef(
-                                    ((getRate(shipment).meta as any)
-                                      ?.service_name ||
-                                      getRate(shipment).service) as string,
-                                  )
+                                      ((getRate(shipment).meta as any)
+                                        ?.service_name ||
+                                        getRate(shipment).service) as string,
+                                    )
                                   : "UNFULFILLED"}
                             </span>
                           </div>
                         </div>
-                    </TableCell>
-                    {isAllView && (
+                      </TableCell>
+                      {isAllView && (
+                        <TableCell
+                          className="status items-center"
+                          onClick={() => previewShipment(shipment.id)}
+                        >
+                          <div
+                            className="flex items-center"
+                            style={{ paddingLeft: "7px", paddingRight: "7px" }}
+                          >
+                            <ShipmentsStatusBadge
+                              status={cardStatus(shipment)}
+                              className="w-full justify-center text-center"
+                            />
+                          </div>
+                        </TableCell>
+                      )}
                       <TableCell
-                        className="status items-center"
+                        className="recipient items-center text-xs font-bold text-gray-600 relative"
                         onClick={() => previewShipment(shipment.id)}
                       >
-                        <div
-                          className="flex items-center"
-                          style={{ paddingLeft: "7px", paddingRight: "7px" }}
-                        >
-                          <ShipmentsStatusBadge
-                            status={cardStatus(shipment)}
-                            className="w-full justify-center text-center"
-                          />
-                        </div>
-                      </TableCell>
-                    )}
-                    <TableCell
-                      className="recipient items-center text-xs font-bold text-gray-600 relative"
-                      onClick={() => previewShipment(shipment.id)}
-                    >
                         <div
                           className="p-2"
                           style={{
@@ -1768,102 +1819,106 @@ export default function Page(pageProps: any) {
                               (shipment.recipient as AddressType)?.city,
                               (shipment.recipient as AddressType)?.postal_code,
                               (shipment.recipient as AddressType)?.country_code,
-                            ].filter(Boolean).join(", ")}
+                            ]
+                              .filter(Boolean)
+                              .join(", ")}
                           </p>
                         </div>
-                    </TableCell>
-                    <TableCell
-                      className="address items-center text-xs"
-                      onClick={() => previewShipment(shipment.id)}
-                    >
-                      {renderAddressReview(shipment.metadata, shipment.meta)}
-                    </TableCell>
-                    <TableCell
-                      className="rate items-center text-xs text-gray-600"
-                      onClick={() => previewShipment(shipment.id)}
-                    >
-                      {shipment.selected_rate ? (
-                        <div style={{ lineHeight: "16px" }}>
-                          <p className="font-bold">
-                            {shipment.selected_rate.total_charge} {shipment.selected_rate.currency}
-                          </p>
-                          {shipment.selected_rate.transit_days && (
-                            <p className="text-gray-400 font-medium">
-                              {shipment.selected_rate.transit_days}-{shipment.selected_rate.transit_days + 2} days
+                      </TableCell>
+                      <TableCell
+                        className="address items-center text-xs"
+                        onClick={() => previewShipment(shipment.id)}
+                      >
+                        {renderAddressReview(shipment.metadata, shipment.meta)}
+                      </TableCell>
+                      <TableCell
+                        className="rate items-center text-xs text-gray-600"
+                        onClick={() => previewShipment(shipment.id)}
+                      >
+                        {shipment.selected_rate ? (
+                          <div style={{ lineHeight: "16px" }}>
+                            <p className="font-bold">
+                              {shipment.selected_rate.total_charge}{" "}
+                              {shipment.selected_rate.currency}
                             </p>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-gray-400">-</span>
-                      )}
-                    </TableCell>
-                    <TableCell
-                      className="reference items-center text-xs text-gray-600 text-ellipsis"
-                      onClick={() => previewShipment(shipment.id)}
-                    >
-                      {/* All three references of the ERP chain: the Shopify
+                            {shipment.selected_rate.transit_days && (
+                              <p className="text-gray-400 font-medium">
+                                {shipment.selected_rate.transit_days}-
+                                {shipment.selected_rate.transit_days + 2} days
+                              </p>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-gray-400">-</span>
+                        )}
+                      </TableCell>
+                      <TableCell
+                        className="reference items-center text-xs text-gray-600 text-ellipsis"
+                        onClick={() => previewShipment(shipment.id)}
+                      >
+                        {/* All three references of the ERP chain: the Shopify
                           number the customer knows, the Sales Order the office
                           knows, and the ERP shipment the warehouse works from.
                           Metadata keys are stamped by karrio_shipping; rows
                           from before that mirror simply show fewer lines. */}
-                      <div style={{ lineHeight: "15px" }}>
-                        {(shipment.metadata as any)?.shopify_order_number && (
-                          <p className="text-xs font-bold">
-                            {(shipment.metadata as any).shopify_order_number}
+                        <div style={{ lineHeight: "15px" }}>
+                          {(shipment.metadata as any)?.shopify_order_number && (
+                            <p className="text-xs font-bold">
+                              {(shipment.metadata as any).shopify_order_number}
+                            </p>
+                          )}
+                          <p className="text-xs font-semibold">
+                            {shipment.reference || ""}
                           </p>
-                        )}
-                        <p className="text-xs font-semibold">
-                          {shipment.reference || ""}
-                        </p>
-                        {(shipment.metadata as any)?.karrio_shipment && (
+                          {(shipment.metadata as any)?.karrio_shipment && (
+                            <p className="text-xs text-gray-400">
+                              {(shipment.metadata as any).karrio_shipment}
+                            </p>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell
+                        className="ship-date items-center px-1"
+                        onClick={() => previewShipment(shipment.id)}
+                      >
+                        {renderShipDate(shipment.metadata)}
+                        {isTodayView && renderPrintOverdue(shipment.metadata)}
+                      </TableCell>
+                      <TableCell
+                        className="delivery-date items-center px-1"
+                        onClick={() => previewShipment(shipment.id)}
+                      >
+                        {renderDeliveryDate(shipment.metadata)}
+                      </TableCell>
+                      <TableCell
+                        className="date items-center px-1"
+                        onClick={() => previewShipment(shipment.id)}
+                      >
+                        <div style={{ lineHeight: "16px" }}>
+                          <p className="text-xs font-semibold text-gray-600">
+                            {formatDateTime(shipment.created_at)}
+                          </p>
                           <p className="text-xs text-gray-400">
-                            {(shipment.metadata as any).karrio_shipment}
+                            {formatDateTime(shipment.updated_at)}
                           </p>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell
-                      className="ship-date items-center px-1"
-                      onClick={() => previewShipment(shipment.id)}
-                    >
-                      {renderShipDate(shipment.metadata)}
-                      {isTodayView && renderPrintOverdue(shipment.metadata)}
-                    </TableCell>
-                    <TableCell
-                      className="delivery-date items-center px-1"
-                      onClick={() => previewShipment(shipment.id)}
-                    >
-                      {renderDeliveryDate(shipment.metadata)}
-                    </TableCell>
-                    <TableCell
-                      className="date items-center px-1"
-                      onClick={() => previewShipment(shipment.id)}
-                    >
-                      <div style={{ lineHeight: "16px" }}>
-                        <p className="text-xs font-semibold text-gray-600">
-                          {formatDateTime(shipment.created_at)}
-                        </p>
-                        <p className="text-xs text-gray-400">
-                          {formatDateTime(shipment.updated_at)}
-                        </p>
-                      </div>
-                    </TableCell>
-                    <TableCell className="action items-center px-0 sticky-right">
-                      <ShipmentMenu
-                        shipment={shipment as any}
-                        className="w-full"
-                      />
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
+                        </div>
+                      </TableCell>
+                      <TableCell className="action items-center px-0 sticky-right">
+                        <ShipmentMenu
+                          shipment={shipment as any}
+                          className="w-full"
+                        />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
               </Table>
             </StickyTableWrapper>
 
             {/* Sticky Footer */}
             <div className="sticky bottom-0 left-0 right-0 z-10 bg-white border-t border-gray-200 pb-16 md:pb-0">
               <ListPagination
-                currentOffset={filter.offset as number || 0}
+                currentOffset={(filter.offset as number) || 0}
                 pageSize={(filter.first as number) || pageSize}
                 totalCount={shipments?.page_info?.count || 0}
                 hasNextPage={shipments?.page_info?.has_next_page || false}
@@ -1917,7 +1972,15 @@ export default function Page(pageProps: any) {
             picklistPurchasedIds.length > 0
               ? () =>
                   documentPrinter.openBatchLabels(picklistPurchasedIds, {
-                    format: (computeDocFormat(picklistPurchasedIds) || "pdf")?.toLowerCase() as FormatType,
+                    // Format from the FROZEN rows, not the live page: the
+                    // purchase moved these rows off the Today card, so
+                    // computeDocFormat's page lookup would miss and default
+                    // a ZPL batch to pdf exactly when the fallback matters.
+                    format: (
+                      picklistRowsRef.current.find(({ id }) =>
+                        picklistPurchasedIds.includes(id),
+                      )?.label_type || "pdf"
+                    ).toLowerCase() as FormatType,
                     doc: "label",
                   })
               : null

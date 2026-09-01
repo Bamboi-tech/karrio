@@ -202,9 +202,16 @@ jobs:
           corepack enable --install-directory ~/.volta/bin
 
       - name: Test Build
+        env:
+          # next build's webpack pass outgrew Node's ~2GB default heap and
+          # OOMs the runner (exit 134) on every branch — give it room.
+          NODE_OPTIONS: --max-old-space-size=6144
         run: |
           npm ci
           npm run build -w apps/dashboard
+
+      - name: Unit tests
+        run: npm run test -w packages/ui
 
   mcp-ci:
     runs-on: depot-ubuntu-24.04

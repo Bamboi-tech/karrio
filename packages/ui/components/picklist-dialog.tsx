@@ -11,175 +11,58 @@ import {
 } from "./ui/dialog";
 import { Checkbox } from "./ui/checkbox";
 import { Button } from "./ui/button";
-import { CheckCircle2, Loader2, Printer, RotateCcw, XCircle } from "lucide-react";
+import {
+  CheckCircle2,
+  Loader2,
+  Printer,
+  RotateCcw,
+  XCircle,
+} from "lucide-react";
 
 // The Pick & Print popup: the whole warehouse run happens in here.
 //
 // Buying is grouped the way boxes are packed, because that is what puts the
-// right label on the right box. Every product unit ships as its own collo
-// (the ERP seeds one parcel per unit), so:
+// right label on the right box (the grouping rules live in ./picklist, which
+// is pure and unit-tested):
 //
-// - Orders containing ONE distinct SKU are interchangeable within their SKU:
-//   pick the stack, hit Print on that row, and any label of that batch fits
-//   any box of that stack.
-// - Orders mixing SKUs are packed one at a time: they get their own section
-//   with one Print per order, so their labels never mingle with a stack.
+// - Single-SKU orders whose every unit is its own parcel are interchangeable
+//   within their SKU: pick the stack, hit Print on that row, and any label of
+//   that batch fits any box of that stack.
+// - Orders mixing SKUs — and single-SKU orders boxed as ONE parcel for
+//   several units (the direct-carrier layout), whose label states that box's
+//   contents — are packed one at a time: their own section, one Print per
+//   order, so their labels never mingle with a stack.
 //
 // A row's status is the printer's truth, not the purchase's: it turns green
 // only when the ERP has mirrored `printed_at` — which it stamps after
-// PrintNode accepted every job — and red when the purchase failed or the
-// printer never confirmed. Grey is "no action yet".
+// PrintNode reported every job delivered to the printer host — and red when
+// the purchase failed or the printer never confirmed. Grey is "no action
+// yet".
 //
 // The operator confirms every row (picked + labeled); the closing button
 // only unlocks when everything is confirmed.
 
-const SELF_DELIVERY = "self_delivery";
-const OWN_DELIVERY_METHOD = "Own delivery";
-// A Monta-flow row without a mirrored checkout choice (older drafts miss the
-// shipping_method key until their next metadata mirror) still needs a column
-// to land in — the honest name is the broker, not a guessed carrier.
-const FALLBACK_METHOD = "Monta";
+import {
+  buildPicklist,
+  labelCount,
+  BuyResult,
+  MixedOrder,
+  Picklist,
+  PicklistShipmentLike,
+  PrintConfirmation,
+  ShipmentSummary,
+  SkuGroup,
+} from "./picklist";
 
-export interface PicklistShipmentLike {
-  id: string;
-  metadata?: unknown;
-  parcels?: Array<{
-    items?: Array<{
-      sku?: string | null;
-      title?: string | null;
-      quantity?: number | null;
-    }> | null;
-  }> | null;
-}
-
-interface ShipmentSummary {
-  id: string;
-  orderLabel: string;
-  method: string;
-  own: boolean;
-  units: number;
-}
-
-export interface SkuGroup {
-  sku: string;
-  title: string;
-  total: number;
-  perMethod: Record<string, number>;
-  shipments: ShipmentSummary[];
-  // What Print buys: carrier shipments only — own delivery never buys a
-  // label, its boxes go on the van and the row is pick-only.
-  buyable: ShipmentSummary[];
-}
-
-export interface MixedOrder extends ShipmentSummary {
-  lines: Array<{ sku: string; qty: number }>;
-}
-
-export interface Picklist {
-  groups: SkuGroup[];
-  mixed: MixedOrder[];
-  methods: string[];
-  // Fail-visible: rows without order lines cannot be aggregated, and a pick
-  // list that silently omits them would read as "nothing to pick" for
-  // exactly the orders that need attention.
-  shipmentsWithoutItems: number;
-}
-
-const metadataOf = (shipment: PicklistShipmentLike): Record<string, unknown> =>
-  (shipment.metadata || {}) as Record<string, unknown>;
-
-const shipmentMethod = (shipment: PicklistShipmentLike): string => {
-  const values = metadataOf(shipment);
-  if (values["fulfilment_mode"] === SELF_DELIVERY) return OWN_DELIVERY_METHOD;
-  const method = (values["shipping_method"] as string | undefined)?.trim();
-  return method || FALLBACK_METHOD;
+export {
+  buildPicklist,
+  type BuyResult,
+  type MixedOrder,
+  type Picklist,
+  type PicklistShipmentLike,
+  type PrintConfirmation,
+  type SkuGroup,
 };
-
-// The name the warehouse works with (same doctrine as the shipments table):
-// the Shopify order number, falling back to the Karrio id.
-const orderLabelOf = (shipment: PicklistShipmentLike): string =>
-  (metadataOf(shipment)["shopify_order_number"] as string | undefined) ||
-  shipment.id;
-
-export function buildPicklist(shipments: PicklistShipmentLike[]): Picklist {
-  const groups = new Map<string, SkuGroup>();
-  const mixed: MixedOrder[] = [];
-  const methods = new Set<string>();
-  let shipmentsWithoutItems = 0;
-
-  for (const shipment of shipments) {
-    const perSku = new Map<string, { qty: number; title: string }>();
-    for (const item of (shipment.parcels || []).flatMap((p) => p.items || [])) {
-      const sku = (item.sku || "").trim();
-      const quantity = item.quantity || 0;
-      if (!sku || quantity <= 0) continue;
-      const line = perSku.get(sku) || { qty: 0, title: item.title || "" };
-      perSku.set(sku, { qty: line.qty + quantity, title: line.title || item.title || "" });
-    }
-
-    if (perSku.size === 0) {
-      shipmentsWithoutItems += 1;
-      continue;
-    }
-
-    const method = shipmentMethod(shipment);
-    const own = method === OWN_DELIVERY_METHOD;
-    methods.add(method);
-    const lines = Array.from(perSku, ([sku, { qty }]) => ({ sku, qty }));
-    const summary: ShipmentSummary = {
-      id: shipment.id,
-      orderLabel: orderLabelOf(shipment),
-      method,
-      own,
-      // One parcel per unit, one label per parcel: units IS the label count.
-      units: lines.reduce((total, line) => total + line.qty, 0),
-    };
-
-    if (perSku.size > 1) {
-      mixed.push({ ...summary, lines });
-      continue;
-    }
-
-    const [sku, { qty, title }] = Array.from(perSku)[0];
-    const group = groups.get(sku) || {
-      sku,
-      title,
-      total: 0,
-      perMethod: {},
-      shipments: [],
-      buyable: [],
-    };
-    groups.set(sku, {
-      ...group,
-      title: group.title || title,
-      total: group.total + qty,
-      perMethod: { ...group.perMethod, [method]: (group.perMethod[method] || 0) + qty },
-      shipments: [...group.shipments, summary],
-      buyable: own ? group.buyable : [...group.buyable, summary],
-    });
-  }
-
-  return {
-    groups: Array.from(groups.values()).sort((a, b) => a.sku.localeCompare(b.sku)),
-    mixed: mixed.sort((a, b) => a.orderLabel.localeCompare(b.orderLabel)),
-    // Own delivery closes the walk: the van is loaded after the parcels.
-    methods: Array.from(methods).sort((a, b) =>
-      a === OWN_DELIVERY_METHOD ? 1 : b === OWN_DELIVERY_METHOD ? -1 : a.localeCompare(b),
-    ),
-    shipmentsWithoutItems,
-  };
-}
-
-export interface BuyResult {
-  purchased: string[];
-  failures: string[];
-  failedIds: string[];
-}
-
-export interface PrintConfirmation {
-  printed: string[];
-  unconfirmed: string[];
-}
 
 // Grey (idle) → buying → waiting for the printer → green (PrintNode
 // confirmed) or red (purchase failed / printer never confirmed). Red keeps a
@@ -189,10 +72,12 @@ type RowState =
   | { phase: "buying" }
   | { phase: "confirming"; labels: number }
   | { phase: "printed"; labels: number }
-  | { phase: "failed"; reason: string; retryIds: string[]; retryLabels: number };
-
-const labelCount = (shipments: ShipmentSummary[]): number =>
-  shipments.reduce((total, shipment) => total + shipment.units, 0);
+  | {
+      phase: "failed";
+      reason: string;
+      retryIds: string[];
+      retryLabels: number;
+    };
 
 export function PicklistDialog({
   open,
@@ -210,7 +95,8 @@ export function PicklistDialog({
   // the page, which owns the mutation hooks and the toasts.
   onBuyShipments: (ids: string[]) => Promise<BuyResult>;
   // Polls the bought shipments until the ERP mirrors printed_at (stamped
-  // after PrintNode accepted the jobs) or gives up — the green/red verdict.
+  // after PrintNode reported the jobs delivered to the printer host) or
+  // gives up — the green/red verdict.
   onAwaitPrinted: (ids: string[]) => Promise<PrintConfirmation>;
   // Fired once when the operator confirms the whole run (every row ticked).
   // The page uses it to record the own-delivery picks.
@@ -222,6 +108,12 @@ export function PicklistDialog({
   const picklist = React.useMemo(() => buildPicklist(shipments), [shipments]);
   const [ticked, setTicked] = React.useState<string[]>([]);
   const [rows, setRows] = React.useState<Record<string, RowState>>({});
+  // Two different locks. Purchases are strictly sequential (Monta's
+  // verification window, the ERP's row locks), so ONE row buying blocks
+  // every other Print. Waiting for the printer is not a purchase: while row
+  // A polls for its confirmation, row B may start buying — the picker packs
+  // the next stack while the first one prints.
+  const purchasing = Object.values(rows).some((row) => row.phase === "buying");
   const busy = Object.values(rows).some(
     (row) => row.phase === "buying" || row.phase === "confirming",
   );
@@ -239,7 +131,8 @@ export function PicklistDialog({
     ...picklist.groups.map((group) => `sku:${group.sku}`),
     ...picklist.mixed.map((order) => `order:${order.id}`),
   ];
-  const allConfirmed = rowKeys.length > 0 && rowKeys.every((key) => ticked.includes(key));
+  const allConfirmed =
+    rowKeys.length > 0 && rowKeys.every((key) => ticked.includes(key));
   const totalLabels =
     labelCount(picklist.groups.flatMap((group) => group.buyable)) +
     labelCount(picklist.mixed.filter((order) => !order.own));
@@ -271,7 +164,9 @@ export function PicklistDialog({
       const confirmation = await onAwaitPrinted(result.purchased);
       const failed = result.failedIds.length + confirmation.unconfirmed.length;
       if (failed > 0) {
-        const retrySummaries = targets.filter((t) => result.failedIds.includes(t.id));
+        const retrySummaries = targets.filter((t) =>
+          result.failedIds.includes(t.id),
+        );
         setRow(key, {
           phase: "failed",
           reason:
@@ -297,7 +192,10 @@ export function PicklistDialog({
 
   const confirmAll = () => {
     onConfirmAll?.(
-      [...picklist.groups.flatMap((group) => group.shipments), ...picklist.mixed]
+      [
+        ...picklist.groups.flatMap((group) => group.shipments),
+        ...picklist.mixed,
+      ]
         .filter((shipment) => shipment.own)
         .map((shipment) => shipment.id),
     );
@@ -324,7 +222,8 @@ export function PicklistDialog({
       case "confirming":
         return (
           <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Waiting for printer…
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Waiting for
+            printer…
           </span>
         );
       case "printed":
@@ -348,9 +247,12 @@ export function PicklistDialog({
                 variant="outline"
                 size="sm"
                 className="h-7 px-2 text-xs"
-                disabled={busy}
+                disabled={purchasing}
                 onClick={() =>
-                  buy(key, targets.filter((t) => state.retryIds.includes(t.id)))
+                  buy(
+                    key,
+                    targets.filter((t) => state.retryIds.includes(t.id)),
+                  )
                 }
               >
                 <RotateCcw className="h-3 w-3 mr-1" /> Retry
@@ -364,7 +266,7 @@ export function PicklistDialog({
             variant="outline"
             size="sm"
             className="h-7 px-2.5 text-xs"
-            disabled={busy}
+            disabled={purchasing}
             onClick={() => buy(key, targets)}
           >
             <Printer className="h-3.5 w-3.5 mr-1.5" />
@@ -381,7 +283,8 @@ export function PicklistDialog({
     return isTicked ? "bg-muted/40" : "";
   };
 
-  const headerCell = "py-2 px-3 text-xs font-medium uppercase tracking-wide text-muted-foreground";
+  const headerCell =
+    "py-2 px-3 text-xs font-medium uppercase tracking-wide text-muted-foreground";
   const numberCell = "py-2.5 px-3 text-right tabular-nums";
 
   return (
@@ -392,8 +295,8 @@ export function PicklistDialog({
             <span>Pick &amp; Print</span>
             <span className="text-sm font-normal text-muted-foreground">
               {shipments.length} order{shipments.length === 1 ? "" : "s"} ·{" "}
-              {totalLabels} label{totalLabels === 1 ? "" : "s"} · {ticked.length}/
-              {rowKeys.length} confirmed
+              {totalLabels} label{totalLabels === 1 ? "" : "s"} ·{" "}
+              {ticked.length}/{rowKeys.length} confirmed
             </span>
           </DialogTitle>
           <DialogDescription>
@@ -423,7 +326,10 @@ export function PicklistDialog({
                     <th className={`${headerCell} w-10`}></th>
                     <th className={headerCell}>SKU</th>
                     {picklist.methods.map((method) => (
-                      <th key={method} className={`${headerCell} text-right whitespace-nowrap`}>
+                      <th
+                        key={method}
+                        className={`${headerCell} text-right whitespace-nowrap`}
+                      >
                         {method}
                       </th>
                     ))}
@@ -443,10 +349,14 @@ export function PicklistDialog({
                         <td className="py-2.5 px-3">
                           <Checkbox
                             checked={isTicked}
-                            onCheckedChange={(checked) => toggle(key, checked === true)}
+                            onCheckedChange={(checked) =>
+                              toggle(key, checked === true)
+                            }
                           />
                         </td>
-                        <td className={`py-2.5 px-3 ${isTicked ? "text-muted-foreground line-through" : ""}`}>
+                        <td
+                          className={`py-2.5 px-3 ${isTicked ? "text-muted-foreground line-through" : ""}`}
+                        >
                           <span className="font-medium">{group.sku}</span>
                           {group.title && (
                             <span className="block text-xs text-muted-foreground">
@@ -459,7 +369,9 @@ export function PicklistDialog({
                             {group.perMethod[method] || ""}
                           </td>
                         ))}
-                        <td className={`${numberCell} font-semibold`}>{group.total}</td>
+                        <td className={`${numberCell} font-semibold`}>
+                          {group.total}
+                        </td>
                         <td className="py-2.5 px-3 text-right whitespace-nowrap">
                           {statusCell(key, group.buyable)}
                         </td>
@@ -481,17 +393,28 @@ export function PicklistDialog({
                       const key = `order:${order.id}`;
                       const isTicked = ticked.includes(key);
                       return (
-                        <tr key={key} className={`border-t ${rowTone(key, isTicked)}`}>
+                        <tr
+                          key={key}
+                          className={`border-t ${rowTone(key, isTicked)}`}
+                        >
                           <td className="py-2.5 px-3 w-10">
                             <Checkbox
                               checked={isTicked}
-                              onCheckedChange={(checked) => toggle(key, checked === true)}
+                              onCheckedChange={(checked) =>
+                                toggle(key, checked === true)
+                              }
                             />
                           </td>
-                          <td className={`py-2.5 px-3 ${isTicked ? "text-muted-foreground line-through" : ""}`}>
-                            <span className="font-medium">{order.orderLabel}</span>
+                          <td
+                            className={`py-2.5 px-3 ${isTicked ? "text-muted-foreground line-through" : ""}`}
+                          >
+                            <span className="font-medium">
+                              {order.orderLabel}
+                            </span>
                             <span className="block text-xs text-muted-foreground">
-                              {order.lines.map((line) => `${line.qty}× ${line.sku}`).join(" · ")}
+                              {order.lines
+                                .map((line) => `${line.qty}× ${line.sku}`)
+                                .join(" · ")}
                             </span>
                           </td>
                           <td className="py-2.5 px-3 text-right text-xs text-muted-foreground whitespace-nowrap">

@@ -258,7 +258,36 @@ class TestMontaShipment(unittest.TestCase):
                 f"{gateway.settings.server_url}/order/SAL-ORD-2026-00001",
             )
             self.assertEqual(mock.call_args[1]["method"], "DELETE")
+            # OrderDeleteParameters.Note is mandatory on Monta's DELETE.
+            self.assertEqual(
+                lib.to_dict(mock.call_args[1]["data"]),
+                {"Note": "Cancelled via Karrio"},
+            )
             self.assertListEqual(lib.to_dict(parsed_response), ParsedCancelResponse)
+
+    def test_cancel_shipment_request(self):
+        request = gateway.mapper.create_cancel_shipment_request(
+            self.ShipmentCancelRequest
+        )
+
+        self.assertEqual(
+            request.serialize(),
+            {"webshop_order_id": "SAL-ORD-2026-00001", "note": "Cancelled via Karrio"},
+        )
+
+    def test_cancel_shipment_forwards_the_note_option(self):
+        request = models.ShipmentCancelRequest(
+            **ShipmentCancelPayload,
+            options={"monta_cancel_note": "Cancelled in ERP (SAL-ORD-2026-00001)"},
+        )
+        with patch("karrio.mappers.monta.proxy.lib.request") as mock:
+            mock.return_value = ""
+            karrio.Shipment.cancel(request).from_(gateway).parse()
+
+            self.assertEqual(
+                lib.to_dict(mock.call_args[1]["data"]),
+                {"Note": "Cancelled in ERP (SAL-ORD-2026-00001)"},
+            )
 
 
 if __name__ == "__main__":

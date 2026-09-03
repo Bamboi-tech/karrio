@@ -65,14 +65,13 @@ export const StatusTimeline: React.FC<StatusTimelineProps> = ({
 
   // How far the coloured fill reaches along the track: up to the active
   // stop, the whole track on "All", nothing when an outcome bucket is open
-  // (those rows left the line).
+  // (those rows left the line). Each stop sits at the centre of an equal
+  // column, so stop i is at (i + 0.5) / n of the track width.
   const progress = isAllActive
     ? 1
     : activeIndex < 0
       ? 0
-      : stages.length > 1
-        ? activeIndex / (stages.length - 1)
-        : 1;
+      : (activeIndex + 0.5) / stages.length;
 
   return (
     <div className={cn("mb-5 mt-4", className)}>

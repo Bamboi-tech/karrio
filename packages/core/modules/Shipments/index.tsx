@@ -27,6 +27,7 @@ import { ShipmentsFilter } from "@karrio/ui/components/shipments-filter";
 import { AddressType, RateType, ShipmentType } from "@karrio/types";
 import { ShipmentMenu } from "@karrio/ui/components/shipment-menu";
 import { FiltersCard } from "@karrio/ui/components/filters-card";
+import { StatusTimeline } from "@karrio/ui/components/status-timeline";
 import { ListPagination } from "@karrio/ui/components/list-pagination";
 import { StickyTableWrapper } from "@karrio/ui/components/sticky-table-wrapper";
 import {
@@ -40,7 +41,13 @@ import {
 import { Button } from "@karrio/ui/components/ui/button";
 import { Checkbox } from "@karrio/ui/components/ui/checkbox";
 import { Skeleton } from "@karrio/ui/components/ui/skeleton";
-import { ChevronDown, Loader2, Package } from "lucide-react";
+import {
+  ChevronDown,
+  GitCommitHorizontal,
+  LayoutGrid,
+  Loader2,
+  Package,
+} from "lucide-react";
 import { CarrierImage } from "@karrio/ui/core/components/carrier-image";
 import { ShipmentsStatusBadge } from "@karrio/ui/components/shipments-status-badge";
 import {
@@ -270,6 +277,25 @@ const initialPageSize = () => {
   }
 };
 
+// How the status views are presented: the lifecycle timeline (default) or
+// the classic grid of cards. Same views, same filters — only the shape
+// differs. Remembered per browser in localStorage; read in an effect (not
+// the state initializer) so the server and first client render agree and
+// there is no hydration mismatch.
+type ViewMode = "timeline" | "cards";
+const VIEW_MODE_STORAGE_KEY = "shipments_view_mode";
+const DEFAULT_VIEW_MODE: ViewMode = "timeline";
+const readStoredViewMode = (): ViewMode => {
+  try {
+    const stored = window.localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+    return stored === "cards" || stored === "timeline"
+      ? stored
+      : DEFAULT_VIEW_MODE;
+  } catch {
+    return DEFAULT_VIEW_MODE;
+  }
+};
+
 // errorToMessages yields either strings or API message objects; flatten both
 // into one operator-readable line (same shape shipment-menu.tsx renders).
 const describeError = (error: unknown) =>
@@ -298,6 +324,18 @@ export default function Page(pageProps: any) {
     const [selection, setSelection] = React.useState<string[]>([]);
     // Rows per page (20/50/100), fed into the query as filter.first.
     const [pageSize, setPageSize] = React.useState<number>(initialPageSize);
+    const [viewMode, setViewMode] = React.useState<ViewMode>(DEFAULT_VIEW_MODE);
+    useEffect(() => {
+      setViewMode(readStoredViewMode());
+    }, []);
+    const switchViewMode = (mode: ViewMode) => {
+      setViewMode(mode);
+      try {
+        window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode);
+      } catch {
+        // Private mode / blocked storage: the choice just lives for this page.
+      }
+    };
     // Anchor of the last individually clicked row checkbox, for shift+click
     // range selection. Stored as a shipment id, not an index: ids survive
     // refetches and the client-side re-narrowing/sorting of visibleShipments
@@ -677,6 +715,7 @@ export default function Page(pageProps: any) {
       {
         label: "All",
         value: ALL_STATUSES,
+        kind: "all" as const,
       },
       {
         // The address worklist: every DRAFT whose delivery address is
@@ -693,6 +732,7 @@ export default function Page(pageProps: any) {
         label: "Needs Attention",
         value: ["draft", ADDRESS_REVIEW_SENTINEL],
         badge: reviewBadgeLabel,
+        hint: "Drafts whose delivery address needs a human decision",
       },
       {
         // Every draft whose address review is done or was never needed —
@@ -700,6 +740,7 @@ export default function Page(pageProps: any) {
         // Draft card; the backend status is still "draft".)
         label: "Complete",
         value: ["draft", COMPLETE_SENTINEL],
+        hint: "Every clean draft (Planned + Today)",
       },
       {
         // Drafts whose Shopify order is on hold (metadata.shopify_hold,
@@ -710,11 +751,13 @@ export default function Page(pageProps: any) {
         label: "On hold",
         value: ["draft", HOLD_SENTINEL],
         badge: holdBadgeLabel,
+        hint: "Parked: the Shopify order is on hold",
       },
       {
         // Clean drafts whose print day is still ahead.
         label: "Planned",
         value: ["draft", PLANNED_SENTINEL],
+        hint: "Clean drafts whose print day is still ahead",
       },
       {
         // Rico's printlist: clean drafts due today — including overdue
@@ -727,6 +770,7 @@ export default function Page(pageProps: any) {
         label: "Today",
         value: ["draft", TODAY_SENTINEL],
         badge: todayBadge,
+        hint: "The printlist: due and overdue drafts",
       },
       {
         // Labeled but not yet handed to the carrier ("purchased" is aliased
@@ -737,26 +781,35 @@ export default function Page(pageProps: any) {
         // Complete/Planned/Today.
         label: "Picked",
         value: ["created", "draft"],
+        hint: "Labeled, waiting for the carrier",
       },
       {
         label: "Shipped",
         value: ["shipped", "in_transit", "out_for_delivery"],
+        hint: "On the road",
       },
       {
         label: "Delivered",
         value: ["delivered"],
       },
+      // The three buckets below are where shipments end up when they leave
+      // the line — the timeline draws them on a branch under the track.
       {
         label: "Exception",
         value: ["needs_attention", "delivery_failed"],
+        kind: "outcome" as const,
+        hint: "Carrier exceptions and failed deliveries",
       },
       {
         label: "Cancelled",
         value: ["cancelled"],
+        kind: "outcome" as const,
       },
       {
         label: "Failed",
         value: [FAILED_SENTINEL],
+        kind: "outcome" as const,
+        hint: "Shipments that could not be created",
       },
     ];
 
@@ -1325,6 +1378,20 @@ export default function Page(pageProps: any) {
       }
     }, [searchParams.get("modal"), query.isFetched]);
 
+    // Shared by both presentations. Needs Attention and On hold both filter
+    // on an ERP-stamped metadata key server-side; every other view must
+    // clear it or its status filter would intersect with those worklists.
+    const onStatusFilterChange = (status: string[]) =>
+      updateFilter({
+        status,
+        metadata_key: status.includes(ADDRESS_REVIEW_SENTINEL)
+          ? ADDRESS_REVIEW_FLAG
+          : status.includes(HOLD_SENTINEL)
+            ? SHOPIFY_HOLD_KEY
+            : undefined,
+        offset: 0,
+      });
+
     return (
       <>
         <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between px-0 pb-0 pt-4 mb-2">
@@ -1343,29 +1410,56 @@ export default function Page(pageProps: any) {
               </AppLink>
             </Button>
             {!isFailedView && <ShipmentsFilter context={context} />}
+            {/* Timeline / cards: two presentations of the same status views. */}
+            <div
+              role="group"
+              aria-label="Status view"
+              className="mx-1 inline-flex rounded-md border border-gray-200 bg-white p-0.5"
+            >
+              {(
+                [
+                  {
+                    mode: "timeline",
+                    Icon: GitCommitHorizontal,
+                    label: "Timeline",
+                  },
+                  { mode: "cards", Icon: LayoutGrid, label: "Cards" },
+                ] as const
+              ).map(({ mode, Icon, label }) => (
+                <button
+                  key={mode}
+                  type="button"
+                  title={`${label} view`}
+                  aria-pressed={viewMode === mode}
+                  onClick={() => switchViewMode(mode)}
+                  className={
+                    "rounded-[5px] p-1.5 transition-colors duration-200 " +
+                    (viewMode === mode
+                      ? "bg-blue-600 text-white shadow-sm"
+                      : "text-gray-500 hover:bg-gray-100 hover:text-gray-800")
+                  }
+                >
+                  <Icon className="h-4 w-4" />
+                  <span className="sr-only">{label}</span>
+                </button>
+              ))}
+            </div>
           </div>
         </header>
 
-        <FiltersCard
-          filters={getFilterOptions()}
-          activeFilter={filter?.status || []}
-          onFilterChange={(status) =>
-            updateFilter({
-              status,
-              // Needs Attention and On hold both filter on an ERP-stamped
-              // metadata key server-side; every other card must clear it or
-              // its status filter would intersect with those worklists.
-              metadata_key: (status as string[]).includes(
-                ADDRESS_REVIEW_SENTINEL,
-              )
-                ? ADDRESS_REVIEW_FLAG
-                : (status as string[]).includes(HOLD_SENTINEL)
-                  ? SHOPIFY_HOLD_KEY
-                  : undefined,
-              offset: 0,
-            })
-          }
-        />
+        {viewMode === "timeline" ? (
+          <StatusTimeline
+            filters={getFilterOptions()}
+            activeFilter={filter?.status || []}
+            onFilterChange={onStatusFilterChange}
+          />
+        ) : (
+          <FiltersCard
+            filters={getFilterOptions()}
+            activeFilter={filter?.status || []}
+            onFilterChange={onStatusFilterChange}
+          />
+        )}
 
         {isFailedView && <FailedShipmentsList />}
 

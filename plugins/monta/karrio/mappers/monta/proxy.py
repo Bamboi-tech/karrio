@@ -255,10 +255,14 @@ class Proxy(proxy.Proxy):
         )
 
     def cancel_shipment(self, request: lib.Serializable) -> lib.Deserializable[str]:
+        """DELETE /order/{id} with the note Monta requires. 204 = deleted;
+        Monta refuses with code 18/19 once the order is picked/shipped."""
         payload = request.serialize()
 
         response = lib.request(
             url=self._order_url(payload["webshop_order_id"]),
+            # OrderDeleteParameters: the body's one, mandatory field.
+            data=lib.to_json(dict(Note=payload["note"])),
             method="DELETE",
             trace=self.trace_as("json"),
             headers=self._headers,

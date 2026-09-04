@@ -14,7 +14,7 @@ shipment lifecycle.
 | ----------------- | -------------------------------------------------------------------- |
 | `get_rates`       | `PUT /order/{id}` → `POST /order` (order upsert + address verification) |
 | `create_shipment` | `POST /order/{id}/colli` → `POST /order/{id}/shippinglabels` → label download → `GET /order/{id}/returnlabels` |
-| `cancel_shipment` | `DELETE /order/{id}`                                                 |
+| `cancel_shipment` | `DELETE /order/{id}` with body `{"Note": …}` — the note is mandatory; option `monta_cancel_note`, default "Cancelled via Karrio" |
 | `get_tracking`    | `GET /order/{id}/events` + `GET /order/{id}/colli`                   |
 
 ## Semantics (read this!)
@@ -60,7 +60,8 @@ shipment lifecycle.
 `monta_origin`, `monta_shipper_code`, `monta_allowed_shippers`,
 `monta_webshop_order_id`, `monta_planned_shipment_date`,
 `monta_delivery_date_requested`, `monta_shipping_comment`, `monta_comment`,
-`monta_b2b`, `monta_include_return_labels`.
+`monta_b2b`, `monta_include_return_labels`. On cancellation only:
+`monta_cancel_note` (the reason Monta stores with the deleted order).
 
 ## Installation
 

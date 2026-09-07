@@ -37,6 +37,32 @@ export default async function Layout({
         <meta name="robots" content="NONE,NOARCHIVE" />
         <meta name="theme-color" content="#9504af" />
         <link rel="manifest" href={`/manifest.json`} />
+        {/* PostHog (session replay + autocapture) for the internal dashboard.
+            Gated on the real deployment hostnames so local dev and embeds
+            send nothing; same project as the ERP desk, split by `host`. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function () {
+  var TOKEN = "__POSTHOG_PROJECT_TOKEN__";
+  var HOSTS = ["karrio-app.bamboi.eu", "stage-karrio-app.bamboi.eu"];
+  if (TOKEN.indexOf("phc_") !== 0) return;
+  if (HOSTS.indexOf(window.location.hostname) === -1) return;
+  var s = document.createElement("script");
+  s.src = "https://eu-assets.i.posthog.com/static/array.js";
+  s.async = true;
+  s.onload = function () {
+    window.posthog.init(TOKEN, {
+      api_host: "https://eu.i.posthog.com",
+      ui_host: "https://eu.posthog.com",
+      person_profiles: "identified_only",
+      session_recording: { maskAllInputs: true },
+    });
+    window.posthog.register({ host: window.location.hostname, app: "karrio-dashboard" });
+  };
+  document.head.appendChild(s);
+})();`,
+          }}
+        />
       </head>
       <body suppressHydrationWarning>
         <noscript>You need to enable JavaScript to run this app.</noscript>

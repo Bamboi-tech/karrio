@@ -62,7 +62,13 @@ export const ShipmentComponent = ({
     query: { data: { shipment } = {}, ...query },
   } = useShipment(entity_id);
   const trackerId = shipment?.tracker_id;
-  const addressReview = getAddressReview(shipment?.metadata, shipment?.meta);
+  // A cancelled draft has been replaced (the ERP rebuilds a review draft as a
+  // NEW shipment once the address is corrected or confirmed); its stored
+  // verdict describes an address nobody ships to anymore, so it is not shown.
+  const addressReview =
+    shipment?.status === "cancelled"
+      ? null
+      : getAddressReview(shipment?.metadata, shipment?.meta);
   const erpActions = useShipmentERPActions(entity_id);
   const { isEnabled } = useBamboiFeatures();
   const [confirmAddressOpen, setConfirmAddressOpen] = React.useState(false);

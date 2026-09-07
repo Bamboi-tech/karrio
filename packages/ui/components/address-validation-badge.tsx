@@ -17,6 +17,14 @@ export const ADDRESS_SUGGESTION_KEY = "address_suggestion";
 export const ADDRESS_SYNC_PENDING_KEY = "address_sync_pending";
 
 export const PENDING_STATUS = "validating";
+// Written by the ERP (karrio_shipping._address_history) on every draft of an
+// order whose address a person corrected or confirmed; the note carries who,
+// when and why, with Google's verdict beneath it.
+export const CORRECTED_STATUS = "corrected";
+
+export function isCorrected(status?: string | null): boolean {
+  return (status || "").toLowerCase() === CORRECTED_STATUS;
+}
 
 export interface AddressReview {
   status: string;
@@ -69,6 +77,10 @@ export const AddressValidationBadge = ({
       suspect: "bg-yellow-50 text-yellow-600",
       unchecked: "bg-gray-50 text-gray-500",
       valid: "bg-green-50 text-green-500",
+      // A person fixed or confirmed this address (the ERP stamps it on every
+      // later draft of the order): green, and it stays through Completed so
+      // the rows the warehouse corrected remain recognisable.
+      [CORRECTED_STATUS]: "bg-green-50 text-green-600",
       [PENDING_STATUS]: "bg-blue-50 text-blue-500",
     };
 

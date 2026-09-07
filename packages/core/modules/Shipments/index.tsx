@@ -53,6 +53,7 @@ import { ShipmentsStatusBadge } from "@karrio/ui/components/shipments-status-bad
 import {
   AddressValidationBadge,
   getAddressReview,
+  isCorrected,
   ADDRESS_REVIEW_FLAG,
 } from "@karrio/ui/components/address-validation-badge";
 import {
@@ -583,6 +584,14 @@ export default function Page(pageProps: any) {
           {review.pending && (
             <p className="text-gray-500 font-medium mt-1">
               re-checking with Google
+            </p>
+          )}
+          {isCorrected(review.status) && review.note && (
+            <p
+              className="text-gray-500 font-medium text-ellipsis mt-1"
+              title={review.note}
+            >
+              {review.note.split("\n")[0]}
             </p>
           )}
           {review.suggestion && (

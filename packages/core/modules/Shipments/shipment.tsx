@@ -14,6 +14,7 @@ import { AddressEditDialog } from "@karrio/ui/components/address-edit-dialog";
 import {
   AddressValidationBadge,
   getAddressReview,
+  isCorrected,
 } from "@karrio/ui/components/address-validation-badge";
 import { ParcelDescription } from "@karrio/ui/components/parcel-description";
 import { ActivityTimeline } from "@karrio/ui/components/activity-timeline";
@@ -697,6 +698,19 @@ export const ShipmentComponent = ({
                         This correction is being re-validated in ERPNext and
                         synchronized to Shopify. The verdict below updates once
                         that completes.
+                      </div>
+                    )}
+
+                    {addressReview && isCorrected(addressReview.status) && (
+                      <div className="mt-2 rounded border border-green-200 bg-green-50 px-3 py-2 text-sm">
+                        <p className="font-semibold text-green-800">
+                          Address corrected
+                        </p>
+                        {addressReview.note && (
+                          <p className="text-xs text-green-700 mt-1 whitespace-pre-line">
+                            {addressReview.note}
+                          </p>
+                        )}
                       </div>
                     )}
 

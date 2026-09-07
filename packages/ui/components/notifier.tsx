@@ -73,10 +73,13 @@ export function formatMessage(msg: Notification["message"]) {
   }
 }
 
-function parseMessage(msg: any):
-  | string
-  | Array<{ title?: string; description?: string; variant?: "default" | "destructive" }>
-{
+type ToastPayload = {
+  title?: string;
+  description?: React.ReactNode;
+  variant?: "default" | "destructive";
+};
+
+function parseMessage(msg: any): string | ToastPayload[] {
   try {
     console.log("=== PARSE MESSAGE DEBUG ===");
     console.log("Input message:", msg);
@@ -85,10 +88,20 @@ function parseMessage(msg: any):
     console.log("Has errors:", !!msg?.errors);
     console.log("Has messages:", !!msg?.messages);
     console.log("Has message:", !!msg?.message);
-    
+
     if (!msg) {
       console.log("Message is empty, returning empty string");
       return "";
+    }
+    // A Karrio REST error (handleFailure wraps the response body in a
+    // RequestError): { errors: [{ code, message, details }] } or
+    // { messages: [...] }. It has to be turned into toasts HERE — the
+    // renderers below return a list of React nodes for it, and a list is what
+    // notify() reads as a list of toasts, each without title or description.
+    // That was the empty red toast on every ERP refusal (2026-09-07).
+    if (msg instanceof RequestError) {
+      const toasts = restErrorToasts(msg.data);
+      if (toasts) return toasts;
     }
     // GraphQL top-level shape
     if (msg?.errors && Array.isArray(msg.errors)) {
@@ -124,15 +137,58 @@ function parseMessage(msg: any):
       return [{ title: "Error", description: msg.message, variant: "destructive" }];
     }
     console.log("Falling back to formatMessage");
-    const result = formatMessage(msg);
+    const result = asSingleToast(formatMessage(msg));
     console.log("formatMessage result:", result);
     console.log("=== END PARSE MESSAGE DEBUG ===");
     return result;
   } catch (e) {
     console.log("Error in parseMessage:", e);
     console.log("=== END PARSE MESSAGE DEBUG ===");
-    return formatMessage(msg);
+    return asSingleToast(formatMessage(msg));
   }
+}
+
+// One toast per error entry of a Karrio REST error body; null when the body
+// is not of that shape so the generic renderers get their turn.
+function restErrorToasts(data: any): ToastPayload[] | null {
+  const list = Array.isArray(data?.errors)
+    ? data.errors
+    : Array.isArray(data?.messages)
+      ? data.messages
+      : null;
+  if (!list || list.length === 0) return null;
+  return list.map((err: any) => ({
+    title: err.carrier_name
+      ? `${err.carrier_name} (${err.code || "Error"})`
+      : "Error",
+    description: err.message || detailsText(err.details) || JSON.stringify(err),
+    variant: "destructive" as const,
+  }));
+}
+
+function detailsText(details: any): string {
+  if (!details || typeof details !== "object") return "";
+  if (Array.isArray(details.messages)) {
+    return details.messages
+      .map((m: any) => m?.message || JSON.stringify(m))
+      .join("\n");
+  }
+  return Object.entries(details)
+    .map(([field, value]: [string, any]) => {
+      const text = Array.isArray(value)
+        ? value.join(" ")
+        : value?.message || JSON.stringify(value);
+      return `${field}: ${text}`;
+    })
+    .join("\n");
+}
+
+// formatMessage may hand back a list of React nodes. Wrap it in ONE toast so
+// the list is never read as a list of toasts.
+function asSingleToast(rendered: any): string | ToastPayload[] {
+  return Array.isArray(rendered)
+    ? [{ description: <>{rendered}</> }]
+    : rendered;
 }
 
 function renderError(msg: any, _: number): any {

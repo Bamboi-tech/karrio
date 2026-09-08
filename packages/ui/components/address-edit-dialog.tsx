@@ -9,6 +9,7 @@ import {
 import { AddressType, ShipmentType } from "@karrio/types";
 import { AddressForm } from "@karrio/ui/components/address-form";
 import { Button } from "@karrio/ui/components/ui/button";
+import { Loader2 } from "lucide-react";
 import { COUNTRY_WITH_POSTAL_CODE, isEqual } from "@karrio/lib";
 import { useAPIMetadata } from "@karrio/hooks/api-metadata";
 
@@ -161,7 +162,14 @@ export const AddressEditDialog = ({
               onClick={handleFooterSubmit}
               disabled={isSubmitting || !hasChanges || missingRequired || (Boolean(currentAddress.postal_code) && !isPostalValid)}
             >
-              {isSubmitting ? "Saving..." : "Save Address"}
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                "Save Address"
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

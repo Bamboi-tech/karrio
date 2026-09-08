@@ -2155,6 +2155,65 @@ class TestPurchasedShipmentMetadataUpdate(TestShipmentFixture):
         self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
 
 
+class TestPendingAddressSyncUpdates(TestShipmentFixture):
+    """A draft whose recipient was just corrected waits on the ERP
+    (meta.address_sync_pending): nothing may be rated or bought on the
+    unvalidated address, but the ERP must still be able to write metadata on
+    it and to say when the wait is over."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.shipment.meta = {**(self.shipment.meta or {}), "address_sync_pending": True}
+        self.shipment.metadata = {"sales_order": "SO-1", "address_review_required": True}
+        self.shipment.save()
+        self.url = reverse(
+            "karrio.server.manager:shipment-details", kwargs=dict(pk=self.shipment.pk)
+        )
+
+    def test_metadata_only_update_is_allowed_while_pending(self):
+        # The ERP nulls the review keys of a draft it just voided; on a
+        # corrected draft that cleanup bounced with the rating/purchase 409.
+        response = self.client.put(
+            self.url, data=dict(metadata={"address_review_required": None}), format="json"
+        )
+
+        self.assertResponseNoErrors(response)
+        self.shipment.refresh_from_db()
+        self.assertNotIn("address_review_required", self.shipment.metadata)
+        self.assertTrue(self.shipment.meta["address_sync_pending"])
+
+    def test_address_sync_done_ends_the_wait(self):
+        response = self.client.put(
+            self.url,
+            data=dict(metadata={"address_sync_error": None}, address_sync_done=True),
+            format="json",
+        )
+
+        self.assertResponseNoErrors(response)
+        self.shipment.refresh_from_db()
+        self.assertNotIn("address_sync_pending", self.shipment.meta)
+        self.assertNotIn("address_sync_done", self.shipment.meta)
+        self.assertEqual(self.shipment.metadata["sales_order"], "SO-1")
+
+    def test_address_sync_done_alone_touches_nothing_else(self):
+        before = dict(options=self.shipment.options, label_type=self.shipment.label_type)
+        response = self.client.put(self.url, data=dict(address_sync_done=True), format="json")
+
+        self.assertResponseNoErrors(response)
+        self.shipment.refresh_from_db()
+        self.assertNotIn("address_sync_pending", self.shipment.meta)
+        self.assertEqual(self.shipment.options, before["options"])
+        self.assertEqual(self.shipment.label_type, before["label_type"])
+
+    def test_a_wider_update_is_still_refused_while_pending(self):
+        response = self.client.put(
+            self.url, data=dict(reference="SO-Shopify-00001"), format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertIn("awaiting ERP validation", str(response.data))
+
+
 class TestShipmentERPAction(TestShipmentFixture):
     """The ERP relay endpoint must forward the request body as the ERP
     method's arguments, and refuse anything outside the whitelist."""

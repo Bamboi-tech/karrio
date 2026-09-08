@@ -173,7 +173,8 @@ def run_erp_shipment_action(shipment, action: str, args: dict = None) -> dict:
     ``ERP_SHIPMENT_ACTIONS`` so a caller can never reach an ERP method or an
     ERP argument the fork did not whitelist.
 
-    Returns ``{"message": <ERP's own success message>}``. Raises with the
+    Returns ``{"message": <ERP's own success message>}``, plus whatever extra
+    keys the ERP method chose to return next to its message. Raises with the
     ERP's refusal (hold, wrong status, wrong mode) or on transport failure —
     same fail-closed doctrine as the label gate.
     """
@@ -264,8 +265,16 @@ def run_erp_shipment_action(shipment, action: str, args: dict = None) -> dict:
             status_code=409,
         )
 
-    message = ((response.json() or {}).get("message")) or "Done."
-    return {"message": message}
+    body = (response.json() or {}).get("message")
+    if isinstance(body, dict):
+        # An action that has more to say than a sentence (confirm-address
+        # hands back the id of the draft the ERP rebuilt, so the dashboard
+        # can open it) returns ``{"message": ..., <extra keys>}``. The extra
+        # keys ride along untouched; ``message`` stays a string so every
+        # toast keeps working.
+        extra = {key: value for key, value in body.items() if key != "message"}
+        return {"message": body.get("message") or "Done.", **extra}
+    return {"message": body or "Done."}
 
 
 # ---------------------------------------------------------------------------

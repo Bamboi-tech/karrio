@@ -445,6 +445,15 @@ class ShipmentUpdateData(validators.OptionDefaultSerializer):
     metadata = PlainDictField(
         required=False, help_text="User metadata for the shipment"
     )
+    address_sync_done = BooleanField(
+        required=False,
+        write_only=True,
+        help_text=(
+            "Bamboi: the ERP reports that the recipient correction on this draft "
+            "has been processed (validated, refused, or nothing to rebuild), "
+            "which lifts the address_sync_pending block on rating and purchase."
+        ),
+    )
 
 
 class ShipmentRateData(validators.OptionDefaultSerializer):
@@ -824,6 +833,28 @@ def reset_related_shipment_rates(shipment: typing.Optional[models.Shipment]):
             shipment.save(update_fields=changes)
 
 
+# Bamboi fork: set on ``meta`` by the recipient mutation the moment an
+# operator saves a corrected delivery address, so nothing is rated or bought
+# on an address the ERP has not validated yet. The ERP ends the wait either by
+# replacing the draft (void + rebuild) or, when the correction left nothing to
+# rebuild, by sending ``address_sync_done`` on a PUT — the write-only request
+# field that clears the flag (ShipmentDetails.put).
+ADDRESS_SYNC_PENDING_META = "address_sync_pending"
+ADDRESS_SYNC_DONE_FIELD = "address_sync_done"
+
+
+def finish_address_sync(shipment: models.Shipment) -> bool:
+    """Clear the pending flag the recipient correction set. Returns whether
+    there was one to clear."""
+    meta = dict(shipment.meta or {})
+    if ADDRESS_SYNC_PENDING_META not in meta:
+        return False
+    meta.pop(ADDRESS_SYNC_PENDING_META)
+    shipment.meta = meta
+    shipment.save(update_fields=["meta"])
+    return True
+
+
 def can_mutate_shipment(
     shipment: models.Shipment,
     update: bool = False,
@@ -831,7 +862,23 @@ def can_mutate_shipment(
     purchase: bool = False,
     payload: dict = None,
 ):
-    address_sync_pending = bool((shipment.meta or {}).get("address_sync_pending"))
+    # Metadata is bookkeeping about the shipment, not the shipment: a
+    # metadata-only update is allowed in every state — purchased, cancelled,
+    # or waiting on the ERP's address validation. Asked FIRST, before the
+    # pending gate below: the ERP voids a review draft and then nulls its
+    # review keys, and on a draft whose recipient had just been corrected
+    # (meta.address_sync_pending) that cleanup used to bounce with the 409
+    # meant for rating and purchasing, leaving the cancelled draft on the
+    # Needs Attention worklist with a verdict nobody ships to anymore.
+    # ``address_sync_done`` is the ERP's own end-of-validation signal (see
+    # ShipmentDetails.put) and is never a reason to refuse anything.
+    # ``payload`` is required for the exemption: the rate and purchase views
+    # ask with none, and an empty question must still hit every gate.
+    mutated_keys = set((payload or {}).keys()) - {ADDRESS_SYNC_DONE_FIELD}
+    if update and payload and mutated_keys <= {"metadata"}:
+        return
+
+    address_sync_pending = bool((shipment.meta or {}).get(ADDRESS_SYNC_PENDING_META))
     is_recipient_correction = bool(payload and "recipient" in payload)
     if address_sync_pending and (update or purchase) and not is_recipient_correction:
         raise exceptions.APIException(
@@ -842,9 +889,6 @@ def can_mutate_shipment(
             code="address_sync_pending",
             status_code=status.HTTP_409_CONFLICT,
         )
-
-    if update and [*(payload or {}).keys()] == ["metadata"]:
-        return
 
     if purchase and shipment.status == ShipmentStatus.created.value:
         raise exceptions.APIException(

@@ -11,18 +11,13 @@ import {
 import { X } from "lucide-react";
 import { useLocation } from "@karrio/hooks/location";
 import React, { useState } from "react";
+import { ShipmentPreviewSheetContext } from "@karrio/ui/components/shipment-preview-context";
 
-type ShipmentPreviewSheetContextType = {
-  previewShipment: (shipmentId: string) => void;
-};
+export { ShipmentPreviewSheetContext } from "@karrio/ui/components/shipment-preview-context";
 
 interface ShipmentPreviewSheetComponent {
   children?: React.ReactNode;
 }
-
-export const ShipmentPreviewSheetContext = React.createContext<ShipmentPreviewSheetContextType>(
-  {} as ShipmentPreviewSheetContextType,
-);
 
 export const ShipmentPreviewSheet = ({ children }: ShipmentPreviewSheetComponent): JSX.Element => {
   const { addUrlParam, removeUrlParam } = useLocation();

@@ -582,8 +582,9 @@ export default function Page(pageProps: any) {
             title={review.note || ""}
           />
           {review.pending && (
-            <p className="text-gray-500 font-medium mt-1">
-              re-checking with Google
+            <p className="text-gray-500 font-medium mt-1 flex items-center gap-1">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              validating in ERPNext
             </p>
           )}
           {isCorrected(review.status) && review.note && (

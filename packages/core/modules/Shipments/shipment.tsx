@@ -14,8 +14,13 @@ import { AddressEditDialog } from "@karrio/ui/components/address-edit-dialog";
 import {
   AddressValidationBadge,
   getAddressReview,
+  getReplacement,
   isCorrected,
 } from "@karrio/ui/components/address-validation-badge";
+import { ShipmentPreviewSheetContext } from "@karrio/ui/components/shipment-preview-context";
+import { useAppMode } from "@karrio/hooks/app-mode";
+import { useRouter } from "next/navigation";
+import { Loader2 } from "lucide-react";
 import { ParcelDescription } from "@karrio/ui/components/parcel-description";
 import { ActivityTimeline } from "@karrio/ui/components/activity-timeline";
 import { useShipment, useShipmentMutation } from "@karrio/hooks/shipment";
@@ -27,7 +32,7 @@ import { ReasonPromptDialog } from "@karrio/ui/components/reason-prompt-dialog";
 import { useShipmentERPActions } from "@karrio/hooks/erp-actions";
 import { useBamboiFeatures } from "@karrio/hooks/bamboi-features";
 import { useNotifier } from "@karrio/ui/core/components/notifier";
-import { formatDateTime, formatRef, isNone } from "@karrio/lib";
+import { formatDateTime, formatRef, isNone, p } from "@karrio/lib";
 import { useLoader } from "@karrio/ui/core/components/loader";
 import { AppLink } from "@karrio/ui/core/components/app-link";
 import { DocumentUploadData } from "@karrio/types/rest/api";
@@ -39,6 +44,14 @@ import { useLogs } from "@karrio/hooks/log";
 import React from "react";
 
 type FileDataType = DocumentUploadData["document_files"][0];
+
+// Following the ERP after an address correction or confirm: how often the
+// draft is re-read while the ERP validates, how long a voided draft is
+// watched for the ERP's link to its replacement, and when "validating" starts
+// to say it is slower than usual.
+const FOLLOW_POLL_MS = 2_500;
+const REPLACEMENT_WAIT_MS = 45_000;
+const SLOW_VALIDATION_AFTER_MS = 45_000;
 
 export const ShipmentComponent = ({
   shipmentId,
@@ -59,20 +72,91 @@ export const ShipmentComponent = ({
   const entity_id = shipmentId;
   const { query: shipmentLogs } = useLogs({ entity_id });
   const { query: shipmentEvents } = useEvents({ entity_id });
+  const [polling, setPolling] = React.useState(false);
   const {
     query: { data: { shipment } = {}, ...query },
-  } = useShipment(entity_id);
+  } = useShipment(entity_id, {
+    refetchInterval: polling ? FOLLOW_POLL_MS : false,
+  });
   const trackerId = shipment?.tracker_id;
+  const cancelled = shipment?.status === "cancelled";
   // A cancelled draft has been replaced (the ERP rebuilds a review draft as a
   // NEW shipment once the address is corrected or confirmed); its stored
   // verdict describes an address nobody ships to anymore, so it is not shown.
-  const addressReview =
-    shipment?.status === "cancelled"
-      ? null
-      : getAddressReview(shipment?.metadata, shipment?.meta);
+  const addressReview = cancelled
+    ? null
+    : getAddressReview(shipment?.metadata, shipment?.meta);
+  // The draft that took this one's place, once the ERP has linked it.
+  const replacement = getReplacement(shipment?.metadata);
   const erpActions = useShipmentERPActions(entity_id);
   const { isEnabled } = useBamboiFeatures();
   const [confirmAddressOpen, setConfirmAddressOpen] = React.useState(false);
+
+  // Where "open the rebuilt draft" leads: inside the preview sheet it swaps
+  // the sheet to the new id (the URL's modal param follows); on the full
+  // page it is a navigation.
+  const router = useRouter();
+  const { basePath } = useAppMode();
+  const { previewShipment } = React.useContext(ShipmentPreviewSheetContext);
+  const openShipment = (id: string) => {
+    if (isPreview && typeof previewShipment === "function") {
+      previewShipment(id);
+    } else {
+      router.push(p`${basePath}/shipments/${id}`);
+    }
+  };
+
+  // Following the ERP. Set the moment this page has reason to expect the
+  // draft to be replaced: a saved correction is being validated
+  // (meta.address_sync_pending, which the ERP ends by voiding this draft and
+  // building a new one), or a confirm came back without naming the new
+  // draft. The draft is re-read every few seconds until the ERP's
+  // replaced_by_shipment link shows up on it, and that draft is opened.
+  const [followingSince, setFollowingSince] = React.useState<number | null>(
+    null,
+  );
+  const [now, setNow] = React.useState(() => Date.now());
+  const followedRef = React.useRef(false);
+  React.useEffect(() => {
+    // The same component instance can be handed the next id (the page
+    // navigates to the rebuilt draft); the follow state belongs to the old one.
+    setFollowingSince(null);
+    followedRef.current = false;
+  }, [entity_id]);
+  const pending = Boolean(addressReview?.pending);
+  React.useEffect(() => {
+    if (pending && followingSince === null) setFollowingSince(Date.now());
+  }, [pending, followingSince]);
+  const waited =
+    followingSince === null ? 0 : Math.max(0, now - followingSince);
+  const awaitingReplacement =
+    followingSince !== null &&
+    cancelled &&
+    !replacement &&
+    waited < REPLACEMENT_WAIT_MS;
+  const replacementLost =
+    followingSince !== null &&
+    cancelled &&
+    !replacement &&
+    waited >= REPLACEMENT_WAIT_MS;
+  const following = pending || awaitingReplacement;
+  React.useEffect(() => {
+    setPolling(following);
+    if (!following) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [following]);
+  React.useEffect(() => {
+    if (followingSince === null || !replacement || followedRef.current) return;
+    followedRef.current = true;
+    notifier.notify({
+      type: NotificationType.success,
+      message:
+        "ERPNext validated the address and rebuilt the shipment. Opened the new draft.",
+    });
+    openShipment(replacement);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [followingSince, replacement]);
   const { query: trackerLogs } = useLogs(trackerId ? { entity_id: trackerId } : { entity_id: "__none__" });
   const { query: trackerEvents } = useEvents(trackerId ? { entity_id: trackerId } : { entity_id: "__none__" });
 
@@ -174,7 +258,8 @@ export const ShipmentComponent = ({
       });
       notifier.notify({
         type: NotificationType.success,
-        message: "Address saved. ERPNext validation and Shopify synchronization have started.",
+        message:
+          "Address saved. ERPNext is validating it now; this page opens the rebuilt shipment when it is ready.",
       });
     } catch (message: any) {
       notifier.notify({ type: NotificationType.error, message });
@@ -187,14 +272,30 @@ export const ShipmentComponent = ({
   // passes — the button is a courtesy, not the boundary.
   const confirmAddressCorrect = async (reason: string) => {
     try {
-      const { message } = await erpActions.confirmAddress.mutateAsync({
-        id: entity_id,
-        reason,
-      });
+      const { message, shipment_id } =
+        await erpActions.confirmAddress.mutateAsync({
+          id: entity_id,
+          reason,
+        });
       setConfirmAddressOpen(false);
+      if (shipment_id && shipment_id !== entity_id) {
+        // The ERP released the order and rebuilt the draft before answering;
+        // the one on screen is cancelled. Go where the work is.
+        notifier.notify({
+          type: NotificationType.success,
+          message: `${message} Opened the rebuilt shipment.`,
+        });
+        openShipment(shipment_id);
+        return;
+      }
       notifier.notify({ type: NotificationType.success, message });
+      // An ERP that did not name the rebuilt draft: watch this one for the
+      // replacement link instead.
+      setFollowingSince(Date.now());
     } catch (message: any) {
       notifier.notify({ type: NotificationType.error, message });
+      // Rethrown so the reason dialog stays open, reason in place, for a retry.
+      throw message;
     }
   };
 
@@ -657,8 +758,14 @@ export const ShipmentComponent = ({
                             onClick={() => setConfirmAddressOpen(true)}
                             disabled={erpActions.confirmAddress.isLoading}
                           >
-                            <i className="fas fa-check mr-2 text-xs"></i>
-                            Address is correct
+                            {erpActions.confirmAddress.isLoading ? (
+                              <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                            ) : (
+                              <i className="fas fa-check mr-2 text-xs"></i>
+                            )}
+                            {erpActions.confirmAddress.isLoading
+                              ? "Confirming…"
+                              : "Address is correct"}
                           </Button>
                         )}
                       {shipment.status === "draft" && Boolean(shipment.metadata?.sales_order) && (
@@ -683,10 +790,11 @@ export const ShipmentComponent = ({
                       open={confirmAddressOpen}
                       onOpenChange={setConfirmAddressOpen}
                       title="Address is correct"
-                      description="Overrules Google's hint for every order shipping to this address. Say how you verified it — the reason goes on the record, and the ERP re-checks the verdict before releasing."
+                      description="Overrules Google's hint for every order shipping to this address. Say how you verified it — the reason goes on the record. ERPNext re-checks the verdict, releases the order and rebuilds this shipment; you are taken to the new draft."
                       fieldLabel="How was this address verified?"
                       placeholder="e.g. called the customer, checked with the neighbour"
                       confirmLabel="Confirm address"
+                      processingLabel="Confirming in ERPNext…"
                       onConfirm={confirmAddressCorrect}
                       isLoading={erpActions.confirmAddress.isLoading}
                     />
@@ -695,9 +803,93 @@ export const ShipmentComponent = ({
 
                     {addressReview?.pending && (
                       <div className="mt-2 rounded border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-900">
-                        This correction is being re-validated in ERPNext and
-                        synchronized to Shopify. The verdict below updates once
-                        that completes.
+                        <p className="flex items-center gap-2 font-semibold">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Validating the corrected address in ERPNext
+                        </p>
+                        <p className="mt-1 text-xs text-blue-800">
+                          ERPNext saves the address, has Google re-check it,
+                          pushes it to Shopify and rebuilds this shipment. This
+                          page opens the rebuilt draft as soon as it exists.
+                        </p>
+                        <p className="mt-1 text-xs text-blue-700">
+                          {waited < SLOW_VALIDATION_AFTER_MS
+                            ? `Checking every few seconds · ${Math.round(waited / 1000)}s`
+                            : "Taking longer than usual — ERPNext may be busy. This keeps checking; the ERP shipment's timeline says what it is doing."}
+                        </p>
+                      </div>
+                    )}
+
+                    {awaitingReplacement && (
+                      <div className="mt-2 rounded border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-900">
+                        <p className="flex items-center gap-2 font-semibold">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Address accepted — ERPNext is rebuilding the shipment
+                        </p>
+                        <p className="mt-1 text-xs text-blue-800">
+                          This draft was voided; the rebuilt one opens here in
+                          a moment.
+                        </p>
+                      </div>
+                    )}
+
+                    {cancelled && replacement && (
+                      <div className="mt-2 rounded border border-green-200 bg-green-50 px-3 py-2 text-sm">
+                        <p className="font-semibold text-green-800">
+                          Replaced after an address correction
+                        </p>
+                        <p className="mt-1 text-xs text-green-700">
+                          ERPNext voided this draft and rebuilt the order as a
+                          new shipment.
+                        </p>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="mt-2"
+                          onClick={() => openShipment(replacement)}
+                        >
+                          Open the current shipment
+                          <i className="fas fa-arrow-right ml-2 text-xs"></i>
+                        </Button>
+                      </div>
+                    )}
+
+                    {replacementLost && (
+                      <div className="mt-2 rounded border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm">
+                        <p className="font-semibold text-yellow-800">
+                          This draft was voided, but the rebuilt shipment was
+                          not linked
+                        </p>
+                        <p className="mt-1 text-xs text-yellow-800">
+                          ERPNext cancelled this draft after the correction.
+                          Look the order up in the shipment list
+                          {shipment.metadata?.sales_order
+                            ? ` (${shipment.metadata.sales_order})`
+                            : ""}
+                          , or check the ERP shipment's timeline.
+                        </p>
+                        <AppLink
+                          href="/shipments"
+                          className="mt-2 inline-block text-xs font-semibold text-yellow-900 underline"
+                        >
+                          Open the shipment list
+                        </AppLink>
+                      </div>
+                    )}
+
+                    {addressReview?.error && (
+                      <div className="mt-2 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm">
+                        <p className="font-semibold text-red-800">
+                          ERPNext could not apply the last correction
+                        </p>
+                        <p className="mt-1 text-xs text-red-700 whitespace-pre-line">
+                          {addressReview.error}
+                        </p>
+                        <p className="mt-1 text-xs text-red-700">
+                          The verdict shown is for the address as ERPNext still
+                          has it. Correct the address again, or fix it in
+                          ERPNext.
+                        </p>
                       </div>
                     )}
 

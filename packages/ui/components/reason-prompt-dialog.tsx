@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { Loader2 } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogContent,
@@ -23,8 +24,13 @@ interface ReasonPromptDialogProps {
   placeholder?: string;
   confirmLabel?: string;
   cancelLabel?: string;
-  onConfirm: (reason: string) => void;
+  // A promise keeps the dialog open — spinner on the button, fields locked —
+  // until it settles, and only a fulfilled one closes it. A caller that
+  // returns nothing gets the old behaviour: close at once.
+  onConfirm: (reason: string) => void | Promise<unknown>;
   isLoading?: boolean;
+  // What the button says while the promise is in flight.
+  processingLabel?: string;
 }
 
 // Confirmation dialog that also collects a free-text reason. The reason is
@@ -42,11 +48,15 @@ export function ReasonPromptDialog({
   cancelLabel = "Cancel",
   onConfirm,
   isLoading = false,
+  processingLabel = "Processing...",
 }: ReasonPromptDialogProps) {
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const busy = isLoading || submitting;
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
+    if (busy) return;
     setError(null);
     const value = reason.trim();
 
@@ -55,13 +65,39 @@ export function ReasonPromptDialog({
       return;
     }
 
-    onConfirm(value);
-    setReason("");
-    onOpenChange(false);
+    const result = onConfirm(value);
+    if (!(result instanceof Promise)) {
+      setReason("");
+      onOpenChange(false);
+      return;
+    }
+
+    // The action is a round trip to the ERP (the confirm-address relay
+    // re-validates with Google, releases the order and rebuilds the draft
+    // before it answers). The dialog used to close the instant the button
+    // was pressed, so none of that had any visible sign of happening. Now it
+    // stays up with the spinner; a rejection has already been toasted by the
+    // caller, so the reason is kept for a retry.
+    setSubmitting(true);
+    try {
+      await result;
+      setReason("");
+      onOpenChange(false);
+    } catch {
+      // reported by the caller
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
-    <AlertDialog open={open} onOpenChange={onOpenChange}>
+    <AlertDialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next && busy) return;
+        onOpenChange(next);
+      }}
+    >
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
@@ -84,6 +120,7 @@ export function ReasonPromptDialog({
               }}
               placeholder={placeholder}
               className="mt-1"
+              disabled={busy}
               autoFocus
             />
             {error && <p className="text-xs text-destructive mt-1">{error}</p>}
@@ -91,14 +128,24 @@ export function ReasonPromptDialog({
         </div>
 
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={isLoading}>
-            {cancelLabel}
-          </AlertDialogCancel>
+          <AlertDialogCancel disabled={busy}>{cancelLabel}</AlertDialogCancel>
           <AlertDialogAction
-            onClick={handleSubmit}
-            disabled={isLoading || reason.trim().length === 0}
+            onClick={(event: React.MouseEvent) => {
+              // Radix closes the dialog on Action click unless the event is
+              // prevented; the submit decides when to close.
+              event.preventDefault();
+              handleSubmit();
+            }}
+            disabled={busy || reason.trim().length === 0}
           >
-            {isLoading ? "Processing..." : confirmLabel}
+            {busy ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                {processingLabel}
+              </>
+            ) : (
+              confirmLabel
+            )}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

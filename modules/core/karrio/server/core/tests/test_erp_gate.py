@@ -147,6 +147,30 @@ class TestShipmentActionRelay(TestCase):
             },
         )
 
+    def test_a_dict_message_keeps_its_extra_keys_next_to_the_sentence(self):
+        # confirm-address answers with the id of the draft the ERP rebuilt so
+        # the dashboard can open it; the sentence stays a string for the toast.
+        with mock.patch.object(
+            erp_gate.requests,
+            "post",
+            return_value=_response(
+                payload={
+                    "message": {
+                        "message": "Confirmed. The label gate is open.",
+                        "shipment_id": "shp_new",
+                    }
+                }
+            ),
+        ):
+            result = erp_gate.run_erp_shipment_action(
+                _shipment(ERP_META), "confirm_address", args={"reason": "called"}
+            )
+
+        self.assertEqual(
+            result,
+            {"message": "Confirmed. The label gate is open.", "shipment_id": "shp_new"},
+        )
+
     def test_mark_shipped_is_relayed(self):
         message = "Marked shipped. The order is now In Transit."
         with mock.patch.object(

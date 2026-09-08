@@ -155,7 +155,12 @@ export function useShipments({
   };
 }
 
-export function useShipment(id: string) {
+export function useShipment(
+  id: string,
+  // refetchInterval: the shipment page polls while the ERP is validating a
+  // corrected address, so it can follow to the draft the ERP rebuilds.
+  options: { refetchInterval?: number | false } = {},
+) {
   const karrio = useKarrio();
 
   // Queries
@@ -166,6 +171,7 @@ export function useShipment(id: string) {
         variables: { id },
       }),
     enabled: !!id && id !== "new",
+    refetchInterval: options.refetchInterval ?? false,
     onError,
   });
 

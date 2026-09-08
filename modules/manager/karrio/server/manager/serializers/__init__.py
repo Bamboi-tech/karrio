@@ -37,6 +37,8 @@ from karrio.server.manager.serializers.shipment import (
     create_shipment_tracker,
     reset_related_shipment_rates,
     can_mutate_shipment,
+    finish_address_sync,
+    ADDRESS_SYNC_DONE_FIELD,
     buy_shipment_label,
     fetch_shipment_rates,
     compute_estimated_delivery,

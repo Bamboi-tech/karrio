@@ -29,6 +29,8 @@ from karrio.server.manager.serializers import (
     ShipmentStatus,
     buy_shipment_label,
     can_mutate_shipment,
+    finish_address_sync,
+    ADDRESS_SYNC_DONE_FIELD,
     ShipmentSerializer,
     ShipmentRateData,
     ShipmentUpdateData,
@@ -151,19 +153,37 @@ class ShipmentDetails(APIView):
         # is how the ERP's erp_status mirror silently stopped landing the
         # moment a label was bought.
         can_mutate_shipment(shipment, update=True, payload=request.data)
-        payload = ShipmentUpdateData.map(data=request.data).data
 
-        update = (
-            ShipmentSerializer.map(
-                shipment,
-                context=request,
-                data=process_dictionaries_mutations(
-                    ["metadata", "options"], payload, shipment
-                ),
+        # Bamboi fork: the ERP reports the recipient correction as processed.
+        # A rebuilt draft ends the wait by itself (the old one is voided); this
+        # is for the correction that changed nothing worth rebuilding, or that
+        # the ERP refused — without it the draft said "validating" forever and
+        # could never be rated or bought again. Write-only: it is not a
+        # shipment property and never lands on the record.
+        data = {
+            key: value
+            for key, value in request.data.items()
+            if key != ADDRESS_SYNC_DONE_FIELD
+        }
+        sync_done = bool(request.data.get(ADDRESS_SYNC_DONE_FIELD))
+
+        update = shipment
+        if data:
+            payload = ShipmentUpdateData.map(data=data).data
+            update = (
+                ShipmentSerializer.map(
+                    shipment,
+                    context=request,
+                    data=process_dictionaries_mutations(
+                        ["metadata", "options"], payload, shipment
+                    ),
+                )
+                .save()
+                .instance
             )
-            .save()
-            .instance
-        )
+
+        if sync_done:
+            finish_address_sync(update)
 
         return Response(Shipment(update).data)
 

@@ -81,6 +81,15 @@ export const DELIVERY_OUTCOME_OPTIONS: DeliveryOutcomeOption[] = [
   },
 ];
 
+// What confirm-address hands back next to its sentence: the id of the draft
+// the ERP rebuilt while confirming. The release re-syncs the order before the
+// ERP answers, so the draft the button was pressed on is cancelled by then and
+// the page opens this one instead. Absent from an ERP that predates the key.
+export type ConfirmAddressResult = {
+  message: string;
+  shipment_id?: string | null;
+};
+
 export function isERPLinked(metadata: unknown): boolean {
   const values = (metadata || {}) as Record<string, unknown>;
   return ERP_LINK_KEYS.some((key) => key in values);
@@ -226,12 +235,17 @@ export function useShipmentERPActions(id?: string) {
   // delivery outcome carries its recorded reason) declares them as its
   // payload type and they are sent as the JSON body. An empty payload still
   // posts no body, so the existing actions are unchanged on the wire.
-  const runAction = <Payload extends object = {}>(action: ERPShipmentAction) =>
+  const runAction = <
+    Payload extends object = {},
+    Result extends { message: string } = { message: string },
+  >(
+    action: ERPShipmentAction,
+  ) =>
     useMutation(
       ({ id, ...payload }: { id: string } & Payload) =>
         handleFailure(
           karrio.axios
-            .post<{ message: string }>(
+            .post<Result>(
               `/v1/shipments/${id}/erp/${action}`,
               Object.keys(payload).length > 0 ? payload : undefined,
             )
@@ -287,7 +301,9 @@ export function useShipmentERPActions(id?: string) {
   // Overrules Google's hint through the ERP's own Confirm-as-correct door:
   // the server re-validates live and only a Suspect verdict passes; the
   // release is Address-wide and audited with the mandatory reason.
-  const confirmAddress = runAction<{ reason: string }>("confirm-address");
+  const confirmAddress = runAction<{ reason: string }, ConfirmAddressResult>(
+    "confirm-address",
+  );
 
   return {
     markPicked,

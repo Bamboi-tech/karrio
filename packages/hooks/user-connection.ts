@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { CreateCarrierConnectionMutationInput, CREATE_CARRIER_CONNECTION, DELETE_CARRIER_CONNECTION, GET_USER_CONNECTIONS, get_user_connections_user_connections, UpdateCarrierConnectionMutationInput, UPDATE_CARRIER_CONNECTION, get_user_connections } from "@karrio/types";
 import { useKarrio, useAuthenticatedQuery, useAuthenticatedMutation } from "./karrio";
 import { useQueryClient } from "@tanstack/react-query";
@@ -14,9 +15,14 @@ export function useCarrierConnections() {
     staleTime: 5000,
   });
 
+  const connections = useMemo(
+    () => query.data?.user_connections?.edges?.map((e: any) => e.node) || [],
+    [query.data],
+  );
+
   return {
     query,
-    user_connections: query.data?.user_connections?.edges?.map((e: any) => e.node) || [],
+    user_connections: connections,
     pageInfo: query.data?.user_connections?.page_info,
   };
 }

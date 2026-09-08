@@ -8,7 +8,7 @@ import React from "react";
 const PAGE_SIZE = 20;
 const PAGINATION = { offset: 0, first: PAGE_SIZE };
 
-export function useDocumentTemplates(initialData: DocumentTemplateFilter = {}) {
+export function useDocumentTemplates(initialData: DocumentTemplateFilter = {}, enabled = true) {
   const karrio = useKarrio();
   const { metadata: { DOCUMENTS_MANAGEMENT } } = useAPIMetadata();
   const [filter, setFilter] = React.useState<DocumentTemplateFilter>({ ...PAGINATION, ...initialData });
@@ -19,7 +19,7 @@ export function useDocumentTemplates(initialData: DocumentTemplateFilter = {}) {
     queryFn: () => karrio.graphql.request<get_document_templates>(
       gqlstr(GET_DOCUMENT_TEMPLATES), { variables: { filter } }
     ),
-    enabled: DOCUMENTS_MANAGEMENT === true,
+    enabled: enabled && DOCUMENTS_MANAGEMENT === true,
     keepPreviousData: true,
     staleTime: 5000,
     onError

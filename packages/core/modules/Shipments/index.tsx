@@ -18,7 +18,7 @@ import {
   ShipmentPreviewSheetContext,
 } from "@karrio/ui/components/shipment-preview-sheet";
 import { FailedShipmentSheet } from "@karrio/ui/components/failed-shipment-sheet";
-import { FailedShipmentsList } from "@karrio/core/modules/Shipments/failed-shipments-list";
+import dynamic from "next/dynamic";
 import { useSystemConnections } from "@karrio/hooks/system-connection";
 import { useDocumentTemplates } from "@karrio/hooks/document-template";
 import { useCarrierConnections } from "@karrio/hooks/user-connection";
@@ -86,9 +86,8 @@ import {
 import { useBamboiFeatures } from "@karrio/hooks/bamboi-features";
 import { ConfirmationDialog } from "@karrio/ui/components/confirmation-dialog";
 import { ReasonPromptDialog } from "@karrio/ui/components/reason-prompt-dialog";
-import {
+import type {
   BuyResult,
-  PicklistDialog,
   PicklistShipmentLike,
   PrintConfirmation,
 } from "@karrio/ui/components/picklist-dialog";
@@ -103,6 +102,13 @@ import { useToast } from "@karrio/ui/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
 import React, { useContext, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
+
+const FailedShipmentsList = dynamic(
+  () => import("@karrio/core/modules/Shipments/failed-shipments-list").then((module) => module.FailedShipmentsList),
+);
+const PicklistDialog = dynamic(
+  () => import("@karrio/ui/components/picklist-dialog").then((module) => module.PicklistDialog),
+);
 
 const FAILED_SENTINEL = "_failed_creation";
 // Keeps the Needs Attention card highlighted while the real filtering happens
@@ -902,7 +908,7 @@ function ShipmentsBoard(): JSX.Element {
   } = useDocumentTemplates({
     related_object: "shipment" as any,
     active: true,
-  });
+  }, selection.length > 0);
   const updateFilter = (extra: Partial<any> = {}) => {
     const query = {
       ...filter,
@@ -2205,7 +2211,7 @@ function ShipmentsBoard(): JSX.Element {
         isLoading={bulkAction === "cancel_shipment"}
       />
 
-      <PicklistDialog
+      {picklistShipments !== null && <PicklistDialog
         open={picklistShipments !== null}
         onOpenChange={(open) => !open && setPicklistShipments(null)}
         shipments={picklistShipments || []}
@@ -2229,7 +2235,7 @@ function ShipmentsBoard(): JSX.Element {
                 })
             : null
         }
-      />
+      />}
 
       {/* Mounted only while an outcome is pending, so the reason field is
             empty again on every run. */}

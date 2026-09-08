@@ -1,5 +1,6 @@
 "use client";
-import { ShipmentComponent } from "@karrio/core/modules/Shipments/shipment";
+import dynamic from "next/dynamic";
+import { Spinner } from "@karrio/ui/components/spinner";
 import {
   Sheet,
   SheetContent,
@@ -14,6 +15,11 @@ import React, { useState } from "react";
 import { ShipmentPreviewSheetContext } from "@karrio/ui/components/shipment-preview-context";
 
 export { ShipmentPreviewSheetContext } from "@karrio/ui/components/shipment-preview-context";
+
+const ShipmentComponent = dynamic(
+  () => import("@karrio/core/modules/Shipments/shipment").then((module) => module.ShipmentComponent),
+  { loading: () => <Spinner /> },
+);
 
 interface ShipmentPreviewSheetComponent {
   children?: React.ReactNode;

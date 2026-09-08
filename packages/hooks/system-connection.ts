@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { SystemCarrierMutationInput, MUTATE_SYSTEM_CONNECTION, get_system_connections } from "@karrio/types";
 import { useKarrio, useAuthenticatedQuery, useAuthenticatedMutation } from "./karrio";
 import { GET_SYSTEM_CONNECTIONS } from "@karrio/types/graphql/queries";
@@ -16,10 +17,15 @@ export function useSystemConnections(usageFilter?: any) {
     staleTime: 5000,
   });
 
+  const connections = useMemo(
+    () => query.data?.system_connections?.edges?.map((e: any) => e.node) || [],
+    [query.data],
+  );
+
   return {
     query,
     // System connections now returns a paginated connection
-    system_connections: query.data?.system_connections?.edges?.map((e: any) => e.node) || [],
+    system_connections: connections,
     pageInfo: query.data?.system_connections?.page_info,
   };
 }

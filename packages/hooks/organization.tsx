@@ -34,7 +34,11 @@ import {
 } from "@tanstack/react-query";
 import { gqlstr, insertUrlParam, setCookie } from "@karrio/lib";
 import { useSession } from "next-auth/react";
-import { useKarrio, useAuthenticatedQuery, useAuthenticatedMutation } from "./karrio";
+import {
+  useKarrio,
+  useAuthenticatedQuery,
+  useAuthenticatedMutation,
+} from "./karrio";
 import React from "react";
 
 export type OrganizationType = get_organizations_organizations_edges_node;
@@ -67,13 +71,18 @@ export const OrganizationProvider = ({
   ...props
 }: OrganizationProviderProps): JSX.Element => {
   const karrio = useKarrio();
-  const initialOrganizations = React.useMemo<OrganizationType[] | undefined>(() => {
+  const initialOrganizations = React.useMemo<
+    OrganizationType[] | undefined
+  >(() => {
     // Accept either array or connection payload; normalize to array of nodes
-    if (Array.isArray((props as any).organizations)) return (props as any).organizations as any;
+    if (Array.isArray((props as any).organizations))
+      return (props as any).organizations as any;
     const edges = (props as any).organizations?.edges;
     if (Array.isArray(edges)) return edges.map((e: any) => e.node);
     // Some logs showed props being coerced to an object with numeric keys; recover array
-    const numericKeys = Object.keys((props as any).organizations || {}).filter(k => /^\d+$/.test(k));
+    const numericKeys = Object.keys((props as any).organizations || {}).filter(
+      (k) => /^\d+$/.test(k),
+    );
     if (numericKeys.length > 0) {
       return numericKeys
         .sort((a, b) => Number(a) - Number(b))
@@ -82,16 +91,23 @@ export const OrganizationProvider = ({
     return undefined;
   }, [props.organizations]);
 
-  const [organizations, setOrganizations] = React.useState<OrganizationType[] | undefined>(initialOrganizations);
-  const [organization, setOrganization] = React.useState<OrganizationType | undefined>(extractCurrent(initialOrganizations, props.orgId));
+  const [organizations, setOrganizations] = React.useState<
+    OrganizationType[] | undefined
+  >(initialOrganizations);
+  const [organization, setOrganization] = React.useState<
+    OrganizationType | undefined
+  >(extractCurrent(initialOrganizations, props.orgId));
 
   const query = useAuthenticatedQuery({
     queryKey: ["organizations"],
     queryFn: () =>
       karrio.graphql
-        .request<get_organizations>(gqlstr(GET_ORGANIZATIONS), { filter: { is_active: true } })
+        .request<get_organizations>(gqlstr(GET_ORGANIZATIONS), {
+          variables: { filter: { is_active: true } },
+        })
         .then((data) => {
-          const nodes = data?.organizations?.edges?.map((e: any) => e.node) || [];
+          const nodes =
+            data?.organizations?.edges?.map((e: any) => e.node) || [];
           setOrganizations(nodes);
           const current = extractCurrent(nodes, props.orgId);
           setOrganization(current);
@@ -99,26 +115,39 @@ export const OrganizationProvider = ({
           return data;
         }),
     // Hydrate with normalized list when available
-    initialData: initialOrganizations ? { organizations: { edges: initialOrganizations.map((n: any) => ({ node: n })) } as any } : undefined,
+    initialData: initialOrganizations
+      ? {
+          organizations: {
+            edges: initialOrganizations.map((n: any) => ({ node: n })),
+          } as any,
+        }
+      : undefined,
     enabled: props.metadata?.MULTI_ORGANIZATIONS === true,
     refetchOnWindowFocus: false,
     staleTime: 1500000,
   });
 
-  if (!props.metadata?.MULTI_ORGANIZATIONS) return <>{children}</>;
-
+  // Hooks must run unconditionally: MULTI_ORGANIZATIONS can flip at runtime
+  // (api-metadata merges live flags), and an early return above a hook throws
+  // "Rendered fewer hooks than expected".
   React.useEffect(() => {
     if (!query.data || !query.isFetched) return;
-    const nodes = query.data?.organizations?.edges?.map((e: any) => e.node) || [];
+    const nodes =
+      query.data?.organizations?.edges?.map((e: any) => e.node) || [];
     setOrganizations(nodes);
     const current = extractCurrent(nodes, props.orgId);
     setOrganization(current);
   }, [props.orgId, query.data]);
 
+  const value = React.useMemo<OrganizationContextType>(
+    () => ({ organization, organizations, query }),
+    [organization, organizations, query],
+  );
+
+  if (!props.metadata?.MULTI_ORGANIZATIONS) return <>{children}</>;
+
   return (
-    <OrganizationContext.Provider
-      value={{ organization, organizations, query }}
-    >
+    <OrganizationContext.Provider value={value}>
       {children}
     </OrganizationContext.Provider>
   );
@@ -139,8 +168,14 @@ export function useOrganizationMutation() {
       predicate: (q) => {
         const key = q.queryKey as any[];
         // If key has the session scope object with orgId, let it refetch after session.update
-        return Array.isArray(key) && key.length > 1 && typeof key[1] === 'object' && key[1] !== null && 'orgId' in key[1];
-      }
+        return (
+          Array.isArray(key) &&
+          key.length > 1 &&
+          typeof key[1] === "object" &&
+          key[1] !== null &&
+          "orgId" in key[1]
+        );
+      },
     });
   };
 
@@ -212,7 +247,7 @@ export function useOrganizationMutation() {
       await update({ orgId });
       invalidateCache();
       // Use soft refresh for App Router to re-render server comps
-      if (typeof window !== 'undefined' && 'navigation' in window) {
+      if (typeof window !== "undefined" && "navigation" in window) {
         // next/navigation router.refresh isn't accessible here; fallback to hard refresh
         // Consumer UIs can call router.refresh after awaiting this promise
       }
@@ -248,13 +283,17 @@ export function useOrganizationMutation() {
             }
           }
         `,
-        { data }
+        { data },
       ),
     onSuccess: invalidateCache,
   });
 
   const updateMemberStatus = useAuthenticatedMutation({
-    mutationFn: (data: { org_id: string; user_id: string; is_active: boolean }) =>
+    mutationFn: (data: {
+      org_id: string;
+      user_id: string;
+      is_active: boolean;
+    }) =>
       karrio.graphql.request(
         `
           mutation UpdateMemberStatus($data: UpdateMemberStatusMutationInput!) {
@@ -278,7 +317,7 @@ export function useOrganizationMutation() {
             }
           }
         `,
-        { data }
+        { data },
       ),
     onSuccess: invalidateCache,
   });
@@ -297,7 +336,7 @@ export function useOrganizationMutation() {
             }
           }
         `,
-        { data }
+        { data },
       ),
     onSuccess: invalidateCache,
   });

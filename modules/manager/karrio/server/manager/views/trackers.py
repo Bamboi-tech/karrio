@@ -28,7 +28,9 @@ Trackers = serializers.PaginatedResult("TrackerList", serializers.TrackingStatus
 class TrackerList(GenericAPIView):
     throttle_scope = "carrier_request"
     pagination_class = type(
-        "CustomPagination", (LimitOffsetPagination,), dict(default_limit=20)
+        "CustomPagination",
+        (LimitOffsetPagination,),
+        dict(default_limit=20, max_limit=200),
     )
     filter_backends = (DjangoFilterBackend,)
     filterset_class = filters.TrackerFilters
@@ -64,10 +66,10 @@ class TrackerList(GenericAPIView):
         Retrieve all shipment trackers.
         """
         trackers = self.filter_queryset(self.get_queryset())
-        response = self.paginate_queryset(
-            serializers.TrackingStatus(trackers, many=True).data
+        page = self.paginate_queryset(trackers)
+        return self.get_paginated_response(
+            serializers.TrackingStatus(page, many=True).data
         )
-        return self.get_paginated_response(response)
 
     @openapi.extend_schema(
         tags=["Trackers"],

@@ -34,7 +34,12 @@ import { useLoader } from "@karrio/ui/core/components/loader";
 import { useRouter } from "next/navigation";
 import { OrderType } from "@karrio/types";
 import { useAppMode } from "./app-mode";
-import { useAuthenticatedQuery, useKarrio } from "./karrio";
+import {
+  scopeQueryKey,
+  useAuthenticatedQuery,
+  useKarrio,
+  useQueryScope,
+} from "./karrio";
 import React from "react";
 
 const PAGE_SIZE = 20;
@@ -55,6 +60,7 @@ export function useOrders({
 }: FilterType = {}) {
   const karrio = useKarrio();
   const queryClient = useQueryClient();
+  const scope = useQueryScope();
   const [filter, _setFilter] = React.useState<OrderFilter>({
     ...PAGINATION,
     ...initialData,
@@ -68,7 +74,7 @@ export function useOrders({
     queryFn: () => fetch({ filter }),
     enabled: !isDisabled,
     keepPreviousData: true,
-    staleTime: 5000,
+    staleTime: 30000,
     onError,
   });
 
@@ -78,21 +84,21 @@ export function useOrders({
       return isNoneOrEmpty(options[key as keyof OrderFilter])
         ? acc
         : {
-          ...acc,
-          [key]: ["status", "option_key"].includes(key)
-            ? []
-              .concat(options[key as keyof OrderFilter] as any)
-              .reduce(
-                (acc, item: string) =>
-                  typeof item == "string"
-                    ? [].concat(acc, item.split(",") as any)
-                    : [].concat(acc, item),
-                [],
-              )
-            : ["offset", "first"].includes(key)
-              ? parseInt(options[key as keyof OrderFilter] as any)
-              : options[key as keyof OrderFilter],
-        };
+            ...acc,
+            [key]: ["status", "option_key"].includes(key)
+              ? []
+                  .concat(options[key as keyof OrderFilter] as any)
+                  .reduce(
+                    (acc, item: string) =>
+                      typeof item == "string"
+                        ? [].concat(acc, item.split(",") as any)
+                        : [].concat(acc, item),
+                    [],
+                  )
+              : ["offset", "first"].includes(key)
+                ? parseInt(options[key as keyof OrderFilter] as any)
+                : options[key as keyof OrderFilter],
+          };
     }, PAGINATION);
 
     if (setVariablesToURL) insertUrlParam(params);
@@ -105,11 +111,13 @@ export function useOrders({
     if (preloadNextPage === false) return;
     if (query.data?.orders.page_info.has_next_page) {
       const _filter = { ...filter, offset: (filter.offset as number) + 20 };
-      queryClient.prefetchQuery(["orders", _filter], () =>
-        fetch({ filter: _filter }),
+      // Same scoped key the list reads (cacheKey + {orgId, testMode}).
+      queryClient.prefetchQuery(
+        scopeQueryKey([cacheKey || "orders", _filter], scope) as any,
+        () => fetch({ filter: _filter }),
       );
     }
-  }, [query.data, filter.offset, queryClient]);
+  }, [query.data, filter.offset, queryClient, scope]);
 
   return {
     query,
@@ -149,19 +157,19 @@ export function useOrderMutation(id?: string) {
     const cleanLineItem = (item: any) => {
       const cleaned = { ...item };
       // Remove temporary IDs (start with 'temp_')
-      if (cleaned.id?.startsWith('temp_')) delete cleaned.id;
+      if (cleaned.id?.startsWith("temp_")) delete cleaned.id;
       // Convert unlinked parent_ids to null for server
-      if (cleaned.parent_id?.startsWith('unlinked_')) cleaned.parent_id = null;
+      if (cleaned.parent_id?.startsWith("unlinked_")) cleaned.parent_id = null;
       // Handle empty string enum values - convert to null
-      if (cleaned.origin_country === '') cleaned.origin_country = null;
-      if (cleaned.weight_unit === '') cleaned.weight_unit = null;
-      if (cleaned.value_currency === '') cleaned.value_currency = null;
+      if (cleaned.origin_country === "") cleaned.origin_country = null;
+      if (cleaned.weight_unit === "") cleaned.weight_unit = null;
+      if (cleaned.value_currency === "") cleaned.value_currency = null;
       return cleaned;
     };
 
     return {
       ...data,
-      line_items: (data.line_items || []).map(cleanLineItem)
+      line_items: (data.line_items || []).map(cleanLineItem),
     };
   };
 
@@ -175,14 +183,18 @@ export function useOrderMutation(id?: string) {
   const createOrder = useMutation(
     (data: CreateOrderMutationInput) => {
       const cleanedData = cleanOrderForServer(data);
-      return karrio.graphql.request<CreateOrder>(gqlstr(CREATE_ORDER), { data: cleanedData });
+      return karrio.graphql.request<CreateOrder>(gqlstr(CREATE_ORDER), {
+        data: cleanedData,
+      });
     },
     { onSuccess: invalidateCache, onError },
   );
   const updateOrder = useMutation(
     (data: UpdateOrderMutationInput) => {
       const cleanedData = cleanOrderForServer(data);
-      return karrio.graphql.request<UpdateOrder>(gqlstr(UPDATE_ORDER), { data: cleanedData });
+      return karrio.graphql.request<UpdateOrder>(gqlstr(UPDATE_ORDER), {
+        data: cleanedData,
+      });
     },
     { onSuccess: invalidateCache, onError },
   );
@@ -213,7 +225,10 @@ export function useOrderMutation(id?: string) {
 // -----------------------------------------------------------
 //#region
 
-type OrderDataType = Omit<CreateOrderMutationInput | UpdateOrderMutationInput, "billing_address"> & {
+type OrderDataType = Omit<
+  CreateOrderMutationInput | UpdateOrderMutationInput,
+  "billing_address"
+> & {
   id?: string;
   shipping_to: UpdateOrderMutationInput["shipping_to"] & { id?: string };
   shipping_from?: UpdateOrderMutationInput["shipping_from"] & { id?: string };
@@ -318,7 +333,9 @@ export function useOrderForm({ id = "new" }: { id?: string }) {
   const addItem = async (data: OrderDataType["line_items"][0]) => {
     const item = order.line_items.find(
       (item) =>
-        (item.parent_id && data.parent_id && item.parent_id === data.parent_id) ||
+        (item.parent_id &&
+          data.parent_id &&
+          item.parent_id === data.parent_id) ||
         (item.sku && data.sku && item.sku === data.sku) ||
         (item.hs_code && data.hs_code && item.hs_code === data.hs_code) ||
         (item.id && data.id && item.id === data.id),
@@ -327,26 +344,30 @@ export function useOrderForm({ id = "new" }: { id?: string }) {
       line_items: !item
         ? [...order.line_items, data]
         : order.line_items.map((item) =>
-          (item.parent_id && data.parent_id && item.parent_id === data.parent_id) ||
+            (item.parent_id &&
+              data.parent_id &&
+              item.parent_id === data.parent_id) ||
             (item.sku && data.sku && item.sku === data.sku) ||
             (item.hs_code && data.hs_code && item.hs_code === data.hs_code) ||
             (item.id && data.id && item.id === data.id)
-            ? { ...item, ...data }
-            : item,
-        ),
+              ? { ...item, ...data }
+              : item,
+          ),
     };
     updateOrder(update as any);
   };
   const updateItem =
     (index: number, item_id?: string | null) =>
-      async (data: OrderDataType["line_items"][0], change?: ChangeType) => {
-        const update = {
-          line_items: order.line_items.map(({ ...item }, idx) =>
-            ((item.id && item_id && item.id === item_id) || idx === index) ? data : item,
-          ),
-        };
-        updateOrder(update as any, change);
+    async (data: OrderDataType["line_items"][0], change?: ChangeType) => {
+      const update = {
+        line_items: order.line_items.map(({ ...item }, idx) =>
+          (item.id && item_id && item.id === item_id) || idx === index
+            ? data
+            : item,
+        ),
       };
+      updateOrder(update as any, change);
+    };
   const deleteItem = (index: number, item_id?: string | null) => async () => {
     const update = {
       line_items: order.line_items.filter((_, idx) => idx !== index),
@@ -393,16 +414,18 @@ export function useOrderForm({ id = "new" }: { id?: string }) {
     } catch (error: any) {
       // Parse GraphQL validation errors
       let errorMessage = "Failed to save order";
-      
+
       if (error?.response?.errors && Array.isArray(error.response.errors)) {
-        const messages = error.response.errors.map((err: any) => err.message).join('; ');
+        const messages = error.response.errors
+          .map((err: any) => err.message)
+          .join("; ");
         errorMessage = messages;
       } else if (error?.message) {
         errorMessage = error.message;
-      } else if (typeof error === 'string') {
+      } else if (typeof error === "string") {
         errorMessage = error;
       }
-      
+
       notifier.notify({ type: NotificationType.error, message: errorMessage });
       loader.setLoading(false);
     }

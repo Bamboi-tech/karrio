@@ -32,7 +32,9 @@ Orders = PaginatedResult("OrderList", Order)
 
 class OrderList(api.GenericAPIView):
     pagination_class = type(
-        "CustomPagination", (LimitOffsetPagination,), dict(default_limit=20)
+        "CustomPagination",
+        (LimitOffsetPagination,),
+        dict(default_limit=20, max_limit=200),
     )
     filter_backends = (DjangoFilterBackend,)
     filterset_class = OrderFilters
@@ -55,8 +57,8 @@ class OrderList(api.GenericAPIView):
         Retrieve all orders.
         """
         orders = self.filter_queryset(self.get_queryset())
-        response = self.paginate_queryset(Order(orders, many=True).data)
-        return self.get_paginated_response(response)
+        page = self.paginate_queryset(orders)
+        return self.get_paginated_response(Order(page, many=True).data)
 
     @openapi.extend_schema(
         tags=["Orders"],

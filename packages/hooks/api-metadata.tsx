@@ -4,7 +4,7 @@ import { Metadata, References } from "@karrio/types";
 import { useAuthenticatedQuery } from "./karrio";
 import { useSyncedSession } from "./session";
 import { onError, url$ } from "@karrio/lib";
-import React, { useContext, useMemo } from "react";
+import React, { useCallback, useContext, useMemo } from "react";
 import axios from "axios";
 
 type APIMeta = {
@@ -27,34 +27,41 @@ function APIMetadataProvider({
 }) {
   const {
     query: { data: session },
+    isAuthenticated,
   } = useSyncedSession();
+  const metadataHost = metadata?.HOST;
 
-  const getHost = () => {
-    const host = (MULTI_TENANT
-      ? metadata?.HOST || KARRIO_PUBLIC_URL
-      : KARRIO_PUBLIC_URL) as string;
+  const getHost = useCallback(() => {
+    const host = (
+      MULTI_TENANT ? metadataHost || KARRIO_PUBLIC_URL : KARRIO_PUBLIC_URL
+    ) as string;
 
     return host;
-  };
-
-  const context = {
-    getHost,
-    metadata: (metadata || {}) as Metadata,
-  };
+  }, [MULTI_TENANT, metadataHost, KARRIO_PUBLIC_URL]);
 
   const host = getHost();
-  const isEnabled = !!host && host !== 'undefined';
+  const isEnabled = !!host && host !== "undefined";
+  const accessToken = session?.accessToken;
 
-  const { data: references, isLoading, error } = useAuthenticatedQuery({
-    queryKey: ["references", session?.accessToken, host],
+  // Key on host + auth state (useAuthenticatedQuery appends {orgId, testMode})
+  // rather than the raw access token: a token refresh must not re-download the
+  // ~300 KB reference set, and a cold load with a seeded session fetches once,
+  // already authenticated. Only a truly session-less page fetches unauthenticated.
+  // `reduced=false` stays: the carrier-connection screens need the full option set.
+  const {
+    data: references,
+    isLoading,
+    error,
+  } = useAuthenticatedQuery({
+    queryKey: ["references", host, isAuthenticated],
     queryFn: () => {
       return axios
         .get<References>(
           url$`${host}/v1/references?reduced=false`,
-          !!session?.accessToken
+          !!accessToken
             ? {
-              headers: { authorization: `Bearer ${session?.accessToken}` },
-            }
+                headers: { authorization: `Bearer ${accessToken}` },
+              }
             : {},
         )
         .then(({ data }) => {
@@ -64,10 +71,11 @@ function APIMetadataProvider({
           throw err;
         });
     },
-    // Auto-refresh to reflect admin config changes without manual reload
-    refetchOnWindowFocus: true,
+    // Admin config changes surface on the next navigation after 15 min (or on
+    // a hard reload); they are not worth a 300 KB download on every alt-tab.
+    refetchOnWindowFocus: false,
     refetchOnReconnect: true,
-    staleTime: 0,
+    staleTime: 15 * 60 * 1000,
     enabled: isEnabled,
     requireAuth: false,
     onError: (err) => {
@@ -103,17 +111,16 @@ function APIMetadataProvider({
     return { ...(base || {}), ...overlay } as Metadata;
   }, [references, metadata]);
 
-  return (
-    <APIMetadata.Provider
-      value={{
-        ...context,
-        metadata: mergedMetadata,
-        references: (references || metadata || {}) as References,
-      }}
-    >
-      {children}
-    </APIMetadata.Provider>
+  const value = useMemo<APIMeta>(
+    () => ({
+      getHost,
+      metadata: mergedMetadata,
+      references: (references || metadata || {}) as References,
+    }),
+    [getHost, mergedMetadata, references, metadata],
   );
+
+  return <APIMetadata.Provider value={value}>{children}</APIMetadata.Provider>;
 }
 
 export function useAPIMetadata() {

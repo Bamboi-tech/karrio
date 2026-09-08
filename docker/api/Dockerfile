@@ -41,6 +41,9 @@ ENV WORK_DIR=/karrio/app
 ENV LOG_DIR=/karrio/log
 ENV WORKER_DB_DIR=/karrio/data
 ENV STATIC_ROOT_DIR=/karrio/static
+# Build-time collectstatic output; the entrypoint syncs it into STATIC_ROOT_DIR
+# (a runtime volume that would hide files baked into the image at that path).
+ENV STATIC_BUILD_DIR=/karrio/staticfiles
 ENV KARRIO_PLUGINS=/karrio/plugins
 ENV ENABLE_ALL_PLUGINS_BY_DEFAULT=True
 
@@ -51,7 +54,7 @@ RUN useradd -m karrio -d /karrio
 USER karrio
 
 COPY --chown=karrio:karrio --from=compile-image /karrio/ /karrio/
-RUN mkdir -p $WORK_DIR $LOG_DIR $WORKER_DB_DIR $STATIC_ROOT_DIR $KARRIO_PLUGINS
+RUN mkdir -p $WORK_DIR $LOG_DIR $WORKER_DB_DIR $STATIC_ROOT_DIR $STATIC_BUILD_DIR $KARRIO_PLUGINS
 COPY apps/api/gunicorn-cfg.py docker/api/entrypoint docker/api/worker $WORK_DIR/
 COPY --chown=karrio:karrio plugins/ $KARRIO_PLUGINS/
 
@@ -59,6 +62,16 @@ WORKDIR $WORK_DIR
 
 # Make sure we use the virtualenv:
 ENV PATH="/karrio/venv/bin:$PATH"
+
+# Collect + compress static files once, at build time. WhiteNoise's
+# CompressedManifestStaticFilesStorage gzips and brotlis every file (~80 s of
+# CPU for ~4 000 files / 95 MB) -- done on every boot this was most of the
+# ~5 min deploy 502 window on the shared-core VM. Needs no database or
+# secrets: a *.sqlite3 DATABASE_NAME selects the sqlite backend, which
+# collectstatic never queries (the empty file it creates is removed).
+RUN SECRET_KEY=build-only DATABASE_NAME=build.sqlite3 STATIC_ROOT_DIR=$STATIC_BUILD_DIR \
+    karrio collectstatic --noinput 1>/dev/null \
+    && rm -f $WORK_DIR/build.sqlite3
 
 ENTRYPOINT ["/karrio/venv/bin/dumb-init", "--"]
 CMD ["./entrypoint"]

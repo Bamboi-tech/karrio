@@ -1,5 +1,5 @@
 "use client";
-import { LineChart, Line, CartesianGrid, XAxis, Tooltip, ResponsiveContainer } from "recharts";
+import dynamic from "next/dynamic";
 import { AppLink } from "@karrio/ui/core/components/app-link";
 import { SelectField } from "@karrio/ui/core/components";
 import { useAdminSystemUsage } from "@karrio/hooks/admin-usage";
@@ -23,6 +23,12 @@ import {
   DropdownMenuTrigger,
 } from "@karrio/ui/components/ui/dropdown-menu";
 import moment from "moment";
+
+// recharts is only fetched when a chart is rendered (see ./charts.tsx).
+const SpendLineChart = dynamic(
+  () => import("./charts").then((m) => m.SpendLineChart),
+  { ssr: false, loading: () => null },
+);
 
 export default function ShippersOverview() {
   const {
@@ -132,38 +138,7 @@ export default function ShippersOverview() {
 
         <div style={{ width: "100%", height: "300px" }}>
           {usage?.shipping_spend ? (
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart
-                data={chartData}
-                margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis
-                  dataKey="name"
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fontSize: 12, fill: '#64748b' }}
-                />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#1e293b',
-                    border: 'none',
-                    borderRadius: '6px',
-                    color: 'white',
-                    fontSize: '12px'
-                  }}
-                  formatter={(value: any) => [`$${value.toLocaleString()}`, 'Spend']}
-                />
-                <Line
-                  type="linear"
-                  dataKey="spend"
-                  stroke="#3b82f6"
-                  strokeWidth={2}
-                  dot={false}
-                  name="spend"
-                />
-              </LineChart>
-            </ResponsiveContainer>
+            <SpendLineChart data={chartData} dataKey="spend" label="Spend" />
           ) : (
             <div className="flex items-center justify-center h-full bg-gray-50 rounded">
               <div className="text-center">

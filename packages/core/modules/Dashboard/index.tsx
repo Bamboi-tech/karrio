@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis } from "recharts";
+import dynamic from "next/dynamic";
 import { Card, CardContent } from "@karrio/ui/components/ui/card";
 import { AppLink } from "@karrio/ui/core/components/app-link";
 import { Button } from "@karrio/ui/components/ui/button";
@@ -30,6 +30,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@karrio/ui/components/ui/select";
+
+// recharts is only fetched when a chart is rendered (see ./charts.tsx).
+const DashboardBarChart = dynamic(
+  () => import("./charts").then((m) => m.DashboardBarChart),
+  { ssr: false, loading: () => null },
+);
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -174,27 +180,7 @@ export default function DashboardPage() {
     );
 
     return (
-      <ResponsiveContainer width="100%" height={120}>
-        <BarChart data={chartData}>
-          <Tooltip
-            contentStyle={{
-              background: 'hsl(var(--card))',
-              border: '1px solid hsl(var(--border))',
-              borderRadius: '8px',
-              fontSize: '12px',
-              boxShadow: 'none'
-            }}
-          />
-          <Bar dataKey={dataKey} fill="#3b82f6" radius={[4, 4, 0, 0]} />
-          <XAxis
-            dataKey="name"
-            axisLine={false}
-            tickLine={false}
-            tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
-            interval="preserveStartEnd"
-          />
-        </BarChart>
-      </ResponsiveContainer>
+      <DashboardBarChart data={chartData} dataKey={dataKey} />
     );
   };
 

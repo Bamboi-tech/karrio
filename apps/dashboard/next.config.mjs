@@ -1,5 +1,6 @@
 import CopyWebpackPlugin from "copy-webpack-plugin";
 import { withSentryConfig } from "@sentry/nextjs";
+import bundleAnalyzer from "@next/bundle-analyzer";
 import { readdirSync, statSync } from "fs";
 import { fileURLToPath } from "url";
 import path from "path";
@@ -73,6 +74,16 @@ const nextConfig = {
   outputFileTracingRoot: path.join(__dirname, '../../'),
   basePath: BASE_PATH,
   reactStrictMode: true,
+  // Strip console.* (except error/warn) from production bundles.
+  compiler: {
+    removeConsole:
+      process.env.NODE_ENV === "production" ? { exclude: ["error", "warn"] } : false,
+  },
+  experimental: {
+    // Rewrite barrel imports to direct file imports so only the icons/functions
+    // actually used are bundled (all three are deps of packages/ui).
+    optimizePackageImports: ["lucide-react", "date-fns", "@radix-ui/react-icons"],
+  },
   transpilePackages: [
     "@karrio/core",
     "@karrio/hooks",
@@ -129,9 +140,20 @@ const nextConfig = {
   },
 };
 
+// Source-map upload needs SENTRY_AUTH_TOKEN; without it the Sentry webpack
+// plugin still generates and rewrites maps for every chunk, which is pure
+// build time. Disable that work when the token is absent.
+const SENTRY_UPLOAD_ENABLED = !!process.env.SENTRY_AUTH_TOKEN;
+
 const sentryWebpackPluginOptions = {
   silent: !process.env.CI,
   disableLogger: true,
+  widenClientFileUpload: false,
+  sourcemaps: { disable: !SENTRY_UPLOAD_ENABLED },
+  telemetry: false,
 };
 
-export default withSentryConfig(nextConfig, sentryWebpackPluginOptions);
+// `ANALYZE=true npm run build` writes .next/analyze/{client,nodejs,edge}.html
+const withBundleAnalyzer = bundleAnalyzer({ enabled: process.env.ANALYZE === "true" });
+
+export default withSentryConfig(withBundleAnalyzer(nextConfig), sentryWebpackPluginOptions);

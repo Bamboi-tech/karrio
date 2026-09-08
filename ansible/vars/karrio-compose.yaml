@@ -47,6 +47,40 @@ compose:
         # cannot answer. Token = ERPNext "Karrio Dashboard" user api_key:api_secret.
         ERP_GATE_URL: "{{ erp_gate_url | default('') }}"
         ERP_GATE_TOKEN: "{{ erp_gate_token | default('') }}"
+        # Reuse Postgres connections for 60 s instead of a fresh connect (+ TLS
+        # -less handshake, auth, catalog load) per request; settings/base.py:351
+        # defaults to 0. 2 gunicorn + 2 huey processes keep the count tiny.
+        DATABASE_CONN_MAX_AGE: "60"
+        # settings/apm.py defaults transaction sampling to 1.0: every request
+        # built and shipped a full trace (a span per GraphQL resolver, ~1 200
+        # for a 20-row shipments page). Errors are still captured at 100 %.
+        SENTRY_TRACES_SAMPLE_RATE: "0.05"
+        # settings/base.py:210 defaults to True: every carrier SDK call is
+        # written to tracing-record (155 k rows / 154 MB = 80 % of the DB,
+        # ~4 GB/year) and is what makes pg_dump starve the VM. The only reader
+        # is the developer-tools "Tracing" view.
+        PERSIST_SDK_TRACING: "False"
+        # gunicorn-cfg.py reads this; the old hard-coded "debug" filled the
+        # journal (1.9 GB).
+        GUNICORN_LOG_LEVEL: "info"
+      # GET / is the metadata endpoint (touches constance -> Postgres), so a
+      # 200 proves Django, the DB and Redis cache are up. The header avoids
+      # the SECURE_SSL_REDIRECT 301 (USE_HTTPS=True) so curl -f sees a real
+      # status. start_period covers `karrio migrate` + the static sync on
+      # the shared-core VM; caddy/dashboard wait for service_healthy instead
+      # of 502-ing for the whole boot.
+      healthcheck:
+        test:
+          - CMD-SHELL
+          - "curl -fsS -H 'X-Forwarded-Proto: https' http://localhost:5002/ >/dev/null || exit 1"
+        interval: 10s
+        timeout: 5s
+        retries: 30
+        start_period: 120s
+      # Memory guards: the VM has 3.9 GB total and no limits meant one leaking
+      # process could swap out everything else (560 MB were swapped on the
+      # pd-standard disk when measured). 2 gunicorn workers x ~300 MB + threads.
+      mem_limit: 1200m
       volumes:
         - type: volume
           source: karrio-static
@@ -107,6 +141,13 @@ compose:
         # cannot answer. Token = ERPNext "Karrio Dashboard" user api_key:api_secret.
         ERP_GATE_URL: "{{ erp_gate_url | default('') }}"
         ERP_GATE_TOKEN: "{{ erp_gate_token | default('') }}"
+        # Same rationale as on api (see there). The worker is where the
+        # tracking pulse writes most tracing-record rows.
+        DATABASE_CONN_MAX_AGE: "60"
+        SENTRY_TRACES_SAMPLE_RATE: "0.05"
+        PERSIST_SDK_TRACING: "False"
+      # 2 huey workers; see api for why limits exist at all.
+      mem_limit: 900m
 
     dashboard:
       image: "{{ karrio_dashboard_image }}:{{ karrio_tag }}"
@@ -114,16 +155,31 @@ compose:
       pull_policy: "{{ pull_policy }}"
       depends_on:
         api:
-          condition: service_started
+          condition: service_healthy
           required: true
       environment:
         NEXTAUTH_SECRET: "{{ jwt_secret }}"
         DASHBOARD_PORT: "3002"
         NEXT_PUBLIC_DASHBOARD_URL: "https://{{ domains.app }}"
+        # Browser -> API (public hostname, TLS at Caddy).
         NEXT_PUBLIC_KARRIO_PUBLIC_URL: "https://{{ domains.api }}"
+        # Next.js server -> API. packages/lib/constants.ts:36 reads KARRIO_URL
+        # (then KARRIO_HOSTNAME, then the public URL) for every server-side
+        # call: auth() jwt callback, loadMetadata, loadUserData, loadOrgData,
+        # token refresh, generateMetadata. Unset, all of those left the VM and
+        # came back through the public IP: 0.82 s vs 0.03 s in-network.
+        # NOT http://api:5002 (what upstream docker-compose.yml uses): the API
+        # runs USE_HTTPS=True -> SECURE_SSL_REDIRECT, and a plain-http call
+        # without X-Forwarded-Proto: https is answered with a 301 to
+        # https://api:5002 which axios follows into a TLS handshake on a plain
+        # port. Caddy's :8080 block (templates/Caddyfile.j2) stays in the
+        # docker network and adds the header. Not published on the host.
+        KARRIO_URL: "http://caddy:8080"
         # Served to the browser at runtime via next-runtime-env; empty = off.
         NEXT_PUBLIC_SENTRY_DSN: "{{ sentry_dashboard_dsn | default('') }}"
         NEXT_PUBLIC_SENTRY_ENVIRONMENT: "{{ env | default('staging') }}"
+      # Next.js standalone server; ~400 MB RSS in practice.
+      mem_limit: 700m
 
     caddy:
       image: "{{ caddy_image }}"
@@ -133,11 +189,12 @@ compose:
         - "443:443"
       depends_on:
         api:
-          condition: service_started
+          condition: service_healthy
           required: true
         dashboard:
           condition: service_started
           required: true
+      mem_limit: 200m
       volumes:
         - type: bind
           source: /home/karrio/Caddyfile
@@ -153,6 +210,26 @@ compose:
     db:
       image: "{{ postgres_image }}"
       restart: unless-stopped
+      # Postgres 16 defaults are for a tiny box: shared_buffers 128 MB,
+      # effective_cache_size 4 GB (more than the VM has), work_mem 4 MB,
+      # max_connections 100. Sized for ~900 MB of the 3.9 GB VM with a
+      # ~200 MB database; 2 gunicorn + 2 huey processes with CONN_MAX_AGE=60
+      # need well under 50 connections. random_page_cost is left at the
+      # default 4.0: set `-c random_page_cost=1.1` once the data disk is
+      # pd-balanced (SSD) -- on pd-standard the default is the honest value.
+      command:
+        - postgres
+        - -c
+        - shared_buffers=256MB
+        - -c
+        - effective_cache_size=1536MB
+        - -c
+        - work_mem=4MB
+        - -c
+        - maintenance_work_mem=128MB
+        - -c
+        - max_connections=50
+      mem_limit: 900m
       environment:
         POSTGRES_DB: "{{ database_name }}"
         POSTGRES_USER: "{{ database_username }}"
@@ -174,6 +251,23 @@ compose:
     redis:
       image: "{{ redis_image }}"
       restart: unless-stopped
+      # Redis holds the Django cache (auth tokens, constance, references) and
+      # the huey queue. Unbounded by default and snapshotting every 60 s /
+      # 10 k changes onto the slow disk. Evict only expiring cache keys;
+      # persistent Huey queues must survive memory pressure. Snapshot at
+      # most once per 15 min when something changed, no AOF.
+      command:
+        - redis-server
+        - --maxmemory
+        - 256mb
+        - --maxmemory-policy
+        - volatile-lru
+        - --save
+        - "900"
+        - "1"
+        - --appendonly
+        - "no"
+      mem_limit: 300m
       volumes:
         - type: volume
           source: redis-data

@@ -1012,6 +1012,176 @@ export interface get_shipmentsVariables {
 // This file was automatically generated and should not be edited.
 
 // ====================================================
+// GraphQL query operation: get_shipments_list
+// ====================================================
+
+export interface get_shipments_list_shipments_page_info {
+  count: number;
+  has_next_page: boolean;
+  has_previous_page: boolean;
+  start_cursor: string | null;
+  end_cursor: string | null;
+}
+
+export interface get_shipments_list_shipments_edges_node_recipient {
+  id: string | null;
+  postal_code: string | null;
+  city: string | null;
+  person_name: string | null;
+  company_name: string | null;
+  country_code: CountryCodeEnum | null;
+  state_code: string | null;
+  address_line1: string | null;
+  address_line2: string | null;
+}
+
+export interface get_shipments_list_shipments_edges_node_parcels_items {
+  id: string | null;
+  title: string | null;
+  description: string | null;
+  quantity: number | null;
+  sku: string | null;
+}
+
+export interface get_shipments_list_shipments_edges_node_parcels {
+  id: string | null;
+  items: get_shipments_list_shipments_edges_node_parcels_items[];
+}
+
+export interface get_shipments_list_shipments_edges_node_selected_rate {
+  id: string;
+  carrier_name: string;
+  carrier_id: string;
+  currency: CurrencyCodeEnum;
+  service: string;
+  transit_days: number | null;
+  total_charge: number;
+  meta: any | null;
+}
+
+export interface get_shipments_list_shipments_edges_node_rates {
+  id: string;
+  carrier_name: string;
+  carrier_id: string;
+  service: string;
+  meta: any | null;
+}
+
+export interface get_shipments_list_shipments_edges_node_selected_rate_carrier {
+  connection_id: string | null;
+  connection_type: string | null;
+  carrier_code: string | null;
+  carrier_id: string | null;
+  carrier_name: string | null;
+  test_mode: boolean | null;
+}
+
+export interface get_shipments_list_shipments_edges_node {
+  id: string;
+  carrier_id: string | null;
+  carrier_name: string | null;
+  created_at: any;
+  updated_at: any;
+  status: ShipmentStatusEnum;
+  recipient: get_shipments_list_shipments_edges_node_recipient;
+  parcels: get_shipments_list_shipments_edges_node_parcels[];
+  label_type: LabelTypeEnum | null;
+  tracking_number: string | null;
+  label_url: string | null;
+  invoice_url: string | null;
+  tracker_id: string | null;
+  service: string | null;
+  reference: string | null;
+  selected_rate: get_shipments_list_shipments_edges_node_selected_rate | null;
+  rates: get_shipments_list_shipments_edges_node_rates[];
+  options: any;
+  metadata: any;
+  meta: any | null;
+  selected_rate_carrier: get_shipments_list_shipments_edges_node_selected_rate_carrier | null;
+}
+
+export interface get_shipments_list_shipments_edges {
+  node: get_shipments_list_shipments_edges_node;
+}
+
+export interface get_shipments_list_shipments {
+  page_info: get_shipments_list_shipments_page_info;
+  edges: get_shipments_list_shipments_edges[];
+}
+
+export interface get_shipments_list {
+  shipments: get_shipments_list_shipments;
+}
+
+export interface get_shipments_listVariables {
+  filter?: ShipmentFilter | null;
+}
+
+
+/* tslint:disable */
+// This file was automatically generated and should not be edited.
+
+// ====================================================
+// GraphQL query operation: get_shipments_badge
+// ====================================================
+
+export interface get_shipments_badge_shipments_page_info {
+  count: number;
+  has_next_page: boolean;
+}
+
+export interface get_shipments_badge_shipments_edges_node {
+  id: string;
+  metadata: any;
+}
+
+export interface get_shipments_badge_shipments_edges {
+  node: get_shipments_badge_shipments_edges_node;
+}
+
+export interface get_shipments_badge_shipments {
+  page_info: get_shipments_badge_shipments_page_info;
+  edges: get_shipments_badge_shipments_edges[];
+}
+
+export interface get_shipments_badge {
+  shipments: get_shipments_badge_shipments;
+}
+
+export interface get_shipments_badgeVariables {
+  filter?: ShipmentFilter | null;
+}
+
+
+/* tslint:disable */
+// This file was automatically generated and should not be edited.
+
+// ====================================================
+// GraphQL query operation: get_shipment_follow
+// ====================================================
+
+export interface get_shipment_follow_shipment {
+  id: string;
+  status: ShipmentStatusEnum;
+  updated_at: any;
+  tracker_id: string | null;
+  metadata: any;
+  meta: any | null;
+}
+
+export interface get_shipment_follow {
+  shipment: get_shipment_follow_shipment | null;
+}
+
+export interface get_shipment_followVariables {
+  id: string;
+}
+
+
+/* tslint:disable */
+// This file was automatically generated and should not be edited.
+
+// ====================================================
 // GraphQL query operation: get_shipment_data
 // ====================================================
 

@@ -3,8 +3,8 @@ Karrio Custom SCSS
 ========================================================================== */
 @charset "utf-8";
 
-// Import a Google Font
-@import url("https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;400;600;700&display=swap");
+// Open Sans is served by next/font (packages/ui/fonts/font.ts) and exposed as
+// `--font-open-sans` on <html> by packages/core/layouts/root-layout.tsx.
 
 // Set your brand colors
 $white: #fff;
@@ -31,7 +31,7 @@ $muted-grey: #999;
 $section-grey: #fbfbfb;
 
 // Update Bulma's global variables
-$family-sans-serif: "Open Sans", sans-serif;
+$family-sans-serif: var(--font-open-sans), "Open Sans", sans-serif;
 $widescreen-enabled: false;
 $fullhd-enabled: false;
 $body-size: 15px;

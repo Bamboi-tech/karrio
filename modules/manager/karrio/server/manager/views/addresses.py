@@ -26,7 +26,9 @@ Addresses = PaginatedResult("AddressList", Address)
 class AddressList(GenericAPIView):
     queryset = models.Address.objects
     pagination_class = type(
-        "CustomPagination", (LimitOffsetPagination,), dict(default_limit=20)
+        "CustomPagination",
+        (LimitOffsetPagination,),
+        dict(default_limit=20, max_limit=200),
     )
     serializer_class = Addresses
 
@@ -88,8 +90,8 @@ class AddressList(GenericAPIView):
         if usage:
             queryset = queryset.filter(meta__usage__contains=usage)
 
-        response = self.paginate_queryset(Address(queryset, many=True).data)
-        return self.get_paginated_response(response)
+        page = self.paginate_queryset(queryset)
+        return self.get_paginated_response(Address(page, many=True).data)
 
     @openapi.extend_schema(
         tags=["Addresses"],

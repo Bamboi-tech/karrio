@@ -32,7 +32,7 @@ const AppModeProvider = ({
   const currentPathName = usePathname();
   const { insertUrlParam } = useLocation();
 
-  const switchMode = () => {
+  const switchMode = React.useCallback(() => {
     insertUrlParam({});
     // const currentPathName = `${location.pathname}`;
     const isTestMode = computeMode(currentPathName);
@@ -42,19 +42,19 @@ const AppModeProvider = ({
     if (isTestMode)
       location.pathname = currentPathName.replace(TEST_BASE_PATH, "");
     else location.replace(TEST_BASE_PATH + currentPathName);
-  };
+  }, [currentPathName, insertUrlParam]);
 
-  return (
-    <AppMode.Provider
-      value={{
-        testMode: computeMode(pathname || currentPathName),
-        basePath: computeBasePath(computeMode(pathname || currentPathName)),
-        switchMode,
-      }}
-    >
-      {children}
-    </AppMode.Provider>
+  const testMode = computeMode(pathname || currentPathName);
+  const value = React.useMemo<AppModeType>(
+    () => ({
+      testMode,
+      basePath: computeBasePath(testMode),
+      switchMode,
+    }),
+    [testMode, switchMode],
   );
+
+  return <AppMode.Provider value={value}>{children}</AppMode.Provider>;
 };
 
 export function useAppMode() {

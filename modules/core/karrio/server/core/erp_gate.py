@@ -21,7 +21,9 @@ import json
 import logging
 import requests
 
+from decouple import config
 from django.conf import settings
+from django.core.cache import cache
 
 from karrio.server.core.exceptions import APIException
 
@@ -288,12 +290,50 @@ FEATURES_LIST_PATH = "/api/method/karrio_shipping.api.features.list_features"
 FEATURES_SET_PATH = "/api/method/karrio_shipping.api.features.set_feature"
 
 
-def _post_erp_method(path: str, payload: dict, label: str):
+# The feature registry "barely changes" (dashboard hook), yet every page
+# mount used to pay one synchronous ERP round trip for it while holding one
+# of the API's request slots. The listing is therefore cached process-wide
+# for ERP_FEATURES_CACHE_TTL seconds, read with a short ERP_FEATURES_TIMEOUT
+# and, when the ERP cannot answer, served from the last value it did give
+# (kept for a week under a second key). A toggle drops the fresh copy and
+# patches the stale one so the dashboard never reads a pre-toggle list.
+FEATURES_CACHE_KEY = "erp_features:current"
+FEATURES_LAST_KNOWN_CACHE_KEY = "erp_features:last_known"
+FEATURES_LAST_KNOWN_TTL = 7 * 24 * 3600
+
+
+def _features_cache_ttl() -> int:
+    return getattr(
+        settings,
+        "ERP_FEATURES_CACHE_TTL",
+        config("ERP_FEATURES_CACHE_TTL", default=120, cast=int),
+    )
+
+
+def _features_timeout():
+    """``(connect, read)`` for the feature listing only.
+
+    The listing sits on the dashboard's read path, so it may not wait the
+    30 s a document method is allowed: a slow Frappe answers from cache.
+    """
+    connect, _ = _erp_timeout()
+    return (
+        connect,
+        getattr(
+            settings,
+            "ERP_FEATURES_TIMEOUT",
+            config("ERP_FEATURES_TIMEOUT", default=3, cast=int),
+        ),
+    )
+
+
+def _post_erp_method(path: str, payload: dict, label: str, timeout=None):
     """POST one whitelisted Frappe method and return the unwrapped ``message``.
 
     Same fail-closed doctrine as the shipment relays: missing configuration
     and an unreachable ERP raise 424, an ERP refusal raises 409 carrying the
-    ERP's own message.
+    ERP's own message. ``timeout`` overrides the default ``(connect, read)``
+    pair for callers that may not wait the full read budget.
     """
     url = getattr(settings, "ERP_GATE_URL", None)
     token = getattr(settings, "ERP_GATE_TOKEN", None)
@@ -310,7 +350,7 @@ def _post_erp_method(path: str, payload: dict, label: str):
             url.rstrip("/") + path,
             json=payload,
             headers={"Authorization": f"token {token}"},
-            timeout=_erp_timeout(),
+            timeout=timeout or _erp_timeout(),
         )
     except requests.RequestException as error:
         logger.warning("ERP %s unreachable: %s", label, error)
@@ -331,10 +371,63 @@ def _post_erp_method(path: str, payload: dict, label: str):
 
 
 def run_erp_features_list() -> dict:
-    """Relay the ERP's feature-flag listing; returns ``{"features": [...]}``."""
-    message = _post_erp_method(FEATURES_LIST_PATH, {}, "features list")
+    """Relay the ERP's feature-flag listing; returns ``{"features": [...]}``.
+
+    Served from cache for ERP_FEATURES_CACHE_TTL seconds. When the ERP
+    cannot answer within ERP_FEATURES_TIMEOUT (or refuses), the last value
+    it did give is returned with a warning; only when there is no such
+    value does the failure surface, so the dashboard falls back to its own
+    defaults exactly as before. A missing configuration is never masked.
+    """
+    cached = cache.get(FEATURES_CACHE_KEY)
+    if cached is not None:
+        return cached
+
+    try:
+        message = _post_erp_method(
+            FEATURES_LIST_PATH, {}, "features list", timeout=_features_timeout()
+        )
+    except APIException as error:
+        last_known = (
+            None
+            if error.code == "erp_gate_unconfigured"
+            else cache.get(FEATURES_LAST_KNOWN_CACHE_KEY)
+        )
+        if last_known is None:
+            raise
+        logger.warning(
+            "ERP features list unavailable (%s); serving last known value",
+            error.code,
+        )
+        return last_known
+
     features = message.get("features") if isinstance(message, dict) else message
-    return {"features": features or []}
+    result = {"features": features or []}
+    cache.set(FEATURES_CACHE_KEY, result, _features_cache_ttl())
+    cache.set(FEATURES_LAST_KNOWN_CACHE_KEY, result, FEATURES_LAST_KNOWN_TTL)
+    return result
+
+
+def _remember_feature_toggle(key: str, enabled: bool) -> None:
+    """Drop the fresh listing and patch the last-known one after a toggle."""
+    cache.delete(FEATURES_CACHE_KEY)
+    last_known = cache.get(FEATURES_LAST_KNOWN_CACHE_KEY)
+    if last_known is None:
+        return
+    cache.set(
+        FEATURES_LAST_KNOWN_CACHE_KEY,
+        {
+            "features": [
+                (
+                    {**feature, "enabled": enabled}
+                    if isinstance(feature, dict) and feature.get("key") == key
+                    else feature
+                )
+                for feature in last_known.get("features") or []
+            ]
+        },
+        FEATURES_LAST_KNOWN_TTL,
+    )
 
 
 def run_erp_features_set(key, enabled) -> dict:
@@ -361,4 +454,6 @@ def run_erp_features_set(key, enabled) -> dict:
         FEATURES_SET_PATH, {"key": key, "enabled": enabled}, "feature set"
     )
     result = message if isinstance(message, dict) else {}
-    return {"key": result.get("key", key), "enabled": result.get("enabled", enabled)}
+    outcome = {"key": result.get("key", key), "enabled": result.get("enabled", enabled)}
+    _remember_feature_toggle(outcome["key"], outcome["enabled"])
+    return outcome

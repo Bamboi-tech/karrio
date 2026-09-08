@@ -19,13 +19,17 @@ import {
   QueryClientProvider,
 } from "@tanstack/react-query";
 
+// Note: `bundleContexts` nests from the END of the list outward — the last
+// entry is the outermost provider. Anything that calls `useKarrio()` /
+// `useAuthenticatedQuery()` must therefore come BEFORE ClientProvider and
+// APIMetadataProvider in this list.
 const AuthenticatedContexts = bundleContexts([
+  OrganizationProvider,
+  CreateOrganizationDialogProvider,
+  AcceptInvitationDialogProvider,
   ClientProvider,
   APIMetadataProvider,
   AppModeProvider,
-  CreateOrganizationDialogProvider,
-  AcceptInvitationDialogProvider,
-  OrganizationProvider,
   LoadingProvider,
   Notifier,
 ]);
@@ -37,6 +41,14 @@ function makeQueryClient() {
         // With SSR, we usually want to set some default staleTime
         // above 0 to avoid refetching immediately on the client
         staleTime: 60 * 1000,
+        // Operators alt-tab to ERP / label windows constantly; a focus
+        // refetch of every list, badge and reference set is pure waste.
+        refetchOnWindowFocus: false,
+        // One retry is enough — the API answers or it doesn't.
+        retry: 1,
+        // Keep inactive entries (previous pages, detail views) for 30 min so
+        // back-navigation is instant.
+        cacheTime: 30 * 60 * 1000,
       },
     },
   });

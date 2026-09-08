@@ -9,18 +9,34 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@karrio/ui/components/
 import { Button } from "@karrio/ui/components/ui/button";
 import { cn } from "@karrio/ui/lib/utils";
 
-// Import view components
-import { WebhooksView } from "@karrio/developers/components/views/webhooks-view";
-import { ActivityView } from "@karrio/developers/components/views/activity-view";
-import { ApiKeysView } from "@karrio/developers/components/views/api-keys-view";
-import { EventsView } from "@karrio/developers/components/views/events-view";
-import { LogsView } from "@karrio/developers/components/views/logs-view";
-import { AppsView } from "@karrio/developers/components/views/apps-view";
-import { TracingRecordsView } from "@karrio/developers/components/views/tracing-records-view";
-import { PlaygroundView } from "@karrio/developers/components/views/playground-view";
-import { GraphiQLView } from "@karrio/developers/components/views/graphiql-view";
-import { WorkersView } from "@karrio/developers/components/views/workers-view";
-import { SystemHealthView } from "@karrio/developers/components/views/system-health-view";
+// Every view is code-split: the drawer ships in the dashboard layout but is
+// closed by default, and the views pull in swagger-ui, graphiql, codemirror,
+// recharts and moment (>1 MB gz). `React.lazy` rather than `next/dynamic`
+// because this file is also bundled by Vite for `@karrio/elements`; nothing
+// below renders on the server since the drawer content is only mounted once
+// `isOpen` is true.
+const lazyView = <K extends string>(
+  load: () => Promise<Record<K, React.ComponentType<any>>>,
+  name: K,
+) => React.lazy(() => load().then((m) => ({ default: m[name] })));
+
+const WebhooksView = lazyView(() => import("@karrio/developers/components/views/webhooks-view"), "WebhooksView");
+const ActivityView = lazyView(() => import("@karrio/developers/components/views/activity-view"), "ActivityView");
+const ApiKeysView = lazyView(() => import("@karrio/developers/components/views/api-keys-view"), "ApiKeysView");
+const EventsView = lazyView(() => import("@karrio/developers/components/views/events-view"), "EventsView");
+const LogsView = lazyView(() => import("@karrio/developers/components/views/logs-view"), "LogsView");
+const AppsView = lazyView(() => import("@karrio/developers/components/views/apps-view"), "AppsView");
+const TracingRecordsView = lazyView(() => import("@karrio/developers/components/views/tracing-records-view"), "TracingRecordsView");
+const PlaygroundView = lazyView(() => import("@karrio/developers/components/views/playground-view"), "PlaygroundView");
+const GraphiQLView = lazyView(() => import("@karrio/developers/components/views/graphiql-view"), "GraphiQLView");
+const WorkersView = lazyView(() => import("@karrio/developers/components/views/workers-view"), "WorkersView");
+const SystemHealthView = lazyView(() => import("@karrio/developers/components/views/system-health-view"), "SystemHealthView");
+
+const ViewFallback = () => (
+  <div className="flex items-center justify-center h-full p-8 text-sm text-muted-foreground">
+    Loading...
+  </div>
+);
 
 // Custom DrawerContent with responsive positioning
 const CustomDrawerContent = React.forwardRef<
@@ -357,7 +373,9 @@ export function DeveloperToolsDrawer() {
                         style={{ touchAction: 'pan-y', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain' }}
                         data-vaul-no-drag
                       >
-                        <Component />
+                        <React.Suspense fallback={<ViewFallback />}>
+                          <Component />
+                        </React.Suspense>
                       </div>
                     </div>
                   </TabsContent>

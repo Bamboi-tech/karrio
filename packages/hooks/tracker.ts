@@ -13,7 +13,12 @@ import {
   onError,
 } from "@karrio/lib";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useAuthenticatedQuery, useKarrio } from "./karrio";
+import {
+  scopeQueryKey,
+  useAuthenticatedQuery,
+  useKarrio,
+  useQueryScope,
+} from "./karrio";
 import React from "react";
 
 const PAGE_SIZE = 20;
@@ -30,6 +35,7 @@ export function useTrackers({
 }: FilterType = {}) {
   const karrio = useKarrio();
   const queryClient = useQueryClient();
+  const scope = useQueryScope();
   const [filter, _setFilter] = React.useState<TrackerFilter>({
     ...PAGINATION,
     ...initialData,
@@ -42,7 +48,7 @@ export function useTrackers({
     queryKey: ["trackers", filter],
     queryFn: () => fetch({ filter }),
     keepPreviousData: true,
-    staleTime: 5000,
+    staleTime: 30000,
     refetchInterval: 120000,
     onError,
   });
@@ -53,19 +59,19 @@ export function useTrackers({
       return isNoneOrEmpty(options[key as keyof TrackerFilter])
         ? acc
         : {
-          ...acc,
-          [key]: ["carrier_name", "status"].includes(key)
-            ? ([] as string[])
-              .concat(options[key as keyof TrackerFilter] as any)
-              .reduce(
-                (acc: string[], item: string) =>
-                  ([] as string[]).concat(acc, item.split(",") as string[]),
-                [] as string[],
-              )
-            : ["offset", "first"].includes(key)
-              ? parseInt(options[key as keyof TrackerFilter] as string)
-              : options[key as keyof TrackerFilter],
-        };
+            ...acc,
+            [key]: ["carrier_name", "status"].includes(key)
+              ? ([] as string[])
+                  .concat(options[key as keyof TrackerFilter] as any)
+                  .reduce(
+                    (acc: string[], item: string) =>
+                      ([] as string[]).concat(acc, item.split(",") as string[]),
+                    [] as string[],
+                  )
+              : ["offset", "first"].includes(key)
+                ? parseInt(options[key as keyof TrackerFilter] as string)
+                : options[key as keyof TrackerFilter],
+          };
     }, PAGINATION);
 
     if (setVariablesToURL) insertUrlParam(params);
@@ -78,11 +84,13 @@ export function useTrackers({
     if (preloadNextPage === false) return;
     if (query.data?.trackers.page_info.has_next_page) {
       const _filter = { ...filter, offset: (filter.offset as number) + 20 };
-      queryClient.prefetchQuery(["trackers", _filter], () =>
-        fetch({ filter: _filter }),
+      // Same scoped key the list reads.
+      queryClient.prefetchQuery(
+        scopeQueryKey(["trackers", _filter], scope) as any,
+        () => fetch({ filter: _filter }),
       );
     }
-  }, [query.data, filter.offset, queryClient]);
+  }, [query.data, filter.offset, queryClient, scope]);
 
   return {
     query,
@@ -99,7 +107,10 @@ export function useTracker(id: string) {
   // Queries
   const query = useAuthenticatedQuery({
     queryKey: ["trackers", id],
-    queryFn: () => karrio.graphql.request<get_tracker>(gqlstr(GET_TRACKER), { data: { id } }),
+    queryFn: () =>
+      karrio.graphql.request<get_tracker>(gqlstr(GET_TRACKER), {
+        data: { id },
+      }),
     enabled: !!id,
     onError,
   });
@@ -132,13 +143,7 @@ export function useTrackerMutation() {
     { onSuccess: invalidateCache, onError },
   );
   const resendWebhooks = useMutation(
-    ({
-      entityIds,
-      webhookId,
-    }: {
-      entityIds: string[];
-      webhookId?: string;
-    }) =>
+    ({ entityIds, webhookId }: { entityIds: string[]; webhookId?: string }) =>
       handleFailure(
         karrio.axios
           .post(`/v1/batches/webhooks`, {
@@ -167,4 +172,3 @@ export function useTrackerMutation() {
     refreshTracker,
   };
 }
-

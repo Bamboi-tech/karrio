@@ -81,6 +81,27 @@ def run_data_archiving(*args, **kwargs):
     logger.info("Finished scheduled backlog archiving")
 
 
+def run_tracing_retention(retention_days: int):
+    """Delete SDK tracing records older than ``retention_days`` in batches.
+
+    Tracing is written on every carrier call (PERSIST_SDK_TRACING) and the
+    general archiving sweep only reaches it after API_LOGS_DATA_RETENTION
+    (92 days) — long enough for the table to become most of the database.
+    """
+    cutoff = timezone.now() - datetime.timedelta(days=retention_days)
+    stale = tracing.TracingRecord.objects.filter(created_at__lt=cutoff)
+
+    deleted = utils.failsafe(lambda: _bulk_delete_tracing_data(stale)) or 0
+    if deleted:
+        logger.info(
+            "Pruned SDK tracing records",
+            retention_days=retention_days,
+            deleted_records=deleted,
+        )
+
+    return deleted
+
+
 def _bulk_delete_tracing_data(tracing_queryset):
     """Bulk delete tracing data to avoid N+1 queries with organization links."""
     BATCH_SIZE = 1000

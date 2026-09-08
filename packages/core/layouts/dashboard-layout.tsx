@@ -12,14 +12,15 @@ import {
   SidebarProvider,
 } from "@karrio/ui/components/ui/sidebar";
 import {
-  loadMetadata,
   loadOrgData,
   loadUserData,
   getCurrentDomain,
   requireAuthentication,
   requireOrganization,
 } from "@karrio/core/context/main";
-import { DeveloperToolsProvider, DeveloperToolsDrawer } from "@karrio/developers";
+import { loadRequestMetadata } from "@karrio/core/components/metadata";
+import { LazyDeveloperToolsDrawer } from "@karrio/core/layouts/dashboard-developer-tools";
+import { DeveloperToolsProvider } from "@karrio/developers/context/developer-tools-context";
 
 export default async function Layout({
   children,
@@ -31,9 +32,13 @@ export default async function Layout({
   await requireAuthentication(session);
 
   const domain = await getCurrentDomain();
-  const metadata = await loadMetadata(domain!);
-  const user = await loadUserData(session, metadata.metadata as Metadata, domain!);
-  const org = await loadOrgData(session, metadata.metadata as Metadata, domain!);
+  const metadata = await loadRequestMetadata(domain!);
+  // Account and organization data are independent: load them concurrently.
+  // Both are cached server-side for 60s per (user, org, test-mode, domain).
+  const [user, org] = await Promise.all([
+    loadUserData(session, metadata.metadata as Metadata, domain!),
+    loadOrgData(session, metadata.metadata as Metadata, domain!),
+  ]);
   const orgId = ((session as any)?.orgId as string) || null;
 
   await requireOrganization(session, metadata.metadata as Metadata, org);
@@ -68,7 +73,7 @@ export default async function Layout({
             </SidebarInset>
           </SidebarProvider>
           <FloatingDeveloperTools />
-          <DeveloperToolsDrawer />
+          <LazyDeveloperToolsDrawer />
         </DeveloperToolsProvider>
       </Providers>
     </>

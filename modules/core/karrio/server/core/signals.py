@@ -1,5 +1,7 @@
 from django.conf import settings
 from django.dispatch import receiver
+from django.contrib.auth import get_user_model
+from django.db.models import signals as model_signals
 from constance import config
 from constance.signals import config_updated
 from django.core.signals import request_started
@@ -10,8 +12,18 @@ from karrio.server.core.logging import logger
 def register_signals():
     config_updated.connect(constance_updated)
     request_started.connect(initialize_settings)
+    model_signals.post_save.connect(user_changed, sender=get_user_model())
+    model_signals.post_delete.connect(user_changed, sender=get_user_model())
 
     logger.info("Signal registration complete", module="karrio.core")
+
+
+def user_changed(sender, instance, **_kwargs):
+    """Drop the JWT user cache entry so a deactivation or password change
+    is honoured on the next request rather than after the TTL."""
+    from karrio.server.core.authentication import invalidate_jwt_user_cache
+
+    invalidate_jwt_user_cache(instance.pk)
 
 
 def initialize_settings(_sender=None, **_kwargs):
@@ -28,7 +40,10 @@ def initialize_settings(_sender=None, **_kwargs):
 
 @receiver(config_updated)
 def constance_updated(sender, **_kwargs):
+    from karrio.server.core.dataunits import bump_references_version
+
     update_settings(sender)
+    bump_references_version()
 
 
 def _batch_fetch_constance(keys: list) -> dict:

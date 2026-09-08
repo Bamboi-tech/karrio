@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@karrio/ui/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@karrio/ui/components/ui/table";
 import { Plus, Search, MoreHorizontal, Edit3, Trash2, DollarSign, Percent, Zap, AlertCircle, Eye } from 'lucide-react';
-import { LineChart, Line, CartesianGrid, XAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import dynamic from "next/dynamic";
 import { useMarkups, useMarkupMutation, useMarkupForm, MarkupType } from "@karrio/hooks/admin-markups";
 import { MarkupTypeEnum } from "@karrio/types/graphql/admin-ee";
 import { Card, CardContent } from "@karrio/ui/components/ui/card";
@@ -24,6 +24,12 @@ import { cn } from "@karrio/ui/lib/utils";
 import { useSystemConnections } from "@karrio/hooks/admin-system-connections";
 import { CarrierImage } from "@karrio/ui/core/components/carrier-image";
 import moment from "moment";
+
+// recharts is only fetched when a chart is rendered (see ./charts.tsx).
+const SpendLineChart = dynamic(
+  () => import("./charts").then((m) => m.SpendLineChart),
+  { ssr: false, loading: () => null },
+);
 
 interface CreateMarkupDialogProps {
   open: boolean;
@@ -1061,14 +1067,7 @@ export default function MarkupsPage() {
             </div>
             <div style={{ width: "100%", height: "300px" }}>
               {usage?.total_addons_charges ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#64748b' }} />
-                    <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: 'none', borderRadius: '6px', color: 'white', fontSize: '12px' }} formatter={(value: any) => [`$${value.toLocaleString()}`, 'Charges']} />
-                    <Line type="linear" dataKey="charges" stroke="#3b82f6" strokeWidth={2} dot={false} name="charges" />
-                  </LineChart>
-                </ResponsiveContainer>
+                <SpendLineChart data={chartData} dataKey="charges" label="Charges" />
               ) : (
                 <div className="flex items-center justify-center h-full bg-gray-50 rounded">
                   <div className="text-center">

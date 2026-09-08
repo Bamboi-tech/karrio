@@ -12,11 +12,14 @@ const API_URL =
   process.env.KARRIO_PUBLIC_URL || process.env.NEXT_PUBLIC_KARRIO_PUBLIC_URL;
 
 export async function register() {
+  // No DSN (local dev, images built without secrets) -> no SDK at all.
+  if (!SENTRY_DSN) return;
+
   if (process.env.NEXT_RUNTIME === "nodejs") {
     Sentry.init({
       dsn: SENTRY_DSN,
       environment: SENTRY_ENVIRONMENT,
-      tracesSampleRate: 1.0,
+      tracesSampleRate: 0.05,
       initialScope: (scope) => {
         scope.setTags({
           API: API_URL,
@@ -30,7 +33,7 @@ export async function register() {
     Sentry.init({
       dsn: SENTRY_DSN,
       environment: SENTRY_ENVIRONMENT,
-      tracesSampleRate: 1.0,
+      tracesSampleRate: 0.05,
     });
   }
 }

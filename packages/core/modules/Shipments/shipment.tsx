@@ -5,7 +5,14 @@ import {
   useUploadRecordMutation,
   useUploadRecords,
 } from "@karrio/hooks/upload-record";
-import { AddressType, CustomsType, NotificationType, ParcelType, MetadataObjectTypeEnum, UpdateAddressInput } from "@karrio/types";
+import {
+  AddressType,
+  CustomsType,
+  NotificationType,
+  ParcelType,
+  MetadataObjectTypeEnum,
+  UpdateAddressInput,
+} from "@karrio/types";
 import { CustomsInfoDescription } from "@karrio/ui/components/customs-info-description";
 import { ShipmentsStatusBadge } from "@karrio/ui/components/shipments-status-badge";
 import { CommodityDescription } from "@karrio/ui/components/commodity-description";
@@ -52,6 +59,26 @@ type FileDataType = DocumentUploadData["document_files"][0];
 const FOLLOW_POLL_MS = 2_500;
 const REPLACEMENT_WAIT_MS = 45_000;
 const SLOW_VALIDATION_AFTER_MS = 45_000;
+
+// The "Checking every few seconds · 12s" line. It is the only thing on the
+// page that changes every second, so it owns the clock: ticking here
+// re-renders one <p>, not the whole shipment page around it.
+const WaitedCounter = ({ since }: { since: number | null }): JSX.Element => {
+  const [now, setNow] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [since]);
+  const waited = since === null ? 0 : Math.max(0, now - since);
+  return (
+    <p className="mt-1 text-xs text-blue-700">
+      {waited < SLOW_VALIDATION_AFTER_MS
+        ? `Checking every few seconds · ${Math.round(waited / 1000)}s`
+        : "Taking longer than usual — ERPNext may be busy. This keeps checking; the ERP shipment's timeline says what it is doing."}
+    </p>
+  );
+};
 
 export const ShipmentComponent = ({
   shipmentId,
@@ -115,7 +142,11 @@ export const ShipmentComponent = ({
   const [followingSince, setFollowingSince] = React.useState<number | null>(
     null,
   );
-  const [now, setNow] = React.useState(() => Date.now());
+  // The one moment the page's own logic cares about on the clock: the
+  // replacement window closing. A single timeout flips it; the per-second
+  // display lives in WaitedCounter so the page itself does not re-render
+  // every second while following.
+  const [replacementTimedOut, setReplacementTimedOut] = React.useState(false);
   const followedRef = React.useRef(false);
   React.useEffect(() => {
     // The same component instance can be handed the next id (the page
@@ -127,24 +158,26 @@ export const ShipmentComponent = ({
   React.useEffect(() => {
     if (pending && followingSince === null) setFollowingSince(Date.now());
   }, [pending, followingSince]);
-  const waited =
-    followingSince === null ? 0 : Math.max(0, now - followingSince);
+  React.useEffect(() => {
+    setReplacementTimedOut(false);
+    if (followingSince === null) return;
+    const remaining = Math.max(
+      0,
+      followingSince + REPLACEMENT_WAIT_MS - Date.now(),
+    );
+    const timer = setTimeout(() => setReplacementTimedOut(true), remaining);
+    return () => clearTimeout(timer);
+  }, [followingSince]);
   const awaitingReplacement =
     followingSince !== null &&
     cancelled &&
     !replacement &&
-    waited < REPLACEMENT_WAIT_MS;
+    !replacementTimedOut;
   const replacementLost =
-    followingSince !== null &&
-    cancelled &&
-    !replacement &&
-    waited >= REPLACEMENT_WAIT_MS;
+    followingSince !== null && cancelled && !replacement && replacementTimedOut;
   const following = pending || awaitingReplacement;
   React.useEffect(() => {
     setPolling(following);
-    if (!following) return;
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
   }, [following]);
   React.useEffect(() => {
     if (followingSince === null || !replacement || followedRef.current) return;
@@ -157,13 +190,21 @@ export const ShipmentComponent = ({
     openShipment(replacement);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [followingSince, replacement]);
-  const { query: trackerLogs } = useLogs(trackerId ? { entity_id: trackerId } : { entity_id: "__none__" });
-  const { query: trackerEvents } = useEvents(trackerId ? { entity_id: trackerId } : { entity_id: "__none__" });
+  // Disabled until the shipment names a tracker: without the guard the
+  // sentinel id was queried for real, twice, on every shipment page.
+  const { query: trackerLogs } = useLogs({
+    entity_id: trackerId || "__none__",
+    enabled: !!trackerId,
+  });
+  const { query: trackerEvents } = useEvents({
+    entity_id: trackerId || "__none__",
+    enabled: !!trackerId,
+  });
 
   // Merge shipment and tracker logs/events for the activity timeline
   const logs = React.useMemo(() => {
     const shipmentEdges = shipmentLogs.data?.logs?.edges || [];
-    const trackerEdges = trackerId ? (trackerLogs.data?.logs?.edges || []) : [];
+    const trackerEdges = trackerId ? trackerLogs.data?.logs?.edges || [] : [];
     // Deduplicate by log id
     const seen = new Set<number | string>();
     const merged = [...shipmentEdges, ...trackerEdges].filter(({ node }) => {
@@ -173,7 +214,8 @@ export const ShipmentComponent = ({
       return true;
     });
     return {
-      isFetching: shipmentLogs.isFetching || (trackerId ? trackerLogs.isFetching : false),
+      isFetching:
+        shipmentLogs.isFetching || (trackerId ? trackerLogs.isFetching : false),
       isFetched: shipmentLogs.isFetched,
       data: { logs: { edges: merged } },
     };
@@ -181,7 +223,9 @@ export const ShipmentComponent = ({
 
   const events = React.useMemo(() => {
     const shipmentEdges = shipmentEvents.data?.events?.edges || [];
-    const trackerEdges = trackerId ? (trackerEvents.data?.events?.edges || []) : [];
+    const trackerEdges = trackerId
+      ? trackerEvents.data?.events?.edges || []
+      : [];
     const seen = new Set<string>();
     const merged = [...shipmentEdges, ...trackerEdges].filter(({ node }) => {
       const key = node.id as string;
@@ -190,17 +234,16 @@ export const ShipmentComponent = ({
       return true;
     });
     return {
-      isFetching: shipmentEvents.isFetching || (trackerId ? trackerEvents.isFetching : false),
+      isFetching:
+        shipmentEvents.isFetching ||
+        (trackerId ? trackerEvents.isFetching : false),
       isFetched: shipmentEvents.isFetched,
       data: { events: { edges: merged } },
     };
   }, [shipmentEvents, trackerEvents, trackerId]);
   const { uploadDocument } = useUploadRecordMutation();
   const { updateShipment } = useShipmentMutation(entity_id);
-  const { updateMetadata } = useMetadataMutation([
-    "shipments",
-    entity_id,
-  ]);
+  const { updateMetadata } = useMetadataMutation(["shipments", entity_id]);
   const {
     query: { data: { results: uploads } = {}, ...documents },
   } = useUploadRecords({ shipmentId: entity_id });
@@ -249,7 +292,9 @@ export const ShipmentComponent = ({
     try {
       const recipientId = address.id || shipment?.recipient?.id;
       if (!recipientId) {
-        throw new Error("The shipment recipient address could not be resolved.");
+        throw new Error(
+          "The shipment recipient address could not be resolved.",
+        );
       }
 
       await updateShipment.mutateAsync({
@@ -308,7 +353,7 @@ export const ShipmentComponent = ({
 
       // Calculate discarded_keys (keys that were removed)
       const discarded_keys = Object.keys(currentMetadata).filter(
-        key => !(key in newMetadata)
+        (key) => !(key in newMetadata),
       );
 
       await updateMetadata.mutateAsync({
@@ -352,11 +397,14 @@ export const ShipmentComponent = ({
               <div className="flex items-center gap-2">
                 <div className="flex items-baseline gap-1">
                   <span className="text-3xl font-bold">
-                    {shipment.selected_rate?.total_charge !== undefined && shipment.selected_rate?.total_charge !== null
+                    {shipment.selected_rate?.total_charge !== undefined &&
+                    shipment.selected_rate?.total_charge !== null
                       ? Number(shipment.selected_rate.total_charge).toFixed(2)
-                      : (shipment.status === "created" ? "0.00"
-                        : shipment.status === "draft" ? "DRAFT"
-                          : "UNFULFILLED")}
+                      : shipment.status === "created"
+                        ? "0.00"
+                        : shipment.status === "draft"
+                          ? "DRAFT"
+                          : "UNFULFILLED"}
                   </span>
                   {shipment.selected_rate?.currency && (
                     <span className="text-3xl text-gray-600">
@@ -368,87 +416,116 @@ export const ShipmentComponent = ({
               </div>
 
               {/* Mobile ShipmentMenu - positioned after cost/currency line */}
-              <div className={`flex justify-start items-center gap-1 md:hidden`}>
+              <div
+                className={`flex justify-start items-center gap-1 md:hidden`}
+              >
                 {isPreview && isSheet && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    asChild
-                    className="h-8"
-                  >
-                    <AppLink
-                      href={`/shipments/${shipmentId}`}
-                      target="_blank"
-                    >
+                  <Button variant="ghost" size="sm" asChild className="h-8">
+                    <AppLink href={`/shipments/${shipmentId}`} target="_blank">
                       <i className="fas fa-external-link-alt text-xs"></i>
                     </AppLink>
                   </Button>
                 )}
-                <ShipmentMenu shipment={shipment as any} isViewing variant="outline" />
+                <ShipmentMenu
+                  shipment={shipment as any}
+                  isViewing
+                  variant="outline"
+                />
               </div>
             </div>
 
             {/* Desktop ShipmentMenu - positioned in top-right corner */}
-            <div className={`${isSheet ? 'hidden md:flex' : 'hidden md:flex'} items-center gap-1`}>
+            <div
+              className={`${isSheet ? "hidden md:flex" : "hidden md:flex"} items-center gap-1`}
+            >
               {isPreview && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  asChild
-                  className="h-8"
-                >
-                  <AppLink
-                    href={`/shipments/${shipmentId}`}
-                    target="_blank"
-                  >
+                <Button variant="ghost" size="sm" asChild className="h-8">
+                  <AppLink href={`/shipments/${shipmentId}`} target="_blank">
                     <i className="fas fa-external-link-alt text-xs"></i>
                   </AppLink>
                 </Button>
               )}
-              <ShipmentMenu shipment={shipment as any} isViewing variant="outline" />
+              <ShipmentMenu
+                shipment={shipment as any}
+                isViewing
+                variant="outline"
+              />
             </div>
           </div>
 
-
           {/* Main Content with Sidebar Layout */}
-          <div className={`flex flex-col ${isSheet ? '' : 'lg:grid lg:grid-cols-4'} gap-6`}>
+          <div
+            className={`flex flex-col ${isSheet ? "" : "lg:grid lg:grid-cols-4"} gap-6`}
+          >
             {/* Right Sidebar - Details Section */}
             {!isNone(shipment.selected_rate) && (
-              <div className={isSheet ? '' : 'lg:order-2 lg:col-span-1 lg:col-start-4'}>
-                <h3 className={`text-xl font-semibold my-4 ${isSheet ? '' : 'lg:mb-4 lg:mt-0'}`}>
+              <div
+                className={
+                  isSheet ? "" : "lg:order-2 lg:col-span-1 lg:col-start-4"
+                }
+              >
+                <h3
+                  className={`text-xl font-semibold my-4 ${isSheet ? "" : "lg:mb-4 lg:mt-0"}`}
+                >
                   Details
                 </h3>
-                <div className={isSheet ? 'grid grid-cols-1 md:grid-cols-2 gap-4' : 'space-y-3'}>
+                <div
+                  className={
+                    isSheet
+                      ? "grid grid-cols-1 md:grid-cols-2 gap-4"
+                      : "space-y-3"
+                  }
+                >
                   <div className="space-y-3">
                     <div>
                       <div className="text-xs mb-1 font-bold">Shipment ID</div>
-                      <CopiableLink text={shipment.id as string} title="Copy ID" variant="outline" />
+                      <CopiableLink
+                        text={shipment.id as string}
+                        title="Copy ID"
+                        variant="outline"
+                      />
                     </div>
                     {trackerId && (
                       <div>
                         <div className="text-xs mb-1 font-bold">Tracker ID</div>
-                        <CopiableLink text={trackerId} title="Copy Tracker ID" variant="outline" />
+                        <CopiableLink
+                          text={trackerId}
+                          title="Copy Tracker ID"
+                          variant="outline"
+                        />
                       </div>
                     )}
                     <div>
-                      <div className="text-xs mb-1 font-bold">Shipment method</div>
+                      <div className="text-xs mb-1 font-bold">
+                        Shipment method
+                      </div>
                       <div className="flex items-center">
                         <CarrierImage
-                          carrier_name={(shipment.meta.custom_carrier_name || shipment.meta.carrier) as string}
+                          carrier_name={
+                            (shipment.meta.custom_carrier_name ||
+                              shipment.meta.carrier) as string
+                          }
                           containerClassName="mt-1 ml-1 mr-2"
                           height={28}
                           width={28}
-                          text_color={(shipment.selected_rate_carrier as any)?.config?.text_color}
-                          background={(shipment.selected_rate_carrier as any)?.config?.brand_color}
+                          text_color={
+                            (shipment.selected_rate_carrier as any)?.config
+                              ?.text_color
+                          }
+                          background={
+                            (shipment.selected_rate_carrier as any)?.config
+                              ?.brand_color
+                          }
                         />
-                        <div className="text-ellipsis text-xs" style={{ maxWidth: "190px", lineHeight: "16px" }}>
+                        <div
+                          className="text-ellipsis text-xs"
+                          style={{ maxWidth: "190px", lineHeight: "16px" }}
+                        >
                           <span className="text-blue-600 font-bold">
                             {!isNone(shipment.tracking_number) && (
                               <span>{shipment.tracking_number}</span>
                             )}
-                            {isNone(shipment.tracking_number) && (
-                              <span>-</span>
-                            )}
+                            {isNone(shipment.tracking_number) && <span>-</span>}
                           </span>
                           <br />
                           <span className="text-ellipsis">
@@ -461,7 +538,9 @@ export const ShipmentComponent = ({
                       </div>
                     </div>
                     <div>
-                      <div className="text-xs mb-1 font-bold">Service Level</div>
+                      <div className="text-xs mb-1 font-bold">
+                        Service Level
+                      </div>
                       <div className="text-sm font-medium">
                         {formatRef(
                           ((shipment.meta as any)?.service_name ||
@@ -470,7 +549,9 @@ export const ShipmentComponent = ({
                       </div>
                     </div>
                     <div>
-                      <div className="text-xs mb-1 font-bold">Rate Provider</div>
+                      <div className="text-xs mb-1 font-bold">
+                        Rate Provider
+                      </div>
                       <div className="text-sm text-blue-600 font-medium">
                         {formatRef(shipment.meta.ext as string)}
                       </div>
@@ -486,13 +567,19 @@ export const ShipmentComponent = ({
                     {(shipment as any).request_id && (
                       <div>
                         <div className="text-xs mb-1 font-bold">Request ID</div>
-                        <CopiableLink text={(shipment as any).request_id} title="Copy Request ID" variant="outline" />
+                        <CopiableLink
+                          text={(shipment as any).request_id}
+                          title="Copy Request ID"
+                          variant="outline"
+                        />
                       </div>
                     )}
                   </div>
                   <div className="space-y-3">
                     <div>
-                      <div className="text-xs mb-1 font-bold">Tracking Number</div>
+                      <div className="text-xs mb-1 font-bold">
+                        Tracking Number
+                      </div>
                       <div className="text-sm font-medium text-blue-600">
                         {shipment.tracking_number as string}
                       </div>
@@ -511,7 +598,9 @@ export const ShipmentComponent = ({
                     </div>
                     <div>
                       <div className="text-xs mb-1 font-bold">Last update</div>
-                      <div className="text-sm">{formatDateTime(shipment.updated_at)}</div>
+                      <div className="text-sm">
+                        {formatDateTime(shipment.updated_at)}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -533,8 +622,9 @@ export const ShipmentComponent = ({
             )}
 
             {/* Left Column - Main Content */}
-            <div className={`space-y-6 order-1 mr-5 ${isSheet ? '' : 'lg:col-span-3 lg:col-start-1 lg:order-1'}`}>
-
+            <div
+              className={`space-y-6 order-1 mr-5 ${isSheet ? "" : "lg:col-span-3 lg:col-start-1 lg:order-1"}`}
+            >
               {!isNone(shipment.tracker) && (
                 <>
                   <div className="flex justify-between items-center my-4">
@@ -551,9 +641,7 @@ export const ShipmentComponent = ({
                   </div>
                   <hr className="mt-1 mb-2" style={{ height: "1px" }} />
                   <div className="mt-3 mb-6">
-                    <RecentActivity
-                      tracker={shipment.tracker}
-                    />
+                    <RecentActivity tracker={shipment.tracker} />
                   </div>
                 </>
               )}
@@ -562,7 +650,9 @@ export const ShipmentComponent = ({
               {!isNone(shipment.selected_rate) &&
                 (shipment.selected_rate?.extra_charges || []).length > 0 && (
                   <>
-                    <h2 className="text-xl font-semibold my-4">Charges breakdown</h2>
+                    <h2 className="text-xl font-semibold my-4">
+                      Charges breakdown
+                    </h2>
 
                     <div className="mt-1 mb-6">
                       <div className="space-y-2">
@@ -572,7 +662,7 @@ export const ShipmentComponent = ({
                             <div key={index}>
                               <div className="flex justify-between items-center">
                                 <span className="text-sm text-gray-900">
-                                  {charge?.name || 'Charge'}
+                                  {charge?.name || "Charge"}
                                 </span>
                                 <div className="text-sm text-gray-900 text-right">
                                   <span className="mr-1">{charge?.amount}</span>
@@ -581,16 +671,26 @@ export const ShipmentComponent = ({
                                   )}
                                 </div>
                               </div>
-                              {index < (shipment.selected_rate?.extra_charges || []).length - 1 && (
-                                <hr className="border-gray-200 mt-2" style={{ height: "1px" }} />
+                              {index <
+                                (shipment.selected_rate?.extra_charges || [])
+                                  .length -
+                                  1 && (
+                                <hr
+                                  className="border-gray-200 mt-2"
+                                  style={{ height: "1px" }}
+                                />
                               )}
                             </div>
-                          )
+                          ),
                         )}
 
                         {/* Separator before total */}
-                        {(shipment.selected_rate?.extra_charges || []).length > 0 && (
-                          <hr className="border-gray-200" style={{ height: "1px" }} />
+                        {(shipment.selected_rate?.extra_charges || []).length >
+                          0 && (
+                          <hr
+                            className="border-gray-200"
+                            style={{ height: "1px" }}
+                          />
                         )}
 
                         {/* Total line */}
@@ -600,7 +700,9 @@ export const ShipmentComponent = ({
                           </span>
                           <div className="text-sm font-semibold text-gray-900 text-right">
                             <span className="mr-1">
-                              {Number(shipment.selected_rate?.total_charge).toFixed(2)}
+                              {Number(
+                                shipment.selected_rate?.total_charge,
+                              ).toFixed(2)}
                             </span>
                             {shipment.selected_rate?.currency && (
                               <span>{shipment.selected_rate?.currency}</span>
@@ -609,7 +711,10 @@ export const ShipmentComponent = ({
                         </div>
 
                         {/* Line below total */}
-                        <hr className="border-gray-200 mt-1" style={{ height: "1px" }} />
+                        <hr
+                          className="border-gray-200 mt-1"
+                          style={{ height: "1px" }}
+                        />
                       </div>
                     </div>
                   </>
@@ -619,62 +724,83 @@ export const ShipmentComponent = ({
               {(shipment.selected_rate_carrier?.connection_id ||
                 shipment.selected_rate_carrier?.carrier_id ||
                 shipment.selected_rate_carrier?.carrier_name) && (
-                  <>
-                    <h2 className="text-xl font-semibold my-4">Connection Details</h2>
-                    <hr className="mt-1 mb-2" style={{ height: "1px" }} />
+                <>
+                  <h2 className="text-xl font-semibold my-4">
+                    Connection Details
+                  </h2>
+                  <hr className="mt-1 mb-2" style={{ height: "1px" }} />
 
-                    <div className="mt-3 mb-6">
-                      <div className={`grid grid-cols-1 ${isSheet ? '' : 'md:grid-cols-2'} gap-6 my-0`}>
-                        <div className="space-y-2">
-                          {/* Connection ID */}
-                          <div className="flex flex-col xl:flex-row xl:items-center">
-                            <div className="text-xs font-bold xl:w-32 mb-1 xl:mb-0">Connection ID</div>
-                            <div className="text-sm font-medium break-all">
-                              {shipment.selected_rate_carrier?.connection_id || '-'}
-                            </div>
+                  <div className="mt-3 mb-6">
+                    <div
+                      className={`grid grid-cols-1 ${isSheet ? "" : "md:grid-cols-2"} gap-6 my-0`}
+                    >
+                      <div className="space-y-2">
+                        {/* Connection ID */}
+                        <div className="flex flex-col xl:flex-row xl:items-center">
+                          <div className="text-xs font-bold xl:w-32 mb-1 xl:mb-0">
+                            Connection ID
                           </div>
-
-                          {/* Carrier ID */}
-                          <div className="flex flex-col xl:flex-row xl:items-center">
-                            <div className="text-xs font-bold xl:w-32 mb-1 xl:mb-0">Carrier ID</div>
-                            <div className="text-sm font-medium break-all">
-                              {shipment.selected_rate_carrier?.carrier_id || '-'}
-                            </div>
+                          <div className="text-sm font-medium break-all">
+                            {shipment.selected_rate_carrier?.connection_id ||
+                              "-"}
                           </div>
+                        </div>
 
-                          {/* Type */}
-                          <div className="flex flex-col xl:flex-row xl:items-center">
-                            <div className="text-xs font-bold xl:w-32 mb-1 xl:mb-0">Type</div>
-                            <div className="text-sm font-medium break-all">
-                              {shipment.selected_rate_carrier?.carrier_name || '-'}
-                            </div>
+                        {/* Carrier ID */}
+                        <div className="flex flex-col xl:flex-row xl:items-center">
+                          <div className="text-xs font-bold xl:w-32 mb-1 xl:mb-0">
+                            Carrier ID
                           </div>
+                          <div className="text-sm font-medium break-all">
+                            {shipment.selected_rate_carrier?.carrier_id || "-"}
+                          </div>
+                        </div>
 
-                          {/* Provider */}
-                          <div className="flex flex-col xl:flex-row xl:items-center">
-                            <div className="text-xs font-bold xl:w-32 mb-1 xl:mb-0">Provider</div>
-                            <div className="text-sm font-medium break-all">
-                              {shipment.selected_rate_carrier?.carrier_code || '-'}
-                            </div>
+                        {/* Type */}
+                        <div className="flex flex-col xl:flex-row xl:items-center">
+                          <div className="text-xs font-bold xl:w-32 mb-1 xl:mb-0">
+                            Type
+                          </div>
+                          <div className="text-sm font-medium break-all">
+                            {shipment.selected_rate_carrier?.carrier_name ||
+                              "-"}
+                          </div>
+                        </div>
+
+                        {/* Provider */}
+                        <div className="flex flex-col xl:flex-row xl:items-center">
+                          <div className="text-xs font-bold xl:w-32 mb-1 xl:mb-0">
+                            Provider
+                          </div>
+                          <div className="text-sm font-medium break-all">
+                            {shipment.selected_rate_carrier?.carrier_code ||
+                              "-"}
                           </div>
                         </div>
                       </div>
                     </div>
-                  </>
-                )}
+                  </div>
+                </>
+              )}
 
               {/* Return Shipment section */}
               {!isNone(shipment.return_shipment) && (
                 <>
-                  <h2 className="text-xl font-semibold my-4">Return Shipment</h2>
+                  <h2 className="text-xl font-semibold my-4">
+                    Return Shipment
+                  </h2>
                   <hr className="mt-1 mb-2" style={{ height: "1px" }} />
 
                   <div className="mt-3 mb-6">
-                    <div className={`grid grid-cols-1 ${isSheet ? '' : 'md:grid-cols-2'} gap-6 my-0`}>
+                    <div
+                      className={`grid grid-cols-1 ${isSheet ? "" : "md:grid-cols-2"} gap-6 my-0`}
+                    >
                       <div className="space-y-2">
                         {shipment.return_shipment?.tracking_number && (
                           <div className="flex flex-col xl:flex-row xl:items-center">
-                            <div className="text-xs font-bold xl:w-36 mb-1 xl:mb-0">Tracking Number</div>
+                            <div className="text-xs font-bold xl:w-36 mb-1 xl:mb-0">
+                              Tracking Number
+                            </div>
                             <div className="text-sm font-medium break-all">
                               {shipment.return_shipment.tracking_url ? (
                                 <a
@@ -694,7 +820,9 @@ export const ShipmentComponent = ({
 
                         {shipment.return_shipment?.shipment_identifier && (
                           <div className="flex flex-col xl:flex-row xl:items-center">
-                            <div className="text-xs font-bold xl:w-36 mb-1 xl:mb-0">Shipment ID</div>
+                            <div className="text-xs font-bold xl:w-36 mb-1 xl:mb-0">
+                              Shipment ID
+                            </div>
                             <div className="text-sm font-medium break-all">
                               {shipment.return_shipment.shipment_identifier}
                             </div>
@@ -703,7 +831,9 @@ export const ShipmentComponent = ({
 
                         {shipment.return_shipment?.service && (
                           <div className="flex flex-col xl:flex-row xl:items-center">
-                            <div className="text-xs font-bold xl:w-36 mb-1 xl:mb-0">Service</div>
+                            <div className="text-xs font-bold xl:w-36 mb-1 xl:mb-0">
+                              Service
+                            </div>
                             <div className="text-sm font-medium break-all">
                               {shipment.return_shipment.service}
                             </div>
@@ -712,7 +842,9 @@ export const ShipmentComponent = ({
 
                         {shipment.return_shipment?.reference && (
                           <div className="flex flex-col xl:flex-row xl:items-center">
-                            <div className="text-xs font-bold xl:w-36 mb-1 xl:mb-0">Reference</div>
+                            <div className="text-xs font-bold xl:w-36 mb-1 xl:mb-0">
+                              Reference
+                            </div>
                             <div className="text-sm font-medium break-all">
                               {shipment.return_shipment.reference}
                             </div>
@@ -768,22 +900,23 @@ export const ShipmentComponent = ({
                               : "Address is correct"}
                           </Button>
                         )}
-                      {shipment.status === "draft" && Boolean(shipment.metadata?.sales_order) && (
-                        <AddressEditDialog
-                          header="Correct delivery address"
-                          description="The delivery location and phone will be validated in ERPNext, synchronized to Shopify, and only then released to the carrier."
-                          mode="delivery"
-                          shipment={shipment as any}
-                          address={shipment.recipient}
-                          onSubmit={correctRecipientAddress}
-                          trigger={
-                            <Button variant="outline" size="sm">
-                              <i className="fas fa-pen mr-2 text-xs"></i>
-                              Correct address
-                            </Button>
-                          }
-                        />
-                      )}
+                      {shipment.status === "draft" &&
+                        Boolean(shipment.metadata?.sales_order) && (
+                          <AddressEditDialog
+                            header="Correct delivery address"
+                            description="The delivery location and phone will be validated in ERPNext, synchronized to Shopify, and only then released to the carrier."
+                            mode="delivery"
+                            shipment={shipment as any}
+                            address={shipment.recipient}
+                            onSubmit={correctRecipientAddress}
+                            trigger={
+                              <Button variant="outline" size="sm">
+                                <i className="fas fa-pen mr-2 text-xs"></i>
+                                Correct address
+                              </Button>
+                            }
+                          />
+                        )}
                     </div>
 
                     <ReasonPromptDialog
@@ -812,11 +945,7 @@ export const ShipmentComponent = ({
                           pushes it to Shopify and rebuilds this shipment. This
                           page opens the rebuilt draft as soon as it exists.
                         </p>
-                        <p className="mt-1 text-xs text-blue-700">
-                          {waited < SLOW_VALIDATION_AFTER_MS
-                            ? `Checking every few seconds · ${Math.round(waited / 1000)}s`
-                            : "Taking longer than usual — ERPNext may be busy. This keeps checking; the ERP shipment's timeline says what it is doing."}
-                        </p>
+                        <WaitedCounter since={followingSince} />
                       </div>
                     )}
 
@@ -827,8 +956,8 @@ export const ShipmentComponent = ({
                           Address accepted — ERPNext is rebuilding the shipment
                         </p>
                         <p className="mt-1 text-xs text-blue-800">
-                          This draft was voided; the rebuilt one opens here in
-                          a moment.
+                          This draft was voided; the rebuilt one opens here in a
+                          moment.
                         </p>
                       </div>
                     )}
@@ -943,9 +1072,13 @@ export const ShipmentComponent = ({
               <div className="mt-3 mb-6">
                 {shipment.parcels.map((parcel: ParcelType, index) => (
                   <React.Fragment key={index + "parcel-info"}>
-                    {index > 0 && <hr className="my-4" style={{ height: "1px" }} />}
+                    {index > 0 && (
+                      <hr className="my-4" style={{ height: "1px" }} />
+                    )}
 
-                    <div className={`grid grid-cols-1 ${isSheet ? '' : 'md:grid-cols-2'} gap-6 mb-0`}>
+                    <div
+                      className={`grid grid-cols-1 ${isSheet ? "" : "md:grid-cols-2"} gap-6 mb-0`}
+                    >
                       {/* Parcel details */}
                       <div className="text-base py-1">
                         <ParcelDescription parcel={parcel} />
@@ -966,9 +1099,7 @@ export const ShipmentComponent = ({
                             </span>
                           </p>
 
-                          <div
-                            className="py-2 pr-1 max-h-[40rem] overflow-auto"
-                          >
+                          <div className="py-2 pr-1 max-h-[40rem] overflow-auto">
                             {(parcel.items || []).map((item, index) => (
                               <React.Fragment key={index + "item-info"}>
                                 <hr
@@ -989,7 +1120,9 @@ export const ShipmentComponent = ({
               {/* Customs Declaration section */}
               {!isNone(shipment.customs) && (
                 <>
-                  <h2 className="text-xl font-semibold my-4">Customs Declaration</h2>
+                  <h2 className="text-xl font-semibold my-4">
+                    Customs Declaration
+                  </h2>
                   <hr className="mt-1 mb-2" style={{ height: "1px" }} />
 
                   <div className="mt-3 mb-6">
@@ -1023,7 +1156,12 @@ export const ShipmentComponent = ({
                       {(shipment.customs?.commodities || []).map(
                         (commodity, index) => (
                           <React.Fragment key={index + "parcel-info"}>
-                            {index > 0 && <hr className="mt-1 mb-2" style={{ height: "1px" }} />}
+                            {index > 0 && (
+                              <hr
+                                className="mt-1 mb-2"
+                                style={{ height: "1px" }}
+                              />
+                            )}
                             <CommodityDescription commodity={commodity} />
                           </React.Fragment>
                         ),
@@ -1054,11 +1192,7 @@ export const ShipmentComponent = ({
 
           {/* Activity Timeline section */}
           <h2 className="text-xl font-semibold my-4">Activity</h2>
-          <ActivityTimeline
-            logs={logs}
-            events={events}
-          />
-
+          <ActivityTimeline logs={logs} events={events} />
         </div>
       )}
 

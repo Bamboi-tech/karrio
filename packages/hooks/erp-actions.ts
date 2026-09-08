@@ -1,4 +1,8 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  QueryClient,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { ManualShipmentStatusEnum } from "@karrio/types";
 import { handleFailure } from "@karrio/lib";
 import { useKarrio } from "./karrio";
@@ -32,11 +36,7 @@ export type ERPShipmentAction =
 // How a post-purchase shipment actually ended. Karrio has no "returned"
 // status, so the precise truth lives in the ERP and Karrio only carries the
 // status that moves the row to the right card.
-export type DeliveryOutcome =
-  | "exception"
-  | "failed"
-  | "delivered"
-  | "returned";
+export type DeliveryOutcome = "exception" | "failed" | "delivered" | "returned";
 
 // How a post-purchase row can end, offered from Label Created onward.
 // Every option writes TWICE: the ERP records the outcome WITH its reason
@@ -212,23 +212,82 @@ export async function markShippedAndMove(
 // wrong card until something else refreshes. Long enough for the ERP's RQ
 // job to land, short enough that the row moves while the operator is still
 // looking at the list.
-const ERP_MIRROR_GRACE_MS = 4000;
+export const ERP_MIRROR_GRACE_MS = 4000;
 
-export function useShipmentERPActions(id?: string) {
-  const queryClient = useQueryClient();
-  const karrio = useKarrio();
+// Twice on purpose: immediately (cheap, and correct for everything the
+// action changed server-side in Karrio itself) and once more after the
+// mirror grace period, so the refetch that decides which card the row
+// sits on sees the ERP-mirrored erp_status. No optimistic update — the
+// ERP is the source of truth for its own status.
+//
+// ["shipments"] is a prefix: it matches the list, every detail entry and
+// the badges. Per-row actions call this from their onSuccess; the bulk
+// runners on the shipments board run their mutations silent (see the
+// options below) and call it ONCE when the whole batch is done — fifty rows
+// used to mean a hundred restarts of the heaviest query on the page.
+export function invalidateShipmentsAroundMirror(
+  queryClient: QueryClient,
+  id?: string,
+) {
   const invalidateCache = () => {
     queryClient.invalidateQueries(["shipments"]);
-    queryClient.invalidateQueries(["shipments", id]);
+    if (id) queryClient.invalidateQueries(["shipments", id]);
   };
-  // Twice on purpose: immediately (cheap, and correct for everything the
-  // action changed server-side in Karrio itself) and once more after the
-  // mirror grace period, so the refetch that decides which card the row
-  // sits on sees the ERP-mirrored erp_status. No optimistic update — the
-  // ERP is the source of truth for its own status.
+  invalidateCache();
+  setTimeout(invalidateCache, ERP_MIRROR_GRACE_MS);
+}
+
+// Runs `fn` over `items` with at most `limit` in flight. Items that share a
+// key (the same Sales Order, say) never overlap: the ERP locks per document
+// and two colli of one order written at once would trip its row lock. `fn`
+// must handle its own failures — a rejection here would stop the pump.
+export async function runBounded<T>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<void>,
+  keyOf?: (item: T) => string | null | undefined,
+): Promise<void> {
+  const queue = [...items];
+  const active = new Set<string>();
+  let running = 0;
+  await new Promise<void>((resolve) => {
+    const pump = () => {
+      if (queue.length === 0 && running === 0) return resolve();
+      while (running < Math.max(1, limit)) {
+        const index = queue.findIndex((item) => {
+          const key = keyOf?.(item);
+          return !key || !active.has(key);
+        });
+        if (index === -1) return;
+        const [item] = queue.splice(index, 1);
+        const key = keyOf?.(item);
+        if (key) active.add(key);
+        running += 1;
+        fn(item)
+          .catch(() => undefined)
+          .finally(() => {
+            running -= 1;
+            if (key) active.delete(key);
+            pump();
+          });
+      }
+    };
+    pump();
+  });
+}
+
+export function useShipmentERPActions(
+  id?: string,
+  // silent: no cache invalidation from the mutations themselves — the
+  // caller runs a batch and refreshes once at the end (see
+  // invalidateShipmentsAroundMirror).
+  options: { silent?: boolean } = {},
+) {
+  const queryClient = useQueryClient();
+  const karrio = useKarrio();
   const invalidateAroundMirror = () => {
-    invalidateCache();
-    setTimeout(invalidateCache, ERP_MIRROR_GRACE_MS);
+    if (options.silent) return;
+    invalidateShipmentsAroundMirror(queryClient, id);
   };
 
   // Most actions are a bare POST; an action that needs arguments (the

@@ -29,13 +29,15 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           const { metadata } = await loadMetadata(domain!);
           const auth = Auth(metadata?.HOST || (KARRIO_API as string));
           const token = await auth.authenticate(credentials as any);
-          const testMode = Boolean(headersList.get("referer")?.includes("/test"));
+          const testMode = Boolean(
+            headersList.get("referer")?.includes("/test"),
+          );
           const org = metadata?.MULTI_ORGANIZATIONS
             ? await auth.getCurrentOrg({
-              accessToken: token.access,
-              testMode,
-              orgId,
-            })
+                accessToken: token.access,
+                testMode,
+                orgId,
+              })
             : { id: null };
 
           return {
@@ -62,11 +64,16 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           const currentDomain = await getCurrentDomain();
           if (currentDomain) {
             // Use the current domain as the redirect target
-            const protocol = currentDomain.startsWith("localhost") ? "http" : "https";
+            const protocol = currentDomain.startsWith("localhost")
+              ? "http"
+              : "https";
             return `${protocol}://${currentDomain}`;
           }
         } catch (error) {
-          logger.error("Failed to get current domain for signout redirect:", error);
+          logger.error(
+            "Failed to get current domain for signout redirect:",
+            error,
+          );
         }
 
         // Fallback to NEXTAUTH_URL if current domain is unavailable
@@ -82,10 +89,14 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     },
     jwt: async ({ token, user, trigger, session }: any): Promise<any> => {
       const headersList = await headers();
-      const domain = await getCurrentDomain();
-      const host = domain || (KARRIO_API as string);
-      const { metadata } = await loadMetadata(host);
-      const auth = Auth(metadata?.HOST || host);
+      // Resolve the API client lazily: metadata is only needed for an org
+      // switch (`update` trigger) or a token refresh, not on every session read.
+      const getAuth = async () => {
+        const domain = await getCurrentDomain();
+        const host = domain || (KARRIO_API as string);
+        const { metadata } = await loadMetadata(host);
+        return Auth(metadata?.HOST || host);
+      };
 
       if (user?.accessToken) {
         token.orgId = user.orgId;
@@ -99,6 +110,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
       if (trigger === "update" && session?.orgId) {
         // Note, that `session` can be any arbitrary object, remember to validate it!
+        const auth = await getAuth();
         const org = await auth.getCurrentOrg({
           accessToken: (token as any).accessToken,
           testMode: token.testMode,
@@ -118,6 +130,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       // Access token has expired, try to update it
       try {
         logger.info("Refreshing expired token...");
+        const auth = await getAuth();
         const { access, refresh } = await auth.refreshToken(
           token.refreshToken as string,
         );

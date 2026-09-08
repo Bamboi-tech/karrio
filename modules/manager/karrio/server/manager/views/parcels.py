@@ -27,7 +27,9 @@ Parcels = PaginatedResult("ParcelList", Parcel)
 class ParcelList(GenericAPIView):
     queryset = models.Parcel.objects
     pagination_class = type(
-        "CustomPagination", (LimitOffsetPagination,), dict(default_limit=20)
+        "CustomPagination",
+        (LimitOffsetPagination,),
+        dict(default_limit=20, max_limit=200),
     )
     serializer_class = Parcels
 
@@ -76,10 +78,9 @@ class ParcelList(GenericAPIView):
         if usage:
             queryset = queryset.filter(meta__usage__contains=usage)
 
-        serializer = Parcel(queryset, many=True)
-        response = self.paginate_queryset(serializer.data)
+        page = self.paginate_queryset(queryset)
 
-        return self.get_paginated_response(response)
+        return self.get_paginated_response(Parcel(page, many=True).data)
 
     @openapi.extend_schema(
         tags=["Parcels"],

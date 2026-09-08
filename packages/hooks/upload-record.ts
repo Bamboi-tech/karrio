@@ -19,7 +19,9 @@ export function useUploadRecords(params: DocumentsApiUploadsRequest = {}) {
 
   // Queries
   const query = useAuthenticatedQuery({
-    queryKey: ["upload_records"],
+    // Key on the filter: the previous bare key bled one shipment's uploads
+    // into every other shipment's detail view.
+    queryKey: ["upload_records", filter],
     queryFn: () => karrio.documents.uploads(filter).then(({ data }) => data),
     keepPreviousData: true,
     staleTime: 5000,

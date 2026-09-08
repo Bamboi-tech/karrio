@@ -7,6 +7,7 @@ This module registers Huey tasks that the worker process consumes:
         background_trackers_update  — dispatches per-carrier tracking sub-tasks
         periodic_data_archiving     — archives stale data
         daily_pickup_close          — auto-closes past pickups
+        daily_tracing_retention     — prunes SDK tracing records past TRACING_RETENTION_DAYS
 
     On-demand tasks (enqueued by signals or the dispatcher):
         process_carrier_tracking_batch — fetches + saves tracking for one carrier
@@ -19,6 +20,7 @@ at worker startup.
 """
 
 import logging
+from decouple import config
 from django.conf import settings
 from huey import crontab
 from huey.contrib.djhuey import db_task, db_periodic_task, HUEY as huey_instance
@@ -30,6 +32,13 @@ from karrio.server.core.telemetry import with_task_telemetry
 logger = logging.getLogger(__name__)
 
 DATA_ARCHIVING_SCHEDULE = int(getattr(settings, "DATA_ARCHIVING_SCHEDULE", 168))
+TRACING_RETENTION_DAYS = int(
+    getattr(
+        settings,
+        "TRACING_RETENTION_DAYS",
+        config("TRACING_RETENTION_DAYS", default=14, cast=int),
+    )
+)
 DEFAULT_TRACKERS_UPDATE_INTERVAL = max(
     1,
     min(
@@ -118,6 +127,21 @@ def daily_pickup_close():
     _run()
 
 
+@db_periodic_task(crontab(hour=1, minute=0))
+@with_task_telemetry("daily_tracing_retention")
+def daily_tracing_retention():
+    from karrio.server.events.task_definitions.base import archiving
+
+    @utils.run_on_all_tenants
+    def _run(**kwargs):
+        utils.failsafe(
+            lambda: archiving.run_tracing_retention(TRACING_RETENTION_DAYS),
+            "An error occurred during tracing retention: $error",
+        )
+
+    _run()
+
+
 # ─────────────────────────────────────────────────────────────────
 # Registry (consumed by the Huey worker for task discovery)
 # ─────────────────────────────────────────────────────────────────
@@ -127,5 +151,6 @@ TASK_DEFINITIONS = [
     process_carrier_tracking_batch,
     periodic_data_archiving,
     daily_pickup_close,
+    daily_tracing_retention,
     notify_webhooks,
 ]

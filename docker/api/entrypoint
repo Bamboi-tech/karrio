@@ -4,9 +4,25 @@ export SECRET_KEY=${SECRET_KEY:="0/zfUEetNIle3iNekk4npo4T1pLFAWOyBFgbAu0afB4="}
 export ADMIN_EMAIL=${ADMIN_EMAIL:="admin@example.com"}
 export ADMIN_PASSWORD=${ADMIN_PASSWORD:="demo"}
 
-# Setup DB and static files
+# Setup DB
 karrio migrate || exit
-karrio collectstatic --noinput 1>/dev/null || exit
+
+# Static files. The Dockerfile already ran collectstatic (incl. the gzip+brotli
+# post-processing of every file) into STATIC_BUILD_DIR at image build time.
+# STATIC_ROOT_DIR is a volume shared with Caddy, which hides whatever the image
+# has at that path, so sync the build output into it here (a plain copy of
+# ~100 MB, seconds; the compress step took minutes on the production VM).
+# Same image restarted -> identical manifest -> nothing to do.
+# RUN_COLLECTSTATIC=1 forces the old on-boot collectstatic (e.g. a plugin that
+# ships its own static files mounted at runtime).
+STATIC_BUILD_DIR=${STATIC_BUILD_DIR:-/karrio/staticfiles}
+STATIC_ROOT_DIR=${STATIC_ROOT_DIR:-/karrio/static}
+if [[ "${RUN_COLLECTSTATIC,,}" =~ ^(true|1|yes|on)$ ]] || [ ! -f "$STATIC_BUILD_DIR/staticfiles.json" ]; then
+    karrio collectstatic --noinput 1>/dev/null || exit
+elif ! cmp -s "$STATIC_BUILD_DIR/staticfiles.json" "$STATIC_ROOT_DIR/staticfiles.json"; then
+    mkdir -p "$STATIC_ROOT_DIR" || exit
+    cp -a "$STATIC_BUILD_DIR/." "$STATIC_ROOT_DIR/" || exit
+fi
 
 # Setup Default super admin
 (echo "
@@ -24,16 +40,24 @@ if [[ ! "${DETACHED_WORKER,,}" =~ ^(false|0|no|off)$ ]] && [ -z "$REDIS_HOST" ] 
     echo "Background tasks (webhooks, events) will run synchronously in the web process."
 fi
 
+# Server model: WSGI + gthread by default (worker_class/threads live in
+# gunicorn-cfg.py); KARRIO_ASGI=True restores the uvicorn ASGI setup.
+if [[ "${KARRIO_ASGI,,}" =~ ^(true|1|yes|on)$ ]]; then
+    KARRIO_APP=karrio.server.asgi
+else
+    KARRIO_APP=karrio.server.wsgi
+fi
+
 # Start services
 if [[ "${DETACHED_WORKER,,}" =~ ^(false|0|no|off)$ ]]; then
     set -e # turn on bash's job control
     trap 'kill 0' INT
 
-    gunicorn --config gunicorn-cfg.py karrio.server.asgi -k karrio.server.workers.UvicornWorker &
+    gunicorn --config gunicorn-cfg.py "$KARRIO_APP" &
     /bin/bash ./worker &
 
     wait -n
 
 else
-    gunicorn --config gunicorn-cfg.py karrio.server.asgi -k karrio.server.workers.UvicornWorker
+    gunicorn --config gunicorn-cfg.py "$KARRIO_APP"
 fi

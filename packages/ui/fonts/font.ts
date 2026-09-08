@@ -5,6 +5,7 @@ import {
   Noto_Sans,
   Ubuntu,
   Oxygen,
+  Open_Sans,
 } from "next/font/google";
 
 export const inter = Inter({
@@ -44,4 +45,15 @@ export const jetbrains = JetBrains_Mono({
   subsets: ["latin"],
   display: "swap",
   variable: "--font-jetbrains",
+});
+
+// Brand font of the dashboard (Bulma `$family-sans-serif` in theme.scss reads
+// `var(--font-open-sans)`); replaces the render-blocking Google Fonts
+// `@import` that used to sit inside the bundled CSS.
+export const openSans = Open_Sans({
+  subsets: ["latin"],
+  weight: ["300", "400", "600", "700"],
+  style: ["normal"],
+  display: "swap",
+  variable: "--font-open-sans",
 });

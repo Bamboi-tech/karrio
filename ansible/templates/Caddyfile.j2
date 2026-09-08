@@ -4,7 +4,17 @@
 }
 
 (common_headers) {
-    encode gzip
+    # Browsers send "br" first; Caddy 2.8 has no brotli, so with gzip only it
+    # negotiated identity for many clients (3.4-7x more bytes for CSS/JS).
+    # zstd is built in and preferred by Chrome/Firefox; gzip is the fallback.
+    encode zstd gzip
+    # Per-request JSON access log (status, duration, size, uri, user agent)
+    # to stdout -> docker journald. Answers "Node render or Django?" without
+    # deploying the observability stack.
+    log {
+        output stdout
+        format json
+    }
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains"
         -Server
@@ -27,5 +37,28 @@
     import common_headers
     reverse_proxy dashboard:3002 {
         header_up X-Forwarded-Proto https
+    }
+}
+
+# Internal, plain-HTTP entry to the API for the dashboard's server-side
+# (Next.js SSR) calls -- KARRIO_URL=http://caddy:8080
+# in karrio-compose.yaml. Not published on the host. The API runs with
+# USE_HTTPS=True (SECURE_SSL_REDIRECT), so a direct http://api:5002 call
+# without X-Forwarded-Proto: https gets a 301 to https://api:5002, which Node
+# would follow into a TLS handshake against a plain port. Going through Caddy
+# keeps the hop inside the docker network (0.03 s vs 0.82 s through the public
+# hostname) and sets the header the API needs.
+:8080 {
+    log {
+        output stdout
+        format json
+    }
+    reverse_proxy api:5002 {
+        header_up X-Forwarded-Proto https
+        # The API builds metadata.HOST/GRAPHQL/OPENAPI from the request Host
+        # (dataunits.py build_absolute_uri) and the SSR layout hands that
+        # metadata to the browser, so the internal hop must present the public
+        # API hostname or the browser would call https://caddy:8080.
+        header_up Host {{ domains.api }}
     }
 }

@@ -47,7 +47,9 @@ Shipments = PaginatedResult("ShipmentList", Shipment)
 class ShipmentList(GenericAPIView):
     throttle_scope = "carrier_request"
     pagination_class = type(
-        "CustomPagination", (LimitOffsetPagination,), dict(default_limit=20)
+        "CustomPagination",
+        (LimitOffsetPagination,),
+        dict(default_limit=20, max_limit=200),
     )
     filter_backends = (DjangoFilterBackend,)
     filterset_class = ShipmentFilters
@@ -71,9 +73,9 @@ class ShipmentList(GenericAPIView):
         Retrieve all shipments.
         """
         shipments = self.filter_queryset(self.get_queryset())
-        response = self.paginate_queryset(Shipment(shipments, many=True).data)
+        page = self.paginate_queryset(shipments)
 
-        return self.get_paginated_response(response)
+        return self.get_paginated_response(Shipment(page, many=True).data)
 
     @openapi.extend_schema(
         tags=["Shipments"],

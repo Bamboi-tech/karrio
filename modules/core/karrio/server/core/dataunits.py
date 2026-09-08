@@ -194,6 +194,30 @@ def _get_platform_references() -> dict:
     return result
 
 
+REFERENCES_VERSION_KEY = "references:version"
+
+
+def get_references_version() -> int:
+    """Monotonic counter folded into every /v1/references cache key.
+
+    Bumped by the carrier-connection and constance signals, so a saved
+    connection or setting invalidates the cached, translated payload at
+    once instead of after its TTL.
+    """
+    from django.core.cache import cache
+
+    return cache.get(REFERENCES_VERSION_KEY) or 0
+
+
+def bump_references_version() -> None:
+    from django.core.cache import cache
+
+    try:
+        cache.incr(REFERENCES_VERSION_KEY)
+    except ValueError:
+        cache.set(REFERENCES_VERSION_KEY, 1, None)
+
+
 def contextual_reference(request: Request = None, reduced: bool = True):
     import karrio.server.core.gateway as gateway
     import karrio.server.core.validators as validators

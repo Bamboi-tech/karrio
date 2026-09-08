@@ -1,5 +1,5 @@
 "use client";
-import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis } from "recharts";
+import dynamic from "next/dynamic";
 import { AppLink } from "@karrio/ui/core/components/app-link";
 import { SelectField } from "@karrio/ui/core/components";
 import { useAppMode } from "@karrio/hooks/app-mode";
@@ -8,6 +8,12 @@ import { useUser } from "@karrio/hooks/user";
 import { useRouter } from "next/navigation";
 import { p } from "@karrio/lib";
 import moment from "moment";
+
+// recharts is only fetched when a chart is rendered (see ./charts.tsx).
+const UsageBarChart = dynamic(
+  () => import("./charts").then((m) => m.UsageBarChart),
+  { ssr: false, loading: () => null },
+);
 
 
 export default function Page() {
@@ -68,9 +74,8 @@ export default function Page() {
 
                   <div style={{ width: "calc(100%)", height: "150px" }}>
                     {!!usage?.shipment_count && (
-                      <ResponsiveContainer width="100%" height={150}>
-                        <BarChart
-                          data={DAYS_LIST[currentFilter() || "15 days"].map(
+                      <UsageBarChart
+                        data={DAYS_LIST[currentFilter() || "15 days"].map(
                             (_) => ({
                               name: _,
                               total:
@@ -80,26 +85,15 @@ export default function Page() {
                                 )?.count || 0,
                             }),
                           )}
-                        >
-                          <Tooltip />
-                          <Bar dataKey="total" fill="#79e5dd" />
-                          <XAxis
-                            height={10}
-                            dataKey="name"
-                            interval={"preserveStartEnd"}
-                            stroke={"#ddd"}
-                            tick={{ fill: "#000000" }}
-                            style={{ fontSize: "0.6rem" }}
-                            ticks={[
+                        dataKey="total"
+                        ticks={[
                               DAYS_LIST[currentFilter() || "15 days"][0],
                               DAYS_LIST[currentFilter() || "15 days"][
                               DAYS_LIST[currentFilter() || "15 days"].length -
                               1
                               ],
                             ]}
-                          />
-                        </BarChart>
-                      </ResponsiveContainer>
+                      />
                     )}
                   </div>
                 </div>
@@ -122,9 +116,8 @@ export default function Page() {
 
                   <div style={{ width: "calc(100%)", height: "150px" }}>
                     {!!usage?.tracker_count && (
-                      <ResponsiveContainer width="100%" height={150}>
-                        <BarChart
-                          data={DAYS_LIST[currentFilter() || "15 days"].map(
+                      <UsageBarChart
+                        data={DAYS_LIST[currentFilter() || "15 days"].map(
                             (_) => ({
                               name: _,
                               total:
@@ -134,26 +127,15 @@ export default function Page() {
                                 )?.count || 0,
                             }),
                           )}
-                        >
-                          <Tooltip />
-                          <Bar dataKey="total" fill="#79e5dd" />
-                          <XAxis
-                            height={10}
-                            dataKey="name"
-                            interval={"preserveStartEnd"}
-                            stroke={"#ddd"}
-                            tick={{ fill: "#000000" }}
-                            style={{ fontSize: "0.6rem" }}
-                            ticks={[
+                        dataKey="total"
+                        ticks={[
                               DAYS_LIST[currentFilter() || "15 days"][0],
                               DAYS_LIST[currentFilter() || "15 days"][
                               DAYS_LIST[currentFilter() || "15 days"].length -
                               1
                               ],
                             ]}
-                          />
-                        </BarChart>
-                      </ResponsiveContainer>
+                      />
                     )}
                   </div>
                 </div>
@@ -186,9 +168,8 @@ export default function Page() {
 
                   <div style={{ width: "calc(100%)", height: "150px" }}>
                     {!!usage?.order_volumes && (
-                      <ResponsiveContainer width="100%" height={150}>
-                        <BarChart
-                          data={DAYS_LIST[currentFilter() || "15 days"].map(
+                      <UsageBarChart
+                        data={DAYS_LIST[currentFilter() || "15 days"].map(
                             (_) => ({
                               name: _,
                               value:
@@ -198,26 +179,15 @@ export default function Page() {
                                 )?.count || 0,
                             }),
                           )}
-                        >
-                          <Tooltip />
-                          <Bar dataKey="value" fill="#79e5dd" />
-                          <XAxis
-                            height={10}
-                            dataKey="name"
-                            interval={"preserveStartEnd"}
-                            stroke={"#ddd"}
-                            tick={{ fill: "#000000" }}
-                            style={{ fontSize: "0.6rem" }}
-                            ticks={[
+                        dataKey="value"
+                        ticks={[
                               DAYS_LIST[currentFilter() || "15 days"][0],
                               DAYS_LIST[currentFilter() || "15 days"][
                               DAYS_LIST[currentFilter() || "15 days"].length -
                               1
                               ],
                             ]}
-                          />
-                        </BarChart>
-                      </ResponsiveContainer>
+                      />
                     )}
                   </div>
                 </div>
@@ -245,9 +215,8 @@ export default function Page() {
 
                   <div style={{ width: "calc(100%)", height: "150px" }}>
                     {!!usage?.shipping_spend && (
-                      <ResponsiveContainer width="100%" height={150}>
-                        <BarChart
-                          data={DAYS_LIST[currentFilter() || "15 days"].map(
+                      <UsageBarChart
+                        data={DAYS_LIST[currentFilter() || "15 days"].map(
                             (_) => ({
                               name: _,
                               value:
@@ -257,26 +226,15 @@ export default function Page() {
                                 )?.count || 0,
                             }),
                           )}
-                        >
-                          <Tooltip />
-                          <Bar dataKey="value" fill="#79e5dd" />
-                          <XAxis
-                            height={10}
-                            dataKey="name"
-                            interval={"preserveStartEnd"}
-                            stroke={"#ddd"}
-                            tick={{ fill: "#000000" }}
-                            style={{ fontSize: "0.6rem" }}
-                            ticks={[
+                        dataKey="value"
+                        ticks={[
                               DAYS_LIST[currentFilter() || "15 days"][0],
                               DAYS_LIST[currentFilter() || "15 days"][
                               DAYS_LIST[currentFilter() || "15 days"].length -
                               1
                               ],
                             ]}
-                          />
-                        </BarChart>
-                      </ResponsiveContainer>
+                      />
                     )}
                   </div>
                 </div>

@@ -290,11 +290,17 @@ class PageInfo:
         - https://relay.dev/graphql/connections.htm
     """
 
-    count: int
     has_next_page: bool
     has_previous_page: bool
     start_cursor: typing.Optional[str]
     end_cursor: typing.Optional[str]
+    # The total is a full-filter COUNT(*) — a second scan once a keyword
+    # filter is present — so it only runs when a query selects ``count``.
+    count_resolver: strawberry.Private[typing.Callable[[], int]]
+
+    @strawberry.field
+    def count(self) -> int:
+        return self.count_resolver()
 
 
 @dataclasses.dataclass
@@ -339,7 +345,7 @@ def paginated_connection(
     ]
     return Connection(
         page_info=PageInfo(
-            count=queryset.count(),
+            count_resolver=queryset.count,
             has_previous_page=False,
             has_next_page=len(results) > first,
             start_cursor=edges[0].cursor if edges else None,

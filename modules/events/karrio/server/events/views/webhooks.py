@@ -31,8 +31,9 @@ class WebhookTestRequest(serializers.Serializer):
 
 
 class WebhookList(GenericAPIView):
-    pagination_class = LimitOffsetPagination
-    default_limit = 20
+    pagination_class = type(
+        "CustomPagination", (LimitOffsetPagination,), dict(max_limit=200)
+    )
     serializer_class = Webhooks
 
     @openapi.extend_schema(
@@ -51,8 +52,8 @@ class WebhookList(GenericAPIView):
         Retrieve all webhooks.
         """
         webhooks = models.Webhook.access_by(request)
-        response = self.paginate_queryset(Webhook(webhooks, many=True).data)
-        return self.get_paginated_response(response)
+        page = self.paginate_queryset(webhooks)
+        return self.get_paginated_response(Webhook(page, many=True).data)
 
     @openapi.extend_schema(
         tags=["Webhooks"],

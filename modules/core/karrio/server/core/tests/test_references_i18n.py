@@ -7,6 +7,7 @@ when a language is specified via query param or Accept-Language header.
 from rest_framework import status
 from rest_framework.test import APITestCase, APIClient
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 
 from karrio.server.user.models import Token
 
@@ -22,6 +23,55 @@ class TestReferencesTranslation(APITestCase):
         self.token = Token.objects.create(user=self.user, test_mode=False)
         self.client = APIClient()
         self.client.credentials(HTTP_AUTHORIZATION="Token " + self.token.key)
+        cache.clear()
+
+    def test_references_cache_preserves_request_origin(self):
+        first = self.client.get("/v1/references?reduced=true", HTTP_HOST="first.example.com")
+        second = self.client.get("/v1/references?reduced=true", HTTP_HOST="second.example.com")
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        self.assertIn("first.example.com", first.data["HOST"])
+        self.assertIn("second.example.com", second.data["HOST"])
+        self.assertNotEqual(first["ETag"], second["ETag"])
+
+    def test_references_carry_an_etag_and_honour_if_none_match(self):
+        first = self.client.get("/v1/references?reduced=true")
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        etag = first["ETag"]
+        self.assertTrue(etag.startswith('"') and etag.endswith('"'))
+
+        with self.assertNumQueries(0):
+            revisit = self.client.get(
+                "/v1/references?reduced=true", HTTP_IF_NONE_MATCH=etag
+            )
+        self.assertEqual(revisit.status_code, status.HTTP_304_NOT_MODIFIED)
+        self.assertEqual(revisit["ETag"], etag)
+        self.assertEqual(revisit.content, b"")
+
+        weak = self.client.get(
+            "/v1/references?reduced=true", HTTP_IF_NONE_MATCH=f"W/{etag}"
+        )
+        self.assertEqual(weak.status_code, status.HTTP_304_NOT_MODIFIED)
+
+        stale = self.client.get(
+            "/v1/references?reduced=true", HTTP_IF_NONE_MATCH='"nope"'
+        )
+        self.assertEqual(stale.status_code, status.HTTP_200_OK)
+        self.assertEqual(stale["ETag"], etag)
+
+    def test_references_etag_changes_per_language_and_after_a_bump(self):
+        import karrio.server.core.dataunits as dataunits
+
+        english = self.client.get("/v1/references?reduced=true&lang=en")
+        german = self.client.get("/v1/references?reduced=true&lang=de")
+        self.assertNotEqual(english["ETag"], german["ETag"])
+
+        dataunits.bump_references_version()
+        again = self.client.get(
+            "/v1/references?reduced=true&lang=en", HTTP_IF_NONE_MATCH=english["ETag"]
+        )
+        # Same payload, so the same ETag — but recomputed, not served stale.
+        self.assertEqual(again.status_code, status.HTTP_304_NOT_MODIFIED)
 
     def test_references_default_english(self):
         """Test that references returns English values by default."""

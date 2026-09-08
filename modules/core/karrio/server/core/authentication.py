@@ -28,6 +28,17 @@ from karrio.server.core.logging import logger
 
 UserModel = get_user_model()
 AUTHENTICATION_CLASSES = getattr(settings, "AUTHENTICATION_CLASSES", [])
+JWT_USER_CACHE_KEY = "jwt_auth_user:{}"
+
+# The authenticator dotted paths never change at runtime; resolving them
+# with pydoc on every request was five module walks per request.
+_locate_authenticator = functools.lru_cache(maxsize=None)(pydoc.locate)
+
+
+def invalidate_jwt_user_cache(user_id) -> None:
+    from django.core.cache import cache
+
+    cache.delete(JWT_USER_CACHE_KEY.format(user_id))
 
 
 def catch_auth_exception(func):
@@ -176,6 +187,29 @@ class JWTAuthentication(BaseJWTAuthentication):
     """JWT Authentication that supports both HTTP-only cookies and Authorization header.
     Checks cookies first, then falls back to Authorization header for backward compatibility.
     """
+
+    # Cache user id → User for 5 minutes, mirroring TokenAuthentication: the
+    # dashboard sends a JWT on every request and paid a User SELECT each time.
+    # A user save drops the entry (core signals); otherwise the TTL bounds it.
+    USER_CACHE_TTL = 300
+
+    def get_user(self, validated_token):
+        from django.core.cache import cache
+        from rest_framework_simplejwt.settings import api_settings
+
+        user_id = validated_token.get(api_settings.USER_ID_CLAIM)
+        if user_id is None or api_settings.CHECK_REVOKE_TOKEN:
+            # No id to key on, or the token must be checked against the live
+            # password hash: take the uncached path.
+            return super().get_user(validated_token)
+
+        cache_key = JWT_USER_CACHE_KEY.format(user_id)
+        user = cache.get(cache_key)
+        if user is None:
+            user = super().get_user(validated_token)
+            cache.set(cache_key, user, self.USER_CACHE_TTL)
+
+        return user
 
     @catch_auth_exception
     def authenticate(self, request):
@@ -347,7 +381,7 @@ def authenticate_user(request):
         ):
             logger.debug(f"Trying authenticator: {authenticator}")
             try:
-                auth_instance = pydoc.locate(authenticator)()
+                auth_instance = _locate_authenticator(authenticator)()
                 auth = auth_instance.authenticate(request)
 
                 if auth is not None:

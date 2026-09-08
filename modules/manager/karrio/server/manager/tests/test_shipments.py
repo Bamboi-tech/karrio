@@ -13,6 +13,7 @@ from karrio.core.models import (
 )
 from karrio.server.core.tests import APITestCase
 from karrio.server.core.utils import create_carrier_snapshot
+from karrio.server.manager.serializers import Shipment
 import karrio.server.manager.models as models
 import karrio.server.providers.models as providers
 
@@ -101,6 +102,42 @@ class TestShipments(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertDictEqual(response_data, SHIPMENT_RESPONSE)
+
+
+class TestShipmentListPagination(TestShipmentFixture):
+    def test_limit_slices_the_queryset_before_serializing(self):
+        models.Shipment.objects.create(
+            shipper=self.shipper_data,
+            recipient=self.recipient_data,
+            parcels=[self.parcel_data],
+            created_by=self.user,
+            test_mode=True,
+            payment={"currency": "CAD", "paid_by": "sender"},
+        )
+        url = reverse("karrio.server.manager:shipment-list")
+
+        with patch(
+            "karrio.server.manager.views.shipments.Shipment", wraps=Shipment
+        ) as serializer:
+            response = self.client.get(f"{url}?limit=1")
+            response_data = json.loads(response.content)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response_data["count"], 2)
+        self.assertEqual(len(response_data["results"]), 1)
+        self.assertIsNotNone(response_data["next"])
+        self.assertIsNone(response_data["previous"])
+        # The serializer only ever sees the page, never the whole table.
+        (page,), _kwargs = serializer.call_args
+        self.assertEqual(len(list(page)), 1)
+
+    def test_limit_is_capped_at_200(self):
+        from karrio.server.manager.views.shipments import ShipmentList
+
+        paginator = ShipmentList.pagination_class()
+        request = type("Req", (), {"query_params": {"limit": "5000"}})()
+
+        self.assertEqual(paginator.get_limit(request), 200)
 
 
 class TestShipmentDetails(TestShipmentFixture):

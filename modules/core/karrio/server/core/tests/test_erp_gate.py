@@ -6,6 +6,7 @@ import json
 import requests
 from unittest import mock
 
+from django.core.cache import cache
 from django.test import TestCase, override_settings
 from django.utils.translation import gettext_lazy
 
@@ -398,6 +399,11 @@ class TestShipmentActionRelay(TestCase):
 
 @override_settings(ERP_GATE_URL="https://erp.test", ERP_GATE_TOKEN="key:secret")
 class TestFeaturesRelay(TestCase):
+    def setUp(self):
+        cache.delete_many(
+            [erp_gate.FEATURES_CACHE_KEY, erp_gate.FEATURES_LAST_KNOWN_CACHE_KEY]
+        )
+
     def test_list_unwraps_frappe_message(self):
         payload = {"message": {"features": [{"key": "auto_labels", "enabled": True}]}}
         with mock.patch.object(
@@ -481,6 +487,66 @@ class TestFeaturesRelay(TestCase):
             erp_gate.run_erp_features_set("auto_labels", True)
         self.assertEqual(caught.exception.status_code, 424)
 
+    def test_list_is_served_from_cache_with_a_short_read_timeout(self):
+        payload = {"message": {"features": [{"key": "auto_labels", "enabled": True}]}}
+        with mock.patch.object(
+            erp_gate.requests, "post", return_value=_response(payload=payload)
+        ) as post:
+            first = erp_gate.run_erp_features_list()
+            second = erp_gate.run_erp_features_list()
+        self.assertEqual(first, second)
+        self.assertEqual(post.call_count, 1)
+        _args, kwargs = post.call_args
+        self.assertEqual(kwargs["timeout"], (5, 3))
+
+    def test_list_falls_back_to_last_known_value_when_erp_is_slow(self):
+        payload = {"message": {"features": [{"key": "auto_labels", "enabled": True}]}}
+        with mock.patch.object(
+            erp_gate.requests, "post", return_value=_response(payload=payload)
+        ):
+            known = erp_gate.run_erp_features_list()
+        cache.delete(erp_gate.FEATURES_CACHE_KEY)
+
+        with mock.patch.object(
+            erp_gate.requests, "post", side_effect=requests.ReadTimeout("slow")
+        ) as post, mock.patch.object(erp_gate.logger, "warning") as warning:
+            result = erp_gate.run_erp_features_list()
+        self.assertEqual(result, known)
+        self.assertEqual(post.call_count, 1)
+        self.assertTrue(
+            any("last known" in str(call.args[0]) for call in warning.call_args_list)
+        )
+
+    @override_settings(ERP_GATE_URL=None, ERP_GATE_TOKEN=None)
+    def test_last_known_value_never_masks_a_missing_configuration(self):
+        cache.set(erp_gate.FEATURES_LAST_KNOWN_CACHE_KEY, {"features": []}, 60)
+        with self.assertRaises(APIException) as caught:
+            erp_gate.run_erp_features_list()
+        self.assertEqual(caught.exception.status_code, 424)
+
+    def test_toggle_drops_the_cached_list_and_patches_the_last_known_one(self):
+        listing = {"message": {"features": [{"key": "auto_labels", "enabled": True}]}}
+        toggled = {"message": {"key": "auto_labels", "enabled": False}}
+        with mock.patch.object(
+            erp_gate.requests, "post", return_value=_response(payload=listing)
+        ):
+            erp_gate.run_erp_features_list()
+        with mock.patch.object(
+            erp_gate.requests, "post", return_value=_response(payload=toggled)
+        ):
+            erp_gate.run_erp_features_set("auto_labels", False)
+
+        self.assertIsNone(cache.get(erp_gate.FEATURES_CACHE_KEY))
+        self.assertEqual(
+            cache.get(erp_gate.FEATURES_LAST_KNOWN_CACHE_KEY),
+            {"features": [{"key": "auto_labels", "enabled": False}]},
+        )
+        with mock.patch.object(
+            erp_gate.requests, "post", return_value=_response(payload=listing)
+        ) as post:
+            erp_gate.run_erp_features_list()
+        self.assertEqual(post.call_count, 1)
+
 
 @override_settings(ERP_GATE_URL="https://erp.test", ERP_GATE_TOKEN="key:secret")
 class TestRefusalDetailIsSerializable(TestCase):
@@ -492,6 +558,11 @@ class TestRefusalDetailIsSerializable(TestCase):
     object reached the API log and the dashboard rendered it as a React
     child, blanking the page with "Something went wrong!".
     """
+
+    def setUp(self):
+        cache.delete_many(
+            [erp_gate.FEATURES_CACHE_KEY, erp_gate.FEATURES_LAST_KNOWN_CACHE_KEY]
+        )
 
     def _refusals(self):
         """Every APIException erp_gate can raise, paired with a label."""

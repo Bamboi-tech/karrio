@@ -762,6 +762,135 @@ export const GET_SHIPMENTS = gql`
   }
 `;
 
+// Bamboi fork: the shipments board's list document. GET_SHIPMENTS above
+// selects the full shipment (four addresses, customs, payment, every rate
+// with its extra charges) for a table that renders status, route, recipient,
+// dates, carrier and tracking number. This is the subset the rows, the cards,
+// the bulk toolbar, the pick list and the per-row menu actually read:
+// - rates/selected_rate are kept slim (id + what the carrier avatar reads);
+//   the buy path only needs an id, everything else is purchase-side;
+// - parcels keep their items for the colli chip and the pick list;
+// - selected_rate_carrier is kept as-is for the avatar colours.
+// Anything that needs the full record (duplicate, the detail page) fetches
+// GET_SHIPMENT by id instead.
+export const GET_SHIPMENTS_LIST = gql`
+  query get_shipments_list($filter: ShipmentFilter) {
+    shipments(filter: $filter) {
+      page_info {
+        count
+        has_next_page
+        has_previous_page
+        start_cursor
+        end_cursor
+      }
+      edges {
+        node {
+          id
+          carrier_id
+          carrier_name
+          created_at
+          updated_at
+          status
+          recipient {
+            id
+            postal_code
+            city
+            person_name
+            company_name
+            country_code
+            state_code
+            address_line1
+            address_line2
+          }
+          parcels {
+            id
+            items {
+              id
+              title
+              description
+              quantity
+              sku
+            }
+          }
+          label_type
+          tracking_number
+          label_url
+          invoice_url
+          tracker_id
+          service
+          reference
+          selected_rate {
+            id
+            carrier_name
+            carrier_id
+            currency
+            service
+            transit_days
+            total_charge
+            meta
+          }
+          rates {
+            id
+            carrier_name
+            carrier_id
+            service
+            meta
+          }
+          options
+          metadata
+          meta
+          selected_rate_carrier {
+            connection_id
+            connection_type
+            carrier_code
+            carrier_id
+            carrier_name
+            test_mode
+          }
+        }
+      }
+    }
+  }
+`;
+
+// Bamboi fork: the count badges on the status cards (Today is counted
+// client-side over the first draft page, On hold / Needs Attention read
+// page_info.count) and the print-confirmation poll, which only reads
+// metadata.printed_at for a list of ids.
+export const GET_SHIPMENTS_BADGE = gql`
+  query get_shipments_badge($filter: ShipmentFilter) {
+    shipments(filter: $filter) {
+      page_info {
+        count
+        has_next_page
+      }
+      edges {
+        node {
+          id
+          metadata
+        }
+      }
+    }
+  }
+`;
+
+// Bamboi fork: what the shipment page re-reads every few seconds while it
+// follows the ERP through an address correction (meta.address_sync_pending,
+// metadata.replaced_by_shipment, the status flip to cancelled). The full
+// GET_SHIPMENT is refetched once when any of these change.
+export const GET_SHIPMENT_FOLLOW = gql`
+  query get_shipment_follow($id: String!) {
+    shipment(id: $id) {
+      id
+      status
+      updated_at
+      tracker_id
+      metadata
+      meta
+    }
+  }
+`;
+
 export const GET_SHIPMENT_DATA = gql`
   query get_shipment_data($id: String!) {
     shipment(id: $id) {
@@ -3022,7 +3151,9 @@ export const UPDATE_SERVICE_RATE = gql`
 `;
 
 export const BATCH_UPDATE_SERVICE_RATES = gql`
-  mutation BatchUpdateServiceRates($data: BatchUpdateServiceRatesMutationInput!) {
+  mutation BatchUpdateServiceRates(
+    $data: BatchUpdateServiceRatesMutationInput!
+  ) {
     batch_update_service_rates(input: $data) {
       rate_sheet {
         id
@@ -3145,7 +3276,9 @@ export const UPDATE_SERVICE_ZONE_IDS = gql`
 `;
 
 export const UPDATE_SERVICE_SURCHARGE_IDS = gql`
-  mutation UpdateServiceSurchargeIds($data: UpdateServiceSurchargeIdsMutationInput!) {
+  mutation UpdateServiceSurchargeIds(
+    $data: UpdateServiceSurchargeIdsMutationInput!
+  ) {
     update_service_surcharge_ids(input: $data) {
       rate_sheet {
         id

@@ -14,6 +14,7 @@ import {
   GET_SHIPMENTS,
   GET_SHIPMENTS_LIST,
   GET_SHIPMENTS_BADGE,
+  GET_SHIPMENT_BADGE_COUNTS,
   GET_SHIPMENT,
   GET_SHIPMENT_FOLLOW,
   ChangeShipmentStatusMutationInput,
@@ -144,8 +145,12 @@ export function useShipments<V extends ShipmentsVariant = "full">({
     const status = ([] as string[])
       .concat((variables.filter.status as any) || [])
       .filter((s) => !`${s}`.startsWith("_"));
+    const warehouseView = ([] as string[]).concat(variables.filter.status || [])
+      .map((status) => ({ _print_today: "today", _print_planned: "planned", _review_clear: "complete" } as Record<string, string>)[status])
+      .find(Boolean);
     const filter = {
       ...variables.filter,
+      ...(warehouseView ? { warehouse_view: warehouseView } : {}),
       ...(status.length ? { status } : { status: undefined }),
     } as ShipmentFilter;
     return karrio.graphql.request<ShipmentsData<V>>(SHIPMENTS_QUERY[variant], {
@@ -430,4 +435,17 @@ export function useShipmentMutation(
     duplicateShipment,
     discardParcel,
   };
+}
+
+export function useShipmentBadgeCounts() {
+  const karrio = useKarrio();
+  return useAuthenticatedQuery({
+    queryKey: ["shipments", "badge-counts"],
+    queryFn: () => karrio.graphql.request<Record<
+      "today" | "hold" | "review",
+      Pick<get_shipments_badge["shipments"], "page_info">
+    >>(gqlstr(GET_SHIPMENT_BADGE_COUNTS)),
+    staleTime: 5000,
+    onError,
+  });
 }

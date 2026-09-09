@@ -1,4 +1,8 @@
 import re
+from zoneinfo import ZoneInfo
+from django.utils import timezone
+from django.db.models.functions import Coalesce, Substr
+from django.db.models.fields.json import KeyTextTransform
 import typing
 import django.conf as conf
 import django.db.models as models
@@ -194,6 +198,41 @@ class CarrierConnectionFilter(filters.FilterSet):
 
 
 class ShipmentFilters(filters.FilterSet):
+    warehouse_view = filters.ChoiceFilter(
+        choices=[(value, value) for value in ("today", "planned", "complete")],
+        method="warehouse_view_filter",
+    )
+
+    def warehouse_view_filter(self, queryset, name, value):
+        # Match the warehouse UI: key presence parks a draft, even for null/false.
+        queryset = queryset.filter(status="draft").exclude(
+            metadata__has_key="address_review_required"
+        ).exclude(metadata__has_key="shopify_hold").annotate(
+            _warehouse_erp_status=Coalesce(
+                KeyTextTransform("erp_status", "metadata"), models.Value(""),
+                output_field=models.CharField(),
+            ),
+            _warehouse_print_date=models.Case(
+                models.When(
+                    metadata__print_date__regex=r"^\d{4}-\d{2}-\d{2}",
+                    then=Substr(KeyTextTransform("print_date", "metadata"), 1, 10),
+                ),
+                default=models.Value(""),
+                output_field=models.CharField(),
+            ),
+        ).exclude(_warehouse_erp_status__in=[
+            "Picked", "Out for Delivery", "Delivered", "Delivery Failed",
+            "Returned", "Cancelled",
+        ])
+        today = timezone.now().astimezone(ZoneInfo("Europe/Amsterdam")).date().isoformat()
+        if value == "planned":
+            return queryset.filter(_warehouse_print_date__gt=today)
+        if value == "today":
+            return queryset.filter(_warehouse_print_date__lte=today).order_by(
+                "_warehouse_print_date", "-created_at", "-id"
+            )
+        return queryset
+
     keyword = filters.CharFilter(
         method="keyword_filter",
         help_text="shipment' keyword and indexes search",

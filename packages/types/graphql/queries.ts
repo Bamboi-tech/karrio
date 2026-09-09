@@ -4060,3 +4060,12 @@ export const SEARCH_DATA = gql`
     }
   }
 `;
+
+// Counts share one authenticated request and never load shipment rows.
+export const GET_SHIPMENT_BADGE_COUNTS = gql`
+  query shipment_badge_counts {
+    today: shipments(filter: {warehouse_view: "today", first: 1}) { page_info { count } }
+    hold: shipments(filter: {status: [draft], metadata_key: "shopify_hold", first: 1}) { page_info { count } }
+    review: shipments(filter: {status: [draft], metadata_key: "address_review_required", first: 1}) { page_info { count } }
+  }
+`;

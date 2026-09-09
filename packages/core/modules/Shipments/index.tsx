@@ -70,7 +70,7 @@ import {
 import { useAPIMetadata } from "@karrio/hooks/api-metadata";
 import { useLoader } from "@karrio/ui/core/components/loader";
 import { AppLink } from "@karrio/ui/core/components/app-link";
-import { useShipments, useShipmentMutation } from "@karrio/hooks/shipment";
+import { useShipments, useShipmentBadgeCounts, useShipmentMutation } from "@karrio/hooks/shipment";
 import {
   DELIVERY_OUTCOME_OPTIONS,
   DeliveryOutcomeOption,
@@ -115,11 +115,7 @@ const FAILED_SENTINEL = "_failed_creation";
 // via metadata_key (see onFilterChange); stripped from the outgoing query by
 // useShipments like every "_"-prefixed sentinel.
 const ADDRESS_REVIEW_SENTINEL = "_address_review";
-// The warehouse print-worklist views. All three query status=draft server-side
-// (the sentinel is stripped by useShipments) and are narrowed client-side —
-// the API's metadata_key filter can only test key presence, so it can neither
-// EXCLUDE the address-review flag (Complete) nor compare a metadata date
-// against today (Planned/Today). See visibleShipments below.
+// URL sentinels map to the API warehouse_view filter before pagination.
 const COMPLETE_SENTINEL = "_review_clear";
 const PLANNED_SENTINEL = "_print_planned";
 const TODAY_SENTINEL = "_print_today";
@@ -868,41 +864,7 @@ function ShipmentsBoard(): JSX.Element {
     filter,
     setFilter,
   } = context;
-  // Count-badge queries, independent of whichever card is active.
-  // - On hold: metadata_key presence is server-filterable, so one row
-  //   (first: 1) is enough — page_info.count is the exact total.
-  // - Today: not expressible server-side (date comparison + key
-  //   exclusions), so it is counted over the FIRST draft page only and
-  //   rendered as "N+" when more draft pages exist. Cheap (one extra
-  //   request, shared react-query cache) and honest about its limit;
-  //   daily volumes make a multi-page Today unusual.
-  // Both use their own cacheKey, so mutations that invalidate the
-  // ["shipments"] key do not refresh them — staleTime keeps them at most
-  // a few seconds behind, which is fine for an advisory badge.
-  const draftBadge = useShipments({
-    status: ["draft"] as any,
-    cacheKey: "shipments-badge-draft",
-    variant: "badge",
-  });
-  const holdBadge = useShipments({
-    status: ["draft"] as any,
-    metadata_key: SHOPIFY_HOLD_KEY,
-    first: 1,
-    cacheKey: "shipments-badge-hold",
-    variant: "badge",
-  });
-  // Same server-side count for the address worklist: without a number the
-  // card only says a worklist *exists* — the operator has to open it to
-  // learn whether one address needs fixing or thirty. Status "draft" keeps
-  // cancelled rows that still carry the flag (pre-cleanup tombstones) out
-  // of the count, exactly like the card's own filter.
-  const reviewBadge = useShipments({
-    status: ["draft"] as any,
-    metadata_key: ADDRESS_REVIEW_FLAG,
-    first: 1,
-    cacheKey: "shipments-badge-review",
-    variant: "badge",
-  });
+  const badgeCounts = useShipmentBadgeCounts();
   const {
     query: { data: { document_templates } = {} },
   } = useDocumentTemplates({
@@ -1030,27 +992,11 @@ function ShipmentsBoard(): JSX.Element {
       ({ node: shipment }) =>
         selection.includes(shipment.id) && shipment.status === "draft",
     );
-  // Client-side Today count over the first draft page (see the badge-query
-  // comment above): same predicate as the Today view, "+" suffix when more
-  // draft pages exist and the count is therefore a lower bound.
-  const todayBadge = React.useMemo(() => {
-    const page = draftBadge.query.data?.shipments;
-    if (!page) return undefined;
-    const today = amsterdamToday();
-    const count = (page.edges || []).filter(({ node: shipment }) => {
-      if (hasAddressReviewFlag(shipment.metadata)) return false;
-      if (getShopifyHold(shipment.metadata).held) return false;
-      const printDate = getPrintDate(shipment.metadata);
-      return !printDate || printDate <= today;
-    }).length;
-    return `${count}${page.page_info?.has_next_page ? "+" : ""}`;
-  }, [draftBadge.query.data]);
-  // Exact: the server counted every draft carrying the hold key.
-  const holdCount = holdBadge.query.data?.shipments?.page_info?.count;
+  const todayCount = badgeCounts.data?.today.page_info.count;
+  const todayBadge = todayCount == null ? undefined : `${todayCount}`;
+  const holdCount = badgeCounts.data?.hold.page_info.count;
   const holdBadgeLabel = holdCount == null ? undefined : `${holdCount}`;
-  // Exact for the same reason; shown even when 0 so "nothing to fix" is a
-  // statement, not an absence.
-  const reviewCount = reviewBadge.query.data?.shipments?.page_info?.count;
+  const reviewCount = badgeCounts.data?.review.page_info.count;
   const reviewBadgeLabel = reviewCount == null ? undefined : `${reviewCount}`;
 
   // The cards follow the shipment lifecycle left-to-right: fix addresses
@@ -1202,12 +1148,7 @@ function ShipmentsBoard(): JSX.Element {
     matchesCard(["delivered"]) ||
     matchesCard(["needs_attention", "delivery_failed"]);
 
-  // Complete/Planned/Today are narrowed client-side over the fetched
-  // status=draft page (see the sentinel comment up top for why the API
-  // cannot do this). Limitation: the narrowing happens per 20-row page, so
-  // the pagination count/next-page still describe the full draft list and a
-  // page can render fewer rows than it says. Daily volumes are small enough
-  // that this is acceptable.
+  // Warehouse views are filtered and ordered before pagination by the API.
   const visibleShipments = React.useMemo(() => {
     const edges = shipments?.edges || [];
     if (isHoldView) {
@@ -1226,36 +1167,7 @@ function ShipmentsBoard(): JSX.Element {
           erpDraftCard(shipment.metadata) === "picked",
       );
     }
-    if (!isCompleteView && !isPlannedView && !isTodayView) return edges;
-    const today = amsterdamToday();
-    const narrowed = edges.filter(({ node: shipment }) => {
-      if (hasAddressReviewFlag(shipment.metadata)) return false;
-      // Held orders are parked on the On hold card — never in the print
-      // worklist, elapsed print_date or not.
-      if (getShopifyHold(shipment.metadata).held) return false;
-      // A draft the ERP already moved on (own delivery picked / on the
-      // van / delivered / returned) has left the print worklist — its card
-      // is named by erpDraftCard, matching the cardStatus badge.
-      if (erpDraftCard(shipment.metadata)) return false;
-      if (isCompleteView) return true;
-      const printDate = getPrintDate(shipment.metadata);
-      if (isPlannedView) return !!printDate && printDate > today;
-      // Today: due or overdue print dates, plus drafts the ERP has not
-      // stamped a print_date on yet — never silently hidden.
-      return !printDate || printDate <= today;
-    });
-    if (!isTodayView) return narrowed;
-    // Today is a work queue: longest-waiting (oldest print_date) first.
-    // Dateless drafts sort to the TOP — "unknown" is an attention case
-    // that must not drown below a page of dated rows.
-    return [...narrowed].sort(({ node: a }, { node: b }) => {
-      const printA = getPrintDate(a.metadata);
-      const printB = getPrintDate(b.metadata);
-      if (!printA && !printB) return 0;
-      if (!printA) return -1;
-      if (!printB) return 1;
-      return printA < printB ? -1 : printA > printB ? 1 : 0;
-    });
+    return edges;
   }, [
     shipments,
     isCompleteView,

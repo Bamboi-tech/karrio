@@ -6558,6 +6558,7 @@ export interface LogFilter {
 
 // null
 export interface ShipmentFilter {
+  order_by?: string | null;
   warehouse_view?: string | null;
   offset?: number | null;
   first?: number | null;

@@ -582,3 +582,11 @@ export type PageProps = {
   params: Promise<{ id: string }>;
   searchParams?: Promise<{ [key: string]: string | string[] | undefined }>;
 };
+
+export type ShipmentColumnId = "reference" | "date" | "recipient" | "status" | "service" | "address" | "destination" | "ship-date" | "delivery-date" | "rate" | "tracking" | "parcels" | "erp-reference" | "updated";
+export type ShipmentListPreferences = {
+  columns: ShipmentColumnId[];
+  hidden: ShipmentColumnId[];
+  density: "compact" | "comfortable";
+  sort: string;
+};

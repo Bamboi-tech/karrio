@@ -202,6 +202,17 @@ class ShipmentFilters(filters.FilterSet):
         choices=[(value, value) for value in ("today", "planned", "complete")],
         method="warehouse_view_filter",
     )
+    order_by = filters.ChoiceFilter(
+        choices=[(value, value) for value in (
+            "created_at", "-created_at", "reference", "-reference",
+            "recipient", "-recipient", "status", "-status",
+        )],
+        method="order_shipments",
+    )
+
+    def order_shipments(self, queryset, name, value):
+        field = value.replace("recipient", "recipient__person_name")
+        return queryset.order_by(field, "id")
 
     def warehouse_view_filter(self, queryset, name, value):
         # Match the warehouse UI: key presence parks a draft, even for null/false.

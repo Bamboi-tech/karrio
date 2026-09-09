@@ -28,12 +28,17 @@ import {
   AddressType,
   ShipmentFilter,
   ShipmentType,
+  ShipmentColumnId,
   get_shipments_badge,
   get_shipments_list_shipments_edges_node,
   GET_SHIPMENTS_BADGE,
 } from "@karrio/types";
 import { ShipmentMenu } from "@karrio/ui/components/shipment-menu";
 import { FiltersCard } from "@karrio/ui/components/filters-card";
+import { ShipmentListSettings } from "@karrio/ui/components/shipment-list-settings";
+import { useShipmentListPreferences } from "@karrio/hooks/shipment-list-preferences";
+import { SHIPMENT_COLUMNS } from "@karrio/lib/shipment-list-preferences";
+import { Input } from "@karrio/ui/components/ui/input";
 import { StatusTimeline } from "@karrio/ui/components/status-timeline";
 import { ListPagination } from "@karrio/ui/components/list-pagination";
 import { StickyTableWrapper } from "@karrio/ui/components/sticky-table-wrapper";
@@ -49,9 +54,13 @@ import { Button } from "@karrio/ui/components/ui/button";
 import { Checkbox } from "@karrio/ui/components/ui/checkbox";
 import { Skeleton } from "@karrio/ui/components/ui/skeleton";
 import {
-  ChevronDown,
   GitCommitHorizontal,
   LayoutGrid,
+  ChevronDown,
+  Search,
+  X,
+  ArrowDown,
+  ArrowUp,
   Loader2,
   Package,
 } from "lucide-react";
@@ -289,11 +298,7 @@ const initialPageSize = () => {
   }
 };
 
-// How the status views are presented: the lifecycle timeline (default) or
-// the classic grid of cards. Same views, same filters — only the shape
-// differs. Remembered per browser in localStorage; read in an effect (not
-// the state initializer) so the server and first client render agree and
-// there is no hydration mismatch.
+
 type ViewMode = "timeline" | "cards";
 const VIEW_MODE_STORAGE_KEY = "shipments_view_mode";
 const DEFAULT_VIEW_MODE: ViewMode = "timeline";
@@ -509,7 +514,7 @@ const renderPrintOverdue = (metadata: unknown) => {
 const ShipmentRow = React.memo(function ShipmentRow({
   shipment,
   selected,
-  isAllView,
+  columns,
   isTodayView,
   appName,
   userConnections,
@@ -522,7 +527,7 @@ const ShipmentRow = React.memo(function ShipmentRow({
 }: {
   shipment: ListShipment;
   selected: boolean;
-  isAllView: boolean;
+  columns: ShipmentColumnId[];
   isTodayView: boolean;
   appName: string;
   userConnections: ConnectionLike[];
@@ -546,224 +551,52 @@ const ShipmentRow = React.memo(function ShipmentRow({
     prefetchTimer.current = setTimeout(() => onPrefetch?.(shipment.id), 150);
   };
   React.useEffect(() => () => clearTimeout(prefetchTimer.current), []);
+  const metadata = (shipment.metadata || {}) as Record<string, string>;
+  const salesOrderRef = metadata.sales_order || shipment.reference;
+  const orderRef = metadata.shopify_order_number || salesOrderRef || shipment.id;
+  const review = getAddressReview(shipment.metadata, shipment.meta);
+  const cells: Record<ShipmentColumnId, React.ReactNode> = {
+    reference: <button type="button" onClick={preview} className="block text-left text-gray-900 hover:underline" style={{ lineHeight: "15px" }}>
+      {metadata.shopify_order_number && <span className="block text-xs font-bold">{metadata.shopify_order_number}</span>}
+      {salesOrderRef && <span className="block text-xs font-normal">{salesOrderRef}</span>}
+      {metadata.karrio_shipment && <span className="block text-xs font-normal text-gray-400">{metadata.karrio_shipment}</span>}
+      {!metadata.shopify_order_number && !salesOrderRef && !metadata.karrio_shipment && shipment.id}
+    </button>,
+    date: <span title={formatDateTime(shipment.created_at)}>{formatDateTime(shipment.created_at)}</span>,
+    updated: <span>{formatDateTime(shipment.updated_at)}</span>,
+    recipient: <span className="block max-w-[220px] truncate" title={formatAddressShort(shipment.recipient as AddressType)}>{shipment.recipient?.person_name || shipment.recipient?.company_name || "—"}</span>,
+    status: <ShipmentsStatusBadge status={cardStatus(shipment)} className="whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium" />,
+    service: <div className="flex items-center gap-2">
+      {isSelfDelivery(shipment.metadata)
+        ? <img src={p`/bamboi_icon.png`} width={20} height={20} alt="Own delivery" className="rounded" />
+        : <CarrierImage carrier_name={shipment.meta?.custom_carrier_name || shipment.meta?.carrier || rate.meta?.rate_provider || rate.carrier_name || formatCarrierSlug(appName)} height={20} width={20} containerClassName="shrink-0" text_color={carrier?.config?.text_color} background={carrier?.config?.brand_color} />}
+      <span className="max-w-[180px] truncate" title={route || rate.service || ""}>{route || (rate.service ? formatRef(rate.service) : "Not assigned")}</span>
+    </div>,
+    address: review ? <AddressValidationBadge status={review.status} title={[review.note, review.suggestion].filter(Boolean).join(" · ")} /> : <span className="text-gray-400">—</span>,
+    destination: <span>{[shipment.recipient?.city, shipment.recipient?.country_code].filter(Boolean).join(", ") || "—"}</span>,
+    "ship-date": <>{renderShipDate(shipment.metadata)}{isTodayView && renderPrintOverdue(shipment.metadata)}</>,
+    "delivery-date": renderDeliveryDate(shipment.metadata),
+    rate: shipment.selected_rate ? <span>{shipment.selected_rate.total_charge} {shipment.selected_rate.currency}</span> : <span className="text-gray-400">—</span>,
+    tracking: <span className="max-w-[220px] truncate block" title={shipment.tracking_number || ""}>{shipment.tracking_number || "—"}</span>,
+    parcels: <span title={`${shipment.parcels?.length || 0} parcels`}>{shipment.parcels?.length || 0} parcels</span>,
+    "erp-reference": <span title={metadata.karrio_shipment}>{metadata.sales_order || metadata.karrio_shipment || "—"}</span>,
+  };
   return (
     <TableRow
       onMouseEnter={schedulePrefetch}
       onMouseLeave={cancelPrefetch}
       onFocus={schedulePrefetch}
       onBlur={cancelPrefetch}
-      className={`items cursor-pointer transition-colors duration-150 ease-in-out ${
-        selected ? "bg-blue-50 hover:bg-blue-100" : "hover:bg-gray-50"
-      }`}
+      data-state={selected ? "selected" : undefined}
+      className={`cursor-pointer ${selected ? "bg-blue-50 hover:bg-blue-50" : shipment.status === "cancelled" ? "bg-gray-50/70 text-gray-400 hover:bg-gray-100" : "hover:bg-gray-50"}`}
     >
-      {/* select-none: a shift+click range must not also drag
-        a text selection across the rows in between. */}
-      <TableCell className="selector text-center items-center p-0 sticky-left select-none">
-        <div className="py-3 pl-2 pr-4">
-          <Checkbox
-            checked={selected}
-            onCheckedChange={(checked) =>
-              onToggle(checked as boolean, shipment.id)
-            }
-            onClick={(event) => onSelectorClick(event, shipment.id)}
-          />
-        </div>
+      <TableCell className="selector sticky-left select-none text-center">
+        <Checkbox aria-label={`Select ${orderRef}`} checked={selected} onCheckedChange={(checked) => onToggle(checked as boolean, shipment.id)} onClick={(event) => onSelectorClick(event, shipment.id)} />
       </TableCell>
-      <TableCell
-        className="service items-center py-1 px-0 text-xs font-bold text-gray-600"
-        onClick={preview}
-        title={
-          route ||
-          (isNone(rate)
-            ? "UNFULFILLED"
-            : formatRef(
-                ((shipment.meta as any)?.service_name ||
-                  rate.service) as string,
-              ))
-        }
-      >
-        <div className="flex items-center">
-          {/* Own delivery rides our own van: no carrier, so
-              instead of the letter-avatar fallback the row
-              shows the Bamboi panda. Same footprint (28px,
-              softly rounded like the avatar's rounded rect)
-              so the column stays aligned. */}
-          {isSelfDelivery(shipment.metadata) ? (
-            <div className="mt-1 ml-1 mr-2">
-              <img
-                src={p`/bamboi_icon.png`}
-                width={28}
-                height={28}
-                alt="Bamboi eigen bezorging"
-                className="rounded-sm"
-              />
-            </div>
-          ) : (
-            <CarrierImage
-              carrier_name={
-                shipment.meta?.custom_carrier_name ||
-                shipment.meta?.carrier ||
-                rate.meta?.rate_provider ||
-                rate.carrier_name ||
-                formatCarrierSlug(appName)
-              }
-              containerClassName="mt-1 ml-1 mr-2"
-              height={28}
-              width={28}
-              text_color={(carrier as ConnectionLike)?.config?.text_color}
-              background={(carrier as ConnectionLike)?.config?.brand_color}
-            />
-          )}
-          {/* Colli count used to live in the status cell,
-              but that cell only renders on the All card now
-              — and multi-colli matters most while printing,
-              on exactly the cards without a status column. */}
-          {renderColli(shipment)}
-          <div
-            className="text-ellipsis"
-            style={{ maxWidth: "190px", lineHeight: "16px" }}
-          >
-            <span className="text-blue-600 font-bold">
-              {!isNone(shipment.tracking_number) && (
-                <span>{shipment.tracking_number}</span>
-              )}
-              {/* No tracking yet: the route takes the top
-                  line instead of a bare dash. */}
-              {isNone(shipment.tracking_number) && (
-                <span>{route || " - "}</span>
-              )}
-            </span>
-            <br />
-            <span className="text-ellipsis">
-              {/* The route renders exactly once: down here
-                  only when the tracking number holds the top
-                  line. MONTA FULFILLMENT/UNFULFILLED said
-                  nothing the route does not. */}
-              {route
-                ? !isNone(shipment.tracking_number) && route
-                : !isNone(rate.carrier_name)
-                  ? formatRef(
-                      ((rate.meta as any)?.service_name ||
-                        rate.service) as string,
-                    )
-                  : "UNFULFILLED"}
-            </span>
-          </div>
-        </div>
-      </TableCell>
-      {isAllView && (
-        <TableCell className="status items-center" onClick={preview}>
-          <div
-            className="flex items-center"
-            style={{ paddingLeft: "7px", paddingRight: "7px" }}
-          >
-            <ShipmentsStatusBadge
-              status={cardStatus(shipment)}
-              className="w-full justify-center text-center"
-            />
-          </div>
-        </TableCell>
-      )}
-      <TableCell
-        className="recipient items-center text-xs font-bold text-gray-600 relative"
-        onClick={preview}
-      >
-        <div
-          className="p-2"
-          style={{
-            position: "absolute",
-            maxWidth: "100%",
-            top: 0,
-            left: 0,
-          }}
-        >
-          <p
-            className="text-ellipsis font-bold"
-            title={formatAddressShort(shipment.recipient as AddressType)}
-          >
-            {formatAddressShort(shipment.recipient as AddressType)}
-          </p>
-          <p className="font-medium text-gray-500">
-            {[
-              shipment.recipient?.city,
-              shipment.recipient?.postal_code,
-              shipment.recipient?.country_code,
-            ]
-              .filter(Boolean)
-              .join(", ")}
-          </p>
-        </div>
-      </TableCell>
-      <TableCell className="address items-center text-xs" onClick={preview}>
-        {renderAddressReview(shipment.metadata, shipment.meta)}
-      </TableCell>
-      <TableCell
-        className="rate items-center text-xs text-gray-600"
-        onClick={preview}
-      >
-        {shipment.selected_rate ? (
-          <div style={{ lineHeight: "16px" }}>
-            <p className="font-bold">
-              {shipment.selected_rate.total_charge}{" "}
-              {shipment.selected_rate.currency}
-            </p>
-            {shipment.selected_rate.transit_days && (
-              <p className="text-gray-400 font-medium">
-                {shipment.selected_rate.transit_days}-
-                {shipment.selected_rate.transit_days + 2} days
-              </p>
-            )}
-          </div>
-        ) : (
-          <span className="text-gray-400">-</span>
-        )}
-      </TableCell>
-      <TableCell
-        className="reference items-center text-xs text-gray-600 text-ellipsis"
-        onClick={preview}
-      >
-        {/* All three references of the ERP chain: the Shopify
-          number the customer knows, the Sales Order the office
-          knows, and the ERP shipment the warehouse works from.
-          Metadata keys are stamped by karrio_shipping; rows
-          from before that mirror simply show fewer lines. */}
-        <div style={{ lineHeight: "15px" }}>
-          {(shipment.metadata as any)?.shopify_order_number && (
-            <p className="text-xs font-bold">
-              {(shipment.metadata as any).shopify_order_number}
-            </p>
-          )}
-          <p className="text-xs font-semibold">{shipment.reference || ""}</p>
-          {(shipment.metadata as any)?.karrio_shipment && (
-            <p className="text-xs text-gray-400">
-              {(shipment.metadata as any).karrio_shipment}
-            </p>
-          )}
-        </div>
-      </TableCell>
-      <TableCell className="ship-date items-center px-1" onClick={preview}>
-        {renderShipDate(shipment.metadata)}
-        {isTodayView && renderPrintOverdue(shipment.metadata)}
-      </TableCell>
-      <TableCell className="delivery-date items-center px-1" onClick={preview}>
-        {renderDeliveryDate(shipment.metadata)}
-      </TableCell>
-      <TableCell className="date items-center px-1" onClick={preview}>
-        <div style={{ lineHeight: "16px" }}>
-          <p className="text-xs font-semibold text-gray-600">
-            {formatDateTime(shipment.created_at)}
-          </p>
-          <p className="text-xs text-gray-400">
-            {formatDateTime(shipment.updated_at)}
-          </p>
-        </div>
-      </TableCell>
-      <TableCell className="action items-center px-0 sticky-right">
+      {columns.map((column) => <TableCell key={column} className={`column-${column}`} onClick={column === "reference" ? undefined : preview}>{cells[column]}</TableCell>)}
+      <TableCell className="action sticky-right">
         {actionState && <span className="mr-2 text-xs">{actionState}</span>}
-        <ShipmentMenu
-          shipment={shipment as unknown as ShipmentType}
-          className="w-full"
-        />
+        <ShipmentMenu shipment={shipment as unknown as ShipmentType} className="shipment-menu" />
       </TableCell>
     </TableRow>
   );
@@ -790,6 +623,7 @@ function ShipmentsBoard(): JSX.Element {
   const [selection, setSelection] = React.useState<string[]>([]);
   // Rows per page (20/50/100), fed into the query as filter.first.
   const [pageSize, setPageSize] = React.useState<number>(initialPageSize);
+  const { preferences: listPreferences, update: updateListPreferences, ready: preferencesReady } = useShipmentListPreferences();
   const [viewMode, setViewMode] = React.useState<ViewMode>(DEFAULT_VIEW_MODE);
   useEffect(() => {
     setViewMode(readStoredViewMode());
@@ -802,6 +636,8 @@ function ShipmentsBoard(): JSX.Element {
       // Private mode / blocked storage: the choice just lives for this page.
     }
   };
+
+  const columns = React.useMemo(() => listPreferences.columns.filter((id) => !listPreferences.hidden.includes(id)), [listPreferences.columns, listPreferences.hidden]);
   // Anchor of the last individually clicked row checkbox, for shift+click
   // range selection. Stored as a shipment id, not an index: ids survive
   // refetches and the client-side re-narrowing/sorting of visibleShipments
@@ -921,6 +757,23 @@ function ShipmentsBoard(): JSX.Element {
     };
 
     setFilter(query);
+  };
+  const [searchText, setSearchText] = React.useState(filter.keyword || "");
+  useEffect(() => { setSearchText(filter.keyword || ""); }, [filter.keyword]);
+  useEffect(() => {
+    if (searchText === (filter.keyword || "")) return;
+    const timer = setTimeout(() => updateFilter({ keyword: searchText || undefined, offset: 0 }), 300);
+    return () => clearTimeout(timer);
+  }, [searchText, filter.keyword]);
+  const sortInitialized = React.useRef(false);
+  useEffect(() => {
+    if (!preferencesReady || sortInitialized.current) return;
+    sortInitialized.current = true;
+    if (!searchParams.has("order_by") && listPreferences.sort) updateFilter({ order_by: listPreferences.sort, offset: 0 });
+  }, [preferencesReady, listPreferences.sort]);
+  const changeSort = (sort: string) => {
+    updateListPreferences({ sort });
+    updateFilter({ order_by: sort || undefined, offset: 0 });
   };
   const updatedSelection = (
     selectedShipments: string[],
@@ -1768,26 +1621,12 @@ function ShipmentsBoard(): JSX.Element {
 
   return (
     <>
-      <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between px-0 pb-0 pt-4 mb-2">
-        <div className="mb-4 sm:mb-0">
-          <h1 className="text-2xl font-semibold text-gray-900">Shipments</h1>
-        </div>
-        <div className="flex flex-row items-center gap-1 flex-wrap">
-          <Button asChild size="sm" className="mx-1 w-auto">
-            <AppLink href="/create_label?shipment_id=new">Create Label</AppLink>
-          </Button>
-          <Button asChild size="sm" className="mx-1 w-auto">
-            <AppLink href="/manifests/create_manifests">
-              Manage manifests
-            </AppLink>
-          </Button>
-          {/* The filter drawer only reads query.isFetching / filter /
-                setFilter; its prop type names the full-document variant. */}
-          {!isFailedView && (
-            <ShipmentsFilter
-              context={context as unknown as ReturnType<typeof useShipments>}
-            />
-          )}
+      <header className="flex items-center justify-between gap-4 pt-2 pb-4">
+        <h1 className="text-xl font-semibold tracking-tight text-gray-900">Shipments</h1>
+        <div className="flex items-center gap-2">
+          <Button asChild variant="outline" size="sm"><AppLink href="/manifests/create_manifests">Manage manifests</AppLink></Button>
+          <Button asChild size="sm" className="bg-gray-900 text-white hover:bg-gray-800"><AppLink href="/create_label?shipment_id=new">Create label</AppLink></Button>
+
           {/* Timeline / cards: two presentations of the same status views. */}
           <div
             role="group"
@@ -1824,7 +1663,6 @@ function ShipmentsBoard(): JSX.Element {
           </div>
         </div>
       </header>
-
       {viewMode === "timeline" ? (
         <StatusTimeline
           filters={getFilterOptions()}
@@ -1840,6 +1678,18 @@ function ShipmentsBoard(): JSX.Element {
           onFilterIntent={onStatusFilterIntent}
         />
       )}
+
+      <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden shipment-list-panel" data-density={listPreferences.density}>
+        {!isFailedView && <div className="flex items-center gap-3 border-b px-3 py-2">
+          <form className="flex min-w-0 flex-1 items-center gap-2" onSubmit={(event) => { event.preventDefault(); updateFilter({ keyword: searchText || undefined, offset: 0 }); }}>
+            <Search className="h-4 w-4 shrink-0 text-gray-400" />
+            <Input aria-label="Search shipments" placeholder="Search orders, customers, tracking…" value={searchText} onChange={(event) => setSearchText(event.target.value)} className="h-8 border-0 p-0 shadow-none focus-visible:ring-0 text-sm" />
+            {(searchText || filter.keyword) && <button type="button" aria-label="Clear shipment search" className="p-1 text-gray-500" onClick={() => { setSearchText(""); updateFilter({ keyword: undefined, offset: 0 }); }}><X className="h-4 w-4" /></button>}
+          </form>
+          <span className="hidden sm:block whitespace-nowrap text-xs text-gray-400">{shipments?.page_info?.count ?? "—"} shipments</span>
+          <ShipmentsFilter context={context as unknown as ReturnType<typeof useShipments>} />
+          <ShipmentListSettings preferences={listPreferences} onChange={updateListPreferences} sort={filter.order_by || ""} onSort={changeSort} />
+        </div>}
 
       {Object.keys(bulkRows).length > 0 && (
         <div role="status" aria-live="polite" className="my-3 rounded-md border bg-blue-50 p-3 text-sm">
@@ -1877,15 +1727,16 @@ function ShipmentsBoard(): JSX.Element {
         <>
           <div aria-busy={query.isFetching} inert={query.isPreviousData || bulkAction !== null ? true : undefined} className={query.isPreviousData ? "opacity-60 transition-opacity" : "transition-opacity"}>
           <StickyTableWrapper>
-            <Table className="shipments-table">
+            <Table className="shipment-list-table">
               <TableHeader>
                 <TableRow>
                   <TableHead
                     className="selector text-center p-0 items-center sticky-left"
                     onClick={preventPropagation}
                   >
-                    <div className="py-2 pl-2 pr-4">
+                    <div className="py-1">
                       <Checkbox
+                        aria-label="Select all shipments on this page"
                         checked={allChecked}
                         onCheckedChange={(checked) =>
                           handleCheckboxChange(checked as boolean, "all")
@@ -1895,7 +1746,7 @@ function ShipmentsBoard(): JSX.Element {
                   </TableHead>
 
                   {selection.length > 0 && (
-                    <TableHead className="p-2" colSpan={isAllView ? 10 : 9}>
+                    <TableHead className="p-2" colSpan={columns.length + 1}>
                       <div className="flex items-center gap-2 flex-wrap">
                         {/* Hidden on the five draft-stage cards: no row
                             there can have a label yet (buying one moves the
@@ -2103,35 +1954,13 @@ function ShipmentsBoard(): JSX.Element {
 
                   {selection.length === 0 && (
                     <>
-                      <TableHead className="service text-xs items-center">
-                        SHIPPING SERVICE
-                      </TableHead>
-                      {isAllView && (
-                        <TableHead className="status text-xs items-center">
-                          STATUS
-                        </TableHead>
-                      )}
-                      <TableHead className="recipient text-xs items-center">
-                        RECIPIENT
-                      </TableHead>
-                      <TableHead className="address text-xs items-center">
-                        ADDRESS
-                      </TableHead>
-                      <TableHead className="rate text-xs items-center">
-                        RATE
-                      </TableHead>
-                      <TableHead className="reference text-xs items-center">
-                        REFERENCE
-                      </TableHead>
-                      <TableHead className="ship-date text-xs items-center">
-                        SHIP DATE
-                      </TableHead>
-                      <TableHead className="delivery-date text-xs items-center">
-                        DELIVERY
-                      </TableHead>
-                      <TableHead className="date text-xs items-center">
-                        DATE
-                      </TableHead>
+                      {columns.map((column) => {
+                        const orderBy = ({ date: "created_at", reference: "reference", recipient: "recipient", status: "status" } as Partial<Record<ShipmentColumnId, string>>)[column];
+                        const active = orderBy && filter.order_by?.replace("-", "") === orderBy;
+                        return <TableHead key={column} className={`column-${column}`} aria-sort={active ? filter.order_by?.startsWith("-") ? "descending" : "ascending" : undefined}>
+                          {orderBy ? <button type="button" className="flex items-center gap-1 hover:text-gray-900" onClick={() => changeSort(filter.order_by === orderBy ? `-${orderBy}` : orderBy)}>{SHIPMENT_COLUMNS.find(({ id }) => id === column)?.label}{active && (filter.order_by?.startsWith("-") ? <ArrowDown className="h-3 w-3" /> : <ArrowUp className="h-3 w-3" />)}</button> : SHIPMENT_COLUMNS.find(({ id }) => id === column)?.label}
+                        </TableHead>;
+                      })}
                       <TableHead className="action sticky-right"></TableHead>
                     </>
                   )}
@@ -2143,7 +1972,7 @@ function ShipmentsBoard(): JSX.Element {
                     key={shipment.id}
                     shipment={shipment}
                     selected={selection.includes(shipment.id)}
-                    isAllView={isAllView}
+                    columns={columns}
                     isTodayView={isTodayView}
                     appName={references.APP_NAME}
                     userConnections={user_connections || []}
@@ -2183,6 +2012,8 @@ function ShipmentsBoard(): JSX.Element {
           </div>
         </div>
       )}
+
+      </div>
 
       <ConfirmationDialog
         open={ofdDialogOpen}

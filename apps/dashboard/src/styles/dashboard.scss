@@ -878,3 +878,54 @@ Karrio custom styling
   .scrollable-content:hover::-webkit-scrollbar-thumb:hover {
     background: rgba(0, 0, 0, 0.4);
   }
+
+// Shipment worklist: fill the workspace while other pages keep their reading width.
+.scrollable-content:has(.shipment-list-panel) {
+  background: #f6f6f7;
+}
+.scrollable-content > div:has(.shipment-list-panel) {
+  max-width: none;
+  padding: 16px 24px 24px;
+}
+.shipment-list-panel {
+  .shipment-list-table {
+    width: 100%;
+    font-size: 12px;
+    color: #4b5563;
+    th {
+      height: 34px;
+      padding: 6px 12px;
+      background: #f9fafb;
+      color: #6b7280;
+      font-size: 11px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    td {
+      height: 40px;
+      padding: 5px 12px;
+      vertical-align: middle;
+      white-space: nowrap;
+      border-color: #f1f2f3;
+    }
+    .selector { width: 36px; min-width: 36px; padding-left: 12px; padding-right: 8px; }
+    .action { width: 40px; min-width: 40px; padding: 0 8px; }
+    .column-reference { min-width: 130px; }
+    .column-date, .column-updated { min-width: 145px; }
+    .column-recipient { min-width: 150px; }
+    .column-status { min-width: 90px; }
+    .column-service { min-width: 140px; }
+    .column-address { min-width: 100px; }
+    .column-destination { min-width: 120px; }
+    .column-ship-date, .column-delivery-date { min-width: 100px; }
+    .column-reference button { font-size: 12px; }
+    .column-reference button > span { margin: 0; line-height: 15px; }
+    .column-status > div, .column-address > div { display: inline-flex; }
+    [role="checkbox"] { border-color: #c5c8cc; width: 14px; height: 14px; border-radius: 4px; }
+    [role="checkbox"][data-state="checked"] { background: #303030; border-color: #303030; }
+  }
+  &[data-density="comfortable"] .shipment-list-table td { height: 56px; padding-top: 12px; padding-bottom: 12px; }
+}
+@media (max-width: 640px) {
+  .scrollable-content > div:has(.shipment-list-panel) { padding: 12px; }
+}

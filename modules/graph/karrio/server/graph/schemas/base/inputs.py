@@ -46,6 +46,7 @@ class TrackerFilter(utils.Paginated):
 
 @strawberry.input
 class ShipmentFilter(utils.Paginated):
+    order_by: typing.Optional[str] = strawberry.UNSET
     warehouse_view: typing.Optional[str] = strawberry.UNSET
     keyword: typing.Optional[str] = strawberry.UNSET
     address: typing.Optional[str] = strawberry.UNSET

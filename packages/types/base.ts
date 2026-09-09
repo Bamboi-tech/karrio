@@ -583,6 +583,18 @@ export type PageProps = {
   searchParams?: Promise<{ [key: string]: string | string[] | undefined }>;
 };
 
+// Live ERP review shared by the shipment address dialog and its query.
+export type AddressReviewContext = {
+  status?: string;
+  summary?: string;
+  suggestion_status?: string;
+  suggestion_summary?: string;
+  can_use_suggestion: boolean;
+  suggested_address?: Partial<AddressType> | null;
+  can_confirm?: boolean;
+  confirm_refusal?: string;
+};
+
 export type ShipmentColumnId = "reference" | "date" | "recipient" | "status" | "service" | "address" | "destination" | "ship-date" | "delivery-date" | "rate" | "tracking" | "parcels" | "erp-reference" | "updated";
 export type ShipmentListPreferences = {
   columns: ShipmentColumnId[];

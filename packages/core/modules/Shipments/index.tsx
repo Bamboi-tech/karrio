@@ -1,4 +1,5 @@
 "use client";
+import { AddressReviewPopover } from "@karrio/ui/components/address-review-popover";
 import {
   errorToMessages,
   formatAddressShort,
@@ -556,12 +557,12 @@ const ShipmentRow = React.memo(function ShipmentRow({
   const orderRef = metadata.shopify_order_number || salesOrderRef || shipment.id;
   const review = getAddressReview(shipment.metadata, shipment.meta);
   const cells: Record<ShipmentColumnId, React.ReactNode> = {
-    reference: <button type="button" onClick={preview} className="block text-left text-gray-900 hover:underline" style={{ lineHeight: "15px" }}>
+    reference: <div className="flex items-center gap-2"><button type="button" onClick={preview} className="block text-left text-gray-900 hover:underline" style={{ lineHeight: "15px" }}>
       {metadata.shopify_order_number && <span className="block text-xs font-bold">{metadata.shopify_order_number}</span>}
       {salesOrderRef && <span className="block text-xs font-normal">{salesOrderRef}</span>}
       {metadata.karrio_shipment && <span className="block text-xs font-normal text-gray-400">{metadata.karrio_shipment}</span>}
       {!metadata.shopify_order_number && !salesOrderRef && !metadata.karrio_shipment && shipment.id}
-    </button>,
+    </button>{review && <AddressReviewPopover shipment={shipment} onEdit={preview} />}</div>,
     date: <span title={formatDateTime(shipment.created_at)}>{formatDateTime(shipment.created_at)}</span>,
     updated: <span>{formatDateTime(shipment.updated_at)}</span>,
     recipient: <span className="block max-w-[220px] truncate" title={formatAddressShort(shipment.recipient as AddressType)}>{shipment.recipient?.person_name || shipment.recipient?.company_name || "—"}</span>,
@@ -572,7 +573,7 @@ const ShipmentRow = React.memo(function ShipmentRow({
         : <CarrierImage carrier_name={shipment.meta?.custom_carrier_name || shipment.meta?.carrier || rate.meta?.rate_provider || rate.carrier_name || formatCarrierSlug(appName)} height={20} width={20} containerClassName="shrink-0" text_color={(carrier as ConnectionLike)?.config?.text_color} background={(carrier as ConnectionLike)?.config?.brand_color} />}
       <span className="max-w-[180px] truncate" title={route || rate.service || ""}>{route || (rate.service ? formatRef(rate.service) : "Not assigned")}</span>
     </div>,
-    address: review ? <AddressValidationBadge status={review.status} title={[review.note, review.suggestion].filter(Boolean).join(" · ")} /> : <span className="text-gray-400">—</span>,
+    address: review ? <AddressReviewPopover shipment={shipment} onEdit={preview} /> : <span className="text-gray-400">—</span>,
     destination: <span>{[shipment.recipient?.city, shipment.recipient?.country_code].filter(Boolean).join(", ") || "—"}</span>,
     "ship-date": <>{renderShipDate(shipment.metadata)}{isTodayView && renderPrintOverdue(shipment.metadata)}</>,
     "delivery-date": renderDeliveryDate(shipment.metadata),
@@ -593,7 +594,7 @@ const ShipmentRow = React.memo(function ShipmentRow({
       <TableCell className="selector sticky-left select-none text-center">
         <Checkbox aria-label={`Select ${orderRef}`} checked={selected} onCheckedChange={(checked) => onToggle(checked as boolean, shipment.id)} onClick={(event) => onSelectorClick(event, shipment.id)} />
       </TableCell>
-      {columns.map((column) => <TableCell key={column} className={`column-${column}`} onClick={column === "reference" ? undefined : preview}>{cells[column]}</TableCell>)}
+      {columns.map((column) => <TableCell key={column} className={`column-${column}`} onClick={column === "reference" || column === "address" ? undefined : preview}>{cells[column]}</TableCell>)}
       <TableCell className="action sticky-right">
         {actionState && <span className="mr-2 text-xs">{actionState}</span>}
         <ShipmentMenu shipment={shipment as unknown as ShipmentType} className="shipment-menu" />

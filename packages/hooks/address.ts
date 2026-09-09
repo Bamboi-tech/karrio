@@ -105,3 +105,20 @@ export function useAddressMutation() {
     deleteAddress,
   };
 }
+
+// No cached proposal is actionable when the dialog reopens: ERP validates the
+// current address and the complete candidate, including unit details, afresh.
+export function useAddressReview(id?: string, enabled = false) {
+  const karrio = useKarrio();
+  return useAuthenticatedQuery<import("@karrio/types").AddressReviewContext>({
+    queryKey: ["address-review", id],
+    queryFn: () => karrio.axios
+      .post(`/v1/shipments/${id}/erp/get-address-review`)
+      .then(({ data }) => data),
+    enabled: enabled && !!id,
+    staleTime: 0,
+    cacheTime: 0,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+}

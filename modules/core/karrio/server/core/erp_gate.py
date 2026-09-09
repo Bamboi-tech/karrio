@@ -145,6 +145,7 @@ ERP_SHIPMENT_ACTIONS = {
     # ERP re-validates live and refuses anything but a Suspect verdict, so
     # the relay adds no judgement of its own.
     "confirm_address": ("reason",),
+    "get_address_review": (),
     "undo_delivery_outcome": (),
 }
 RUN_DOC_METHOD_PATH = "/api/method/frappe.handler.run_doc_method"

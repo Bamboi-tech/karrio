@@ -11,6 +11,11 @@ import { AddressForm } from "@karrio/ui/components/address-form";
 import { Button } from "@karrio/ui/components/ui/button";
 import { Loader2 } from "lucide-react";
 import { COUNTRY_WITH_POSTAL_CODE, isEqual } from "@karrio/lib";
+import { useAddressReview } from "@karrio/hooks/address";
+import {
+  AddressSuggestion,
+  DELIVERY_FIELDS,
+} from "@karrio/ui/components/address-suggestion";
 import { useAPIMetadata } from "@karrio/hooks/api-metadata";
 
 export interface AddressEditDialogProps {
@@ -34,8 +39,18 @@ export const AddressEditDialog = ({
 }: AddressEditDialogProps): JSX.Element => {
   const { references } = useAPIMetadata();
   const [isOpen, setIsOpen] = useState(false);
-  const [currentAddress, setCurrentAddress] = useState<Partial<AddressType>>(address || {});
+  const [currentAddress, setCurrentAddress] = useState<Partial<AddressType>>(
+    address || {},
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const reviewEnabled =
+    mode === "delivery" && !!shipment?.metadata?.sales_order;
+  const review = useAddressReview(shipment?.id, isOpen && reviewEnabled);
+  const edited = DELIVERY_FIELDS.some(
+    (field) => (currentAddress[field] || "") !== (address[field] || ""),
+  );
   const formRef = React.useRef<any>(null);
 
   React.useEffect(() => {
@@ -44,11 +59,31 @@ export const AddressEditDialog = ({
 
   const handleSubmit = async (data: Partial<AddressType>) => {
     try {
+      setSaveError(null);
       await onSubmit(data as AddressType);
       setIsOpen(false);
     } catch (error) {
       // Error is handled by the AddressForm component
-      console.error("Address submission error:", error);
+      setSaveError("The address could not be saved. Please try again.");
+    }
+  };
+
+  const acceptSuggestion = async () => {
+    if (
+      !review.data?.can_use_suggestion ||
+      !review.data.suggested_address ||
+      review.isFetching ||
+      edited
+    )
+      return;
+    setIsSubmitting(true);
+    try {
+      await handleSubmit({
+        ...currentAddress,
+        ...review.data.suggested_address,
+      });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -68,15 +103,28 @@ export const AddressEditDialog = ({
   };
 
   // Original validation logic from address form
-  const isPostalRequired = COUNTRY_WITH_POSTAL_CODE.includes(currentAddress.country_code || "");
-  const isStateRequired = Object.keys(references.states || {}).includes(currentAddress.country_code || "");
-  
-  const missingRequired = !currentAddress.person_name || !currentAddress.country_code || !currentAddress.address_line1 || !currentAddress.city || (isPostalRequired && !currentAddress.postal_code) || (isStateRequired && !currentAddress.state_code);
-  
-  // Allow saving if there are changes OR if address has meaningful content (for new addresses)
-  const hasChanges = !isEqual(address, currentAddress) || (
-    currentAddress.person_name || currentAddress.country_code || currentAddress.address_line1 || currentAddress.city
+  const isPostalRequired = COUNTRY_WITH_POSTAL_CODE.includes(
+    currentAddress.country_code || "",
   );
+  const isStateRequired = Object.keys(references.states || {}).includes(
+    currentAddress.country_code || "",
+  );
+
+  const missingRequired =
+    !currentAddress.person_name ||
+    !currentAddress.country_code ||
+    !currentAddress.address_line1 ||
+    !currentAddress.city ||
+    (isPostalRequired && !currentAddress.postal_code) ||
+    (isStateRequired && !currentAddress.state_code);
+
+  // Allow saving if there are changes OR if address has meaningful content (for new addresses)
+  const hasChanges =
+    !isEqual(address, currentAddress) ||
+    currentAddress.person_name ||
+    currentAddress.country_code ||
+    currentAddress.address_line1 ||
+    currentAddress.city;
 
   // Enhanced postal code validation (copied from address form)
   const validatePostalCode = (postal: string, country: string) => {
@@ -95,16 +143,31 @@ export const AddressEditDialog = ({
     return patterns[country]?.test(postal) ?? true;
   };
 
-  const isPostalValid = validatePostalCode(currentAddress.postal_code || "", currentAddress.country_code || "");
+  const isPostalValid = validatePostalCode(
+    currentAddress.postal_code || "",
+    currentAddress.country_code || "",
+  );
 
   return (
     <>
       {React.cloneElement(trigger, {
-        onClick: () => setIsOpen(true),
+        onClick: () => {
+          setCurrentAddress(address || {});
+          setDismissed(false);
+          setSaveError(null);
+          setIsOpen(true);
+        },
       })}
-      
-      <Dialog open={isOpen} onOpenChange={setIsOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
+
+      <Dialog
+        open={isOpen}
+        onOpenChange={(open) => {
+          if (!isSubmitting) setIsOpen(open);
+        }}
+      >
+        <DialogContent
+          className={`${reviewEnabled ? "max-w-4xl" : "max-w-2xl"} max-h-[90vh] flex flex-col`}
+        >
           <DialogHeader className="sticky top-0 bg-white z-10 pb-4 border-b">
             <DialogTitle className="text-lg font-semibold">
               {header || "Edit address"}
@@ -114,45 +177,72 @@ export const AddressEditDialog = ({
             )}
           </DialogHeader>
 
-          {/* Google's own words, INSIDE the dialog: the operator opening
-              this form is exactly the person who needs the proposal, and
-              until now it only rendered on the page underneath. Mirrored by
-              the ERP as address_suggestion / address_validation_note; absent
-              keys mean Google offered nothing — then nothing renders. */}
-          {(() => {
-            const md = ((shipment as any)?.metadata || {}) as Record<string, unknown>;
-            const suggestion = typeof md["address_suggestion"] === "string" ? (md["address_suggestion"] as string) : null;
-            const note = typeof md["address_validation_note"] === "string" ? (md["address_validation_note"] as string) : null;
-            if (!suggestion && !note) return null;
-            return (
-              <div className="mx-4 mt-3 rounded border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm">
-                {suggestion && (
-                  <>
-                    <p className="font-semibold text-yellow-800">Google suggests</p>
-                    <p className="text-yellow-900">{suggestion}</p>
-                  </>
+          <div
+            className={`flex-1 overflow-y-auto mt-4 pb-6 px-4 ${reviewEnabled ? "grid md:grid-cols-[minmax(0,1fr)_300px] gap-6" : ""}`}
+          >
+            <div>
+              {reviewEnabled && (
+                <h3 className="font-semibold mb-3">Current address</h3>
+              )}
+              <AddressForm
+                ref={formRef}
+                value={currentAddress}
+                onChange={handleChange}
+                onSubmit={handleSubmit}
+                showSubmitButton={false}
+                mode={mode}
+              />
+            </div>
+            {reviewEnabled && (
+              <div>
+                {review.isFetching ? (
+                  <p className="text-sm text-muted-foreground" role="status">
+                    Checking address and suggestion…
+                  </p>
+                ) : review.isError ? (
+                  <div className="text-sm space-y-2" role="alert">
+                    <p>
+                      The address checker is unavailable. You can still edit and
+                      save the address.
+                    </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => review.refetch()}
+                    >
+                      Try again
+                    </Button>
+                  </div>
+                ) : (
+                  review.data &&
+                  !dismissed && (
+                    <AddressSuggestion
+                      current={address}
+                      review={review.data}
+                      busy={isSubmitting}
+                      edited={edited}
+                      onAccept={acceptSuggestion}
+                      onDismiss={() => setDismissed(true)}
+                    />
+                  )
                 )}
-                {note && <p className="text-xs text-yellow-700 mt-1">{note}</p>}
               </div>
-            );
-          })()}
-
-          <div className="flex-1 overflow-y-auto mt-4 pb-6 px-4">
-            <AddressForm
-              ref={formRef}
-              value={currentAddress}
-              onChange={handleChange}
-              onSubmit={handleSubmit}
-              showSubmitButton={false}
-              mode={mode}
-            />
+            )}
           </div>
+
+          {saveError && (
+            <p className="px-4 text-sm text-red-600" role="alert">
+              {saveError}
+            </p>
+          )}
 
           {/* Sticky Footer */}
           <DialogFooter className="px-4 py-3 border-t sticky bottom-0 bg-background">
-            <Button 
-              type="button" 
-              variant="outline" 
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isSubmitting}
               onClick={() => setIsOpen(false)}
             >
               Cancel
@@ -160,7 +250,12 @@ export const AddressEditDialog = ({
             <Button
               type="button"
               onClick={handleFooterSubmit}
-              disabled={isSubmitting || !hasChanges || missingRequired || (Boolean(currentAddress.postal_code) && !isPostalValid)}
+              disabled={
+                isSubmitting ||
+                !hasChanges ||
+                missingRequired ||
+                (Boolean(currentAddress.postal_code) && !isPostalValid)
+              }
             >
               {isSubmitting ? (
                 <>

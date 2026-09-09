@@ -117,6 +117,25 @@ class TestLabelGate(TestCase):
 
 @override_settings(ERP_GATE_URL="https://erp.test", ERP_GATE_TOKEN="key:secret")
 class TestShipmentActionRelay(TestCase):
+    def test_address_review_preserves_checked_structured_proposal(self):
+        review = {
+            "can_use_suggestion": True,
+            "suggested_address": {"postal_code": "1000", "country_code": "BE"},
+        }
+        with mock.patch.object(
+            erp_gate.requests, "post", return_value=_response(payload={"message": review})
+        ) as post:
+            result = erp_gate.run_erp_shipment_action(_shipment(ERP_META), "get_address_review")
+        self.assertTrue(result["can_use_suggestion"])
+        self.assertEqual(result["suggested_address"], review["suggested_address"])
+        self.assertEqual(post.call_args.kwargs["json"]["dn"], ERP_META["karrio_shipment"])
+
+    def test_address_review_cannot_select_another_orders_address(self):
+        with self.assertRaises(APIException):
+            erp_gate.run_erp_shipment_action(
+                _shipment(ERP_META), "get_address_review", args={"address_name": "other"}
+            )
+
     def test_unknown_action_is_rejected(self):
         with self.assertRaises(APIException) as caught:
             erp_gate.run_erp_shipment_action(_shipment(ERP_META), "delete")

@@ -15,6 +15,7 @@ import { useAddressReview } from "@karrio/hooks/address";
 import {
   AddressSuggestion,
   DELIVERY_FIELDS,
+  distinctAddressSuggestion,
 } from "@karrio/ui/components/address-suggestion";
 import { useAPIMetadata } from "@karrio/hooks/api-metadata";
 
@@ -71,7 +72,7 @@ export const AddressEditDialog = ({
   const acceptSuggestion = async () => {
     if (
       !review.data?.can_use_suggestion ||
-      !review.data.suggested_address ||
+      !distinctAddressSuggestion(currentAddress, review.data.suggested_address) ||
       review.isFetching ||
       edited
     )

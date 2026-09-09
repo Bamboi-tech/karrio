@@ -1,7 +1,7 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { AddressSuggestion } from "../components/address-suggestion";
+import { AddressSuggestion, distinctAddressSuggestion } from "../components/address-suggestion";
 
 const current = {
   address_line1: "Grote Markt 1",
@@ -48,5 +48,24 @@ describe("Address proposal", () => {
     const html = render({ review: { ...review, status: "Valid" } });
     expect(html).toContain("no outstanding validation issues");
     expect(html).not.toContain("may be incorrect");
+  });
+});
+
+describe("Duplicate address proposals", () => {
+  it("hides identical addresses even when the provider marks them usable", () => {
+    const html = render({ review: { ...review, suggested_address: { ...current } } });
+    expect(html).not.toContain("Use suggestion");
+    expect(html).not.toContain("highlighted");
+    expect(html).toContain("No alternative address was found");
+  });
+  it("ignores whitespace, casing and postcode spacing", () => {
+    expect(distinctAddressSuggestion(current, { ...current, address_line1: "  GROTE   MARKT 1 ", postal_code: "20 00", city: "BRUSSEL" } as any)).toBeNull();
+  });
+  it("does not treat omitted fields as a correction", () => {
+    expect(distinctAddressSuggestion(current, { postal_code: "2000" })).toBeNull();
+  });
+  it("keeps real house-number and apartment changes", () => {
+    expect(distinctAddressSuggestion(current, { address_line1: "Grote Markt 2" })).not.toBeNull();
+    expect(distinctAddressSuggestion(current, { address_line2: "4 hoog" })).not.toBeNull();
   });
 });

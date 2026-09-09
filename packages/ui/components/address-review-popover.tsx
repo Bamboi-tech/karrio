@@ -9,7 +9,7 @@ import { Popover, PopoverTrigger, PopoverContent } from "@karrio/ui/components/u
 import { AddressEditDialog } from "@karrio/ui/components/address-edit-dialog";
 import { Button } from "@karrio/ui/components/ui/button";
 import { getAddressReview } from "@karrio/ui/components/address-validation-badge";
-import { addressIssue, DELIVERY_FIELDS } from "@karrio/ui/components/address-suggestion";
+import { addressIssue, DELIVERY_FIELDS, distinctAddressSuggestion, changedAddressFields, NO_ADDRESS_CORRECTION } from "@karrio/ui/components/address-suggestion";
 
 type ReviewShipment = { id: string; status: string; recipient: Partial<AddressType>; metadata?: unknown; meta?: unknown };
 
@@ -24,7 +24,7 @@ export function AddressReviewPopover({ shipment, onEdit }: { shipment: ReviewShi
   const { updateShipment } = useShipmentMutation(shipment.id);
   const { references } = useAPIMetadata();
   const current = shipment.recipient;
-  const suggestion = review.data?.suggested_address;
+  const suggestion = distinctAddressSuggestion(current, review.data?.suggested_address);
   const resolved = ["valid", "corrected", "confirmed"].includes((review.data?.status || state?.status || "").toLowerCase());
   const actionable = shipment.status === "draft" && !state?.pending && !saved && !resolved;
   const busy = updateShipment.isLoading;
@@ -33,7 +33,7 @@ export function AddressReviewPopover({ shipment, onEdit }: { shipment: ReviewShi
   }, [state?.status]);
   const address = (value: Partial<AddressType>, proposed: boolean) => {
     const field = (key: typeof DELIVERY_FIELDS[number]) => {
-      const changed = suggestion && (current[key] || "") !== (suggestion[key] || "");
+      const changed = changedAddressFields(current, suggestion).includes(key);
       const text = key === "country_code" ? references.countries?.[value.country_code || ""] || value.country_code : value[key];
       return <span className={changed ? proposed ? "bg-blue-100 rounded px-0.5" : "bg-amber-100 rounded px-0.5" : ""}>{text as string}</span>;
     };
@@ -72,7 +72,7 @@ export function AddressReviewPopover({ shipment, onEdit }: { shipment: ReviewShi
     <PopoverContent align="start" className="w-[360px] max-w-[calc(100vw-24px)] p-3 space-y-3" onClick={event => event.stopPropagation()}>
       <div className="flex items-center justify-between"><h3 className="font-semibold">Shipping address</h3>{shipment.status === "draft" && linked ? <AddressEditDialog header="Edit shipping address" mode="delivery" shipment={shipment as ShipmentType} address={current as AddressType} onSubmit={saveAddress} trigger={<button type="button" aria-label="Edit shipping address" className="p-1 text-gray-500" disabled={busy}><Pencil className="h-4 w-4" /></button>} /> : <button type="button" className="text-xs underline" onClick={() => { setOpen(false); onEdit(); }}>View shipment</button>}</div>
       <label className={`flex gap-3 rounded-lg border p-3 ${choice === "current" ? "border-gray-800 bg-gray-50" : ""}`}>
-        <input type="radio" name={`address-${shipment.id}`} checked={choice === "current"} onChange={() => setChoice("current")} disabled={busy} className="mt-1" />
+        {suggestion && <input type="radio" name={`address-${shipment.id}`} checked={choice === "current"} onChange={() => setChoice("current")} disabled={busy} className="mt-1" />}
         <div className="min-w-0 flex-1"><div className="font-semibold mb-2">Current</div>{address(current, false)}
           {!resolved && !saved && !state?.pending && <div className="mt-3 flex gap-2 rounded-md bg-amber-50 p-2 text-sm text-amber-900"><AlertTriangle className="h-4 w-4 shrink-0" />{addressIssue(current, suggestion)}</div>}
         </div>
@@ -80,12 +80,12 @@ export function AddressReviewPopover({ shipment, onEdit }: { shipment: ReviewShi
       {(saved || state?.pending) ? <p role="status" className="text-sm">Address saved. Validation is in progress.</p> : review.isFetching ? <p role="status" className="flex items-center gap-2 text-sm"><Loader2 className="h-4 w-4 animate-spin" />Checking suggestion…</p> : review.isError ? <div role="alert" className="text-sm">Address suggestions are unavailable. <button className="underline" onClick={() => review.refetch()}>Try again</button></div> : resolved ? <p className="text-sm" role="status">No outstanding address issues.</p> : suggestion ? <label className={`flex gap-3 rounded-lg border p-3 ${choice === "suggestion" ? "border-gray-800 bg-gray-50" : ""}`}>
         <input type="radio" name={`address-${shipment.id}`} checked={choice === "suggestion"} onChange={() => setChoice("suggestion")} disabled={busy} className="mt-1" />
         <div className="min-w-0 flex-1"><div className="font-semibold mb-2">Suggestion</div>{address({ ...current, ...suggestion }, true)}</div>
-      </label> : <p className="text-sm">No verified suggestion is available. Edit the address to review it.</p>}
+      </label> : <p className="text-sm">{NO_ADDRESS_CORRECTION}</p>}
       {suggestion && !review.data?.can_use_suggestion && !resolved && <p className="text-sm text-muted-foreground">This suggestion needs manual review.</p>}
       {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
       <div className="flex justify-end gap-2">
         <Button variant="outline" size="sm" disabled={busy} onClick={() => setOpen(false)}>Close</Button>
-        {actionable && <Button size="sm" disabled={!review.data?.can_use_suggestion || !suggestion || review.isFetching || busy || choice !== "suggestion"} onClick={accept}>{busy ? "Saving…" : "Use suggestion"}</Button>}
+        {actionable && suggestion && review.data?.can_use_suggestion && <Button size="sm" disabled={!review.data?.can_use_suggestion || !suggestion || review.isFetching || busy || choice !== "suggestion"} onClick={accept}>{busy ? "Saving…" : "Use suggestion"}</Button>}
       </div>
     </PopoverContent>
   </Popover>;

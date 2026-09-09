@@ -23,6 +23,7 @@ interface StatusTimelineProps {
   filters: TimelineOption[];
   activeFilter: string[];
   onFilterChange: (filter: string[]) => void;
+  onFilterIntent?: (filter: string[]) => void;
   className?: string;
 }
 
@@ -51,6 +52,7 @@ export const StatusTimeline: React.FC<StatusTimelineProps> = ({
   filters,
   activeFilter,
   onFilterChange,
+  onFilterIntent,
   className,
 }) => {
   const all = filters.find((f) => f.kind === "all");
@@ -84,6 +86,8 @@ export const StatusTimeline: React.FC<StatusTimelineProps> = ({
               <button
                 type="button"
                 onClick={() => onFilterChange(all.value)}
+                onMouseEnter={() => onFilterIntent?.(all.value)}
+                onFocus={() => onFilterIntent?.(all.value)}
                 className={cn(
                   "kt-rise shrink-0 mt-[18px] rounded-full border px-3.5 py-1.5 text-xs font-semibold tracking-wide transition-all duration-200",
                   isAllActive
@@ -129,6 +133,8 @@ export const StatusTimeline: React.FC<StatusTimelineProps> = ({
                       <button
                         type="button"
                         onClick={() => onFilterChange(stage.value)}
+                onMouseEnter={() => onFilterIntent?.(stage.value)}
+                onFocus={() => onFilterIntent?.(stage.value)}
                         title={stage.hint}
                         aria-current={active ? "step" : undefined}
                         className="group flex flex-col items-center focus:outline-none"
@@ -223,6 +229,8 @@ export const StatusTimeline: React.FC<StatusTimelineProps> = ({
                     key={outcome.label}
                     type="button"
                     onClick={() => onFilterChange(outcome.value)}
+                onMouseEnter={() => onFilterIntent?.(outcome.value)}
+                onFocus={() => onFilterIntent?.(outcome.value)}
                     title={outcome.hint}
                     className={cn(
                       "rounded-md border px-2.5 py-1 text-xs font-medium transition-all duration-200",

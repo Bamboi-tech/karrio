@@ -171,6 +171,16 @@ export function useShipments<V extends ShipmentsVariant = "full">({
     onError,
   });
 
+  function prefetch(options: ShipmentFilter) {
+    const nextFilter = parseFilter(options as Record<string, unknown>);
+    if ((nextFilter.status || []).some((status) => `${status}` === "_failed_creation")) return;
+    return queryClient.prefetchQuery({
+      queryKey: scopeQueryKey([cacheKey || "shipments", nextFilter], scope) as unknown[],
+      queryFn: () => fetch({ filter: nextFilter }),
+      staleTime: 5000,
+    });
+  }
+
   function setFilter(options: ShipmentFilter) {
     const params = parseFilter(options as Record<string, unknown>);
 
@@ -205,6 +215,7 @@ export function useShipments<V extends ShipmentsVariant = "full">({
     query,
     filter,
     setFilter,
+    prefetch,
   };
 }
 

@@ -50,35 +50,18 @@ export const SearchBar = React.forwardRef<
   const inputRef = React.useRef<HTMLInputElement>(null);
 
   // Use search hook
-  const { query: searchQuery, setFilter } = useSearch();
+  const { query: searchQuery, setFilter, isPending, isCurrent, suggestion } = useSearch();
 
-  // Simple debouncing - just like AddressCombobox
-  const [debouncedValue, setDebouncedValue] = React.useState("");
-
+  const debouncedValue = inputValue;
   React.useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedValue(inputValue);
-    }, 300);
-
-    return () => clearTimeout(timer);
-  }, [inputValue]);
-
-  // Update search filter when debouncedValue changes
-  React.useEffect(() => {
-    if (debouncedValue.trim()) {
-      setFilter({ keyword: debouncedValue.trim() });
-    } else {
-      setFilter({});
-    }
-  }, [debouncedValue, setFilter]);
-
-  const isLoading = React.useMemo(() => {
-    return debouncedValue.trim() !== "" && searchQuery.isFetching;
-  }, [debouncedValue, searchQuery.isFetching]);
+    setFilter({ keyword: inputValue.trim() });
+  }, [inputValue, setFilter]);
+  const isLoading = inputValue.trim().length >= 2 &&
+    (isPending || !isCurrent);
 
   // Transform search results
   const searchResults = React.useMemo((): SearchResult[] => {
-    if (!searchQuery.data || !debouncedValue.trim()) return [];
+    if (!searchQuery.data || !isCurrent || isLoading || debouncedValue.trim().length < 2) return [];
 
     const data = searchQuery.data as any;
     const results: SearchResult[] = [];
@@ -90,8 +73,8 @@ export const SearchBar = React.forwardRef<
           results.push({
             id: item.id,
             type: 'shipment',
-            title: `Shipment ${item.tracking_number || item.id}`,
-            subtitle: formatAddressShort(item.recipient),
+            title: item.metadata?.shopify_order_number || item.reference || `Shipment ${item.tracking_number || item.id}`,
+            subtitle: [item.metadata?.sales_order, item.metadata?.karrio_shipment, formatAddressShort(item.recipient)].filter(Boolean).join(" · "),
             status: item.status,
             date: item.created_at,
             href: `/shipments/${item.id}`,
@@ -125,20 +108,18 @@ export const SearchBar = React.forwardRef<
     }
 
     return results;
-  }, [searchQuery.data, debouncedValue]);
+  }, [searchQuery.data, debouncedValue, isCurrent, isLoading]);
 
   const handleInputValueChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newValue = e.target.value;
     setInputValue(newValue);
 
     // Show dropdown if we have results
-    if (newValue.trim() && searchResults.length > 0) {
-      setOpen(true);
-    }
+    setOpen(newValue.trim().length >= 2);
   };
 
   const handleInputFocus = () => {
-    if (inputValue.trim() && searchResults.length > 0) {
+    if (inputValue.trim().length >= 2) {
       setOpen(true);
     }
   };
@@ -232,7 +213,12 @@ export const SearchBar = React.forwardRef<
         >
           <Command shouldFilter={false}>
             <CommandList>
-              {searchResults.length === 0 && debouncedValue.trim() && !isLoading && (
+              {isLoading && <div role="status" className="p-4 text-sm text-gray-500">Searching…</div>}
+              {searchQuery.isError && !isLoading && <div role="alert" className="p-4 text-sm">Search failed. <button onClick={() => searchQuery.refetch()} className="underline">Retry</button></div>}
+              {!isLoading && isCurrent && !searchQuery.isError && searchResults.length === 0 && suggestion && (
+                <button className="w-full p-4 text-left text-sm text-blue-600" onClick={() => setInputValue(suggestion)}>No exact match. Search for {suggestion} instead?</button>
+              )}
+              {searchResults.length === 0 && debouncedValue.trim().length >= 2 && !isLoading && !suggestion && !searchQuery.isError && (
                 <CommandEmpty>No results found.</CommandEmpty>
               )}
 

@@ -17,7 +17,7 @@ interface SearchModalProps {
 }
 
 export function SearchModal({ open, onOpenChange }: SearchModalProps) {
-  const { query, setFilter } = useSearch();
+  const { query, setFilter, isPending, isCurrent, suggestion } = useSearch();
   const [searchValue, setSearchValue] = useState<string>("");
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -47,8 +47,8 @@ export function SearchModal({ open, onOpenChange }: SearchModalProps) {
     }
   };
 
-  const isLoading = query.isFetching && searchValue.length >= 2;
-  const hasResults = !isNoneOrEmpty(searchValue) && searchValue.length >= 2 && (query.data?.results || []).length > 0;
+  const isLoading = (isPending || !isCurrent) && searchValue.trim().length >= 2;
+  const hasResults = isCurrent && !isLoading && !isNoneOrEmpty(searchValue) && searchValue.length >= 2 && (query.data?.results || []).length > 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -82,6 +82,10 @@ export function SearchModal({ open, onOpenChange }: SearchModalProps) {
 
         <Command className="max-h-[400px]" shouldFilter={false}>
           <CommandList>
+            {query.isError && !isLoading && <div role="alert" className="p-4 text-sm">Search failed. <button className="underline" onClick={() => query.refetch()}>Retry</button></div>}
+            {!isLoading && isCurrent && !query.isError && !hasResults && suggestion && (
+              <button className="w-full p-4 text-left text-sm text-blue-600" onClick={() => setSearchValue(suggestion)}>No exact match. Search for {suggestion} instead?</button>
+            )}
             {isLoading ? (
               <CommandEmpty>
                 <div className="flex items-center justify-center py-8">
@@ -104,9 +108,9 @@ export function SearchModal({ open, onOpenChange }: SearchModalProps) {
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="font-medium text-gray-900 truncate">
-                              {formatAddressShort((result as any).recipient)}
+                              {(result as any).metadata?.shopify_order_number || (result as any).reference || formatAddressShort((result as any).recipient)}
                             </div>
-                            <div className="text-xs text-gray-500">Shipment</div>
+                            <div className="text-xs text-gray-500">{[(result as any).metadata?.sales_order, (result as any).metadata?.karrio_shipment, formatAddressShort((result as any).recipient)].filter(Boolean).join(" · ")}</div>
                           </div>
                           <div className="flex items-center gap-2 ml-3">
                             <StatusBadge status={result.status as string} className="text-xs" />
@@ -168,7 +172,7 @@ export function SearchModal({ open, onOpenChange }: SearchModalProps) {
                   </React.Fragment>
                 ))}
               </CommandGroup>
-            ) : (
+            ) : query.isError || (suggestion && searchValue.length >= 2) ? null : (
               <CommandEmpty>
                 <div className="py-8 text-center">
                   <div className="text-sm text-gray-500">

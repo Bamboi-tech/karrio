@@ -6,6 +6,7 @@ import { useSyncedSession } from "./session";
 import { onError, url$ } from "@karrio/lib";
 import React, { useCallback, useContext, useMemo } from "react";
 import axios from "axios";
+import { usePathname, useSearchParams } from "next/navigation";
 
 type APIMeta = {
   metadata: Metadata;
@@ -30,6 +31,9 @@ function APIMetadataProvider({
     isAuthenticated,
   } = useSyncedSession();
   const metadataHost = metadata?.HOST;
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const reduced = pathname === "/shipments" && !searchParams?.get("modal");
 
   const getHost = useCallback(() => {
     const host = (
@@ -47,17 +51,17 @@ function APIMetadataProvider({
   // rather than the raw access token: a token refresh must not re-download the
   // ~300 KB reference set, and a cold load with a seeded session fetches once,
   // already authenticated. Only a truly session-less page fetches unauthenticated.
-  // `reduced=false` stays: the carrier-connection screens need the full option set.
+  // The list needs only reduced references; detail and configuration screens load the full option set.
   const {
     data: references,
     isLoading,
     error,
   } = useAuthenticatedQuery({
-    queryKey: ["references", host, isAuthenticated],
+    queryKey: ["references", host, isAuthenticated, reduced],
     queryFn: () => {
       return axios
         .get<References>(
-          url$`${host}/v1/references?reduced=false`,
+          url$`${host}/v1/references?reduced=${reduced}`,
           !!accessToken
             ? {
                 headers: { authorization: `Bearer ${accessToken}` },

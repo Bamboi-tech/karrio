@@ -7,6 +7,7 @@ import React from "react";
 // renders the shipment page, and the shipment page uses this context to open
 // the draft that replaced the one it shows — a cycle if both lived in one file.
 export type ShipmentPreviewSheetContextType = {
+  prefetchShipment?: (shipmentId: string) => void;
   previewShipment: (shipmentId: string) => void;
 };
 

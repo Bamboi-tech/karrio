@@ -4006,6 +4006,8 @@ export const SEARCH_DATA = gql`
           id
           status
           tracking_number
+          reference
+          metadata
           recipient {
             id
             city

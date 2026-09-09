@@ -16,6 +16,7 @@ interface FiltersCardProps {
   filters: FilterOption[];
   activeFilter: string[];
   onFilterChange: (filter: string[]) => void;
+  onFilterIntent?: (filter: string[]) => void;
   className?: string;
 }
 
@@ -23,6 +24,7 @@ export const FiltersCard: React.FC<FiltersCardProps> = ({
   filters,
   activeFilter,
   onFilterChange,
+  onFilterIntent,
   className
 }) => {
   const isActive = (filterValue: string[]) => {
@@ -43,6 +45,8 @@ export const FiltersCard: React.FC<FiltersCardProps> = ({
               : "border-gray-200 bg-white"
           )}
           onClick={() => onFilterChange(filter.value)}
+                onMouseEnter={() => onFilterIntent?.(filter.value)}
+                onFocus={() => onFilterIntent?.(filter.value)}
         >
           <div className={cn(
             "text-sm font-medium capitalize whitespace-nowrap sm:whitespace-normal",

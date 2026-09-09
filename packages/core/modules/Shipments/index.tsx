@@ -68,7 +68,6 @@ import {
   SHOPIFY_HOLD_KEY,
 } from "@karrio/ui/components/shipment-hold";
 import { useAPIMetadata } from "@karrio/hooks/api-metadata";
-import { useLoader } from "@karrio/ui/core/components/loader";
 import { AppLink } from "@karrio/ui/core/components/app-link";
 import { useShipments, useShipmentBadgeCounts, useShipmentMutation } from "@karrio/hooks/shipment";
 import {
@@ -100,6 +99,7 @@ import {
 } from "@karrio/ui/components/ui/dropdown-menu";
 import { useToast } from "@karrio/ui/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
+import { Spinner } from "@karrio/ui/components/spinner";
 import React, { useContext, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 
@@ -515,6 +515,8 @@ const ShipmentRow = React.memo(function ShipmentRow({
   userConnections,
   systemConnections,
   onPreview,
+  actionState,
+  onPrefetch,
   onToggle,
   onSelectorClick,
 }: {
@@ -525,7 +527,9 @@ const ShipmentRow = React.memo(function ShipmentRow({
   appName: string;
   userConnections: ConnectionLike[];
   systemConnections: ConnectionLike[];
+  actionState?: string;
   onPreview: (id: string) => void;
+  onPrefetch?: (id: string) => void;
   onToggle: (checked: boolean, id: string) => void;
   onSelectorClick: (event: React.MouseEvent, id: string) => void;
 }) {
@@ -535,8 +539,19 @@ const ShipmentRow = React.memo(function ShipmentRow({
     shipment.selected_rate_carrier ||
     getCarrier(rate, userConnections, systemConnections);
   const preview = () => onPreview(shipment.id);
+  const prefetchTimer = React.useRef<ReturnType<typeof setTimeout>>();
+  const cancelPrefetch = () => clearTimeout(prefetchTimer.current);
+  const schedulePrefetch = () => {
+    cancelPrefetch();
+    prefetchTimer.current = setTimeout(() => onPrefetch?.(shipment.id), 150);
+  };
+  React.useEffect(() => () => clearTimeout(prefetchTimer.current), []);
   return (
     <TableRow
+      onMouseEnter={schedulePrefetch}
+      onMouseLeave={cancelPrefetch}
+      onFocus={schedulePrefetch}
+      onBlur={cancelPrefetch}
       className={`items cursor-pointer transition-colors duration-150 ease-in-out ${
         selected ? "bg-blue-50 hover:bg-blue-100" : "hover:bg-gray-50"
       }`}
@@ -744,6 +759,7 @@ const ShipmentRow = React.memo(function ShipmentRow({
         </div>
       </TableCell>
       <TableCell className="action items-center px-0 sticky-right">
+        {actionState && <span className="mr-2 text-xs">{actionState}</span>}
         <ShipmentMenu
           shipment={shipment as unknown as ShipmentType}
           className="w-full"
@@ -768,7 +784,6 @@ export default function Page(pageProps: any) {
 // board (and re-fires every query) whenever Page re-renders.
 function ShipmentsBoard(): JSX.Element {
   const searchParams = useSearchParams();
-  const { setLoading } = useLoader();
   const { references } = useAPIMetadata();
   const [allChecked, setAllChecked] = React.useState(false);
   const [initialized, setInitialized] = React.useState(false);
@@ -794,6 +809,33 @@ function ShipmentsBoard(): JSX.Element {
   const lastCheckedRef = React.useRef<string | null>(null);
   // Which sequential bulk run (if any) is in flight — the buttons disable
   // each other so two batches can never interleave over one selection.
+  const [bulkRows, setBulkRows] = React.useState<Record<string, string>>({});
+  const failedBulkIds = React.useRef(new Set<string>());
+  const recordBulkFailure = (id: string) => {
+    failedBulkIds.current.add(id);
+    setBulkRows((current) => ({ ...current, [id]: "Failed" }));
+  };
+  const runWithProgress = async (
+    targets: ListShipment[], limit: number,
+    action: (shipment: ListShipment) => Promise<void>, keyOf: typeof erpLockKey,
+  ) => {
+    failedBulkIds.current.clear();
+    setBulkRows(Object.fromEntries(targets.map(({ id }) => [id, "Waiting"])));
+    await runBounded<ListShipment>(targets, limit, async (shipment) => {
+      setBulkRows((current) => ({ ...current, [shipment.id]: "Processing" }));
+      try {
+        await action(shipment);
+      } catch (error) {
+        recordBulkFailure(shipment.id);
+        throw error;
+      } finally {
+        if (!failedBulkIds.current.has(shipment.id)) {
+          setBulkRows((current) => ({ ...current, [shipment.id]: "Done" }));
+          setSelection((current) => current.filter((id) => id !== shipment.id));
+        }
+      }
+    }, keyOf);
+  };
   const [bulkAction, setBulkAction] = React.useState<
     | "buy_and_print"
     | "mark_picked"
@@ -830,7 +872,7 @@ function ShipmentsBoard(): JSX.Element {
   const picklistRowsRef = React.useRef<ReturnType<typeof selectedShipments>>(
     [],
   );
-  const { previewShipment } = useContext(ShipmentPreviewSheetContext);
+  const { previewShipment, prefetchShipment } = useContext(ShipmentPreviewSheetContext);
   const { user_connections } = useCarrierConnections();
   const { system_connections } = useSystemConnections();
   const documentPrinter = useDocumentPrinter();
@@ -1148,6 +1190,19 @@ function ShipmentsBoard(): JSX.Element {
     matchesCard(["delivered"]) ||
     matchesCard(["needs_attention", "delivery_failed"]);
 
+  const [showRefresh, setShowRefresh] = React.useState(false);
+  const [slowRefresh, setSlowRefresh] = React.useState(false);
+  useEffect(() => {
+    if (!query.isFetching) {
+      setShowRefresh(false);
+      setSlowRefresh(false);
+      return;
+    }
+    const indicator = setTimeout(() => setShowRefresh(true), 150);
+    const slow = setTimeout(() => setSlowRefresh(true), 8000);
+    return () => { clearTimeout(indicator); clearTimeout(slow); };
+  }, [query.isFetching]);
+
   // Warehouse views are filtered and ordered before pagination by the API.
   const visibleShipments = React.useMemo(() => {
     const edges = shipments?.edges || [];
@@ -1227,7 +1282,10 @@ function ShipmentsBoard(): JSX.Element {
     const failedIds: string[] = [];
     const unrecordedPicks: string[] = [];
 
+    failedBulkIds.current.clear();
+    setBulkRows(Object.fromEntries(targets.map(({ id }) => [id, "Waiting"])));
     for (const shipment of targets) {
+      setBulkRows((current) => ({ ...current, [shipment.id]: "Processing" }));
       try {
         // BEFORE the purchase on purpose: the ERP's mark_picked only
         // accepts a shipment in status "Synced", and buying the label moves
@@ -1252,8 +1310,11 @@ function ShipmentsBoard(): JSX.Element {
             shipment.selected_rate?.id ?? shipment.rates?.[0]?.id,
         } as ShipmentType);
         purchased.push(shipment.id);
+        setBulkRows((current) => ({ ...current, [shipment.id]: "Done" }));
+        setSelection((current) => current.filter((id) => id !== shipment.id));
       } catch (error) {
-        failures.push(`${shipmentLabel(shipment)}: ${describeError(error)}`);
+        recordBulkFailure(shipment.id);
+          failures.push(`${shipmentLabel(shipment)}: ${describeError(error)}`);
         failedIds.push(shipment.id);
       }
     }
@@ -1344,7 +1405,7 @@ function ShipmentsBoard(): JSX.Element {
 
     const failures: string[] = [];
     let recorded = 0;
-    await runBounded(
+    await runWithProgress(
       targets,
       BULK_CONCURRENCY,
       async (shipment) => {
@@ -1352,6 +1413,7 @@ function ShipmentsBoard(): JSX.Element {
           await erpActions.markPicked.mutateAsync({ id: shipment.id });
           recorded += 1;
         } catch (error) {
+          recordBulkFailure(shipment.id);
           failures.push(`${shipmentLabel(shipment)}: ${describeError(error)}`);
         }
       },
@@ -1396,7 +1458,7 @@ function ShipmentsBoard(): JSX.Element {
     const failures: string[] = [];
     let succeeded = 0;
 
-    await runBounded(
+    await runWithProgress(
       targets,
       BULK_CONCURRENCY,
       async (shipment) => {
@@ -1404,6 +1466,7 @@ function ShipmentsBoard(): JSX.Element {
           await erpActions.markPicked.mutateAsync({ id: shipment.id });
           succeeded += 1;
         } catch (error) {
+          recordBulkFailure(shipment.id);
           failures.push(`${shipmentLabel(shipment)}: ${describeError(error)}`);
         }
       },
@@ -1448,7 +1511,7 @@ function ShipmentsBoard(): JSX.Element {
     const failures: string[] = [];
     let succeeded = 0;
 
-    await runBounded(
+    await runWithProgress(
       targets,
       BULK_CONCURRENCY,
       async (shipment) => {
@@ -1458,6 +1521,7 @@ function ShipmentsBoard(): JSX.Element {
           });
           succeeded += 1;
         } catch (error) {
+          recordBulkFailure(shipment.id);
           failures.push(`${shipmentLabel(shipment)}: ${describeError(error)}`);
         }
       },
@@ -1505,7 +1569,7 @@ function ShipmentsBoard(): JSX.Element {
     const unmoved: string[] = [];
     let succeeded = 0;
 
-    await runBounded(
+    await runWithProgress(
       targets,
       BULK_CONCURRENCY,
       async (shipment) => {
@@ -1518,6 +1582,7 @@ function ShipmentsBoard(): JSX.Element {
           if (!moved) unmoved.push(shipmentLabel(shipment));
           succeeded += 1;
         } catch (error) {
+          recordBulkFailure(shipment.id);
           failures.push(`${shipmentLabel(shipment)}: ${describeError(error)}`);
         }
       },
@@ -1558,7 +1623,7 @@ function ShipmentsBoard(): JSX.Element {
     const failures: string[] = [];
     let succeeded = 0;
 
-    await runBounded(
+    await runWithProgress(
       targets,
       BULK_CONCURRENCY,
       async (shipment) => {
@@ -1569,6 +1634,7 @@ function ShipmentsBoard(): JSX.Element {
           if (message) notes.push(`${shipmentLabel(shipment)}: ${message}`);
           succeeded += 1;
         } catch (error) {
+          recordBulkFailure(shipment.id);
           failures.push(`${shipmentLabel(shipment)}: ${describeError(error)}`);
         }
       },
@@ -1604,7 +1670,7 @@ function ShipmentsBoard(): JSX.Element {
     let moved = 0;
     let stuck = 0;
 
-    await runBounded(
+    await runWithProgress(
       targets,
       BULK_CONCURRENCY,
       async (shipment) => {
@@ -1633,6 +1699,7 @@ function ShipmentsBoard(): JSX.Element {
           }
           succeeded += 1;
         } catch (error) {
+          recordBulkFailure(shipment.id);
           failures.push(`${shipmentLabel(shipment)}: ${describeError(error)}`);
         }
       },
@@ -1671,9 +1738,6 @@ function ShipmentsBoard(): JSX.Element {
     updateFilter();
   }, [searchParamsString]);
   useEffect(() => {
-    if (!isFailedView) setLoading(query.isFetching);
-  }, [query.isFetching, isFailedView]);
-  useEffect(() => {
     updatedSelection(selection, visibleShipments);
   }, [selection, visibleShipments]);
   useEffect(() => {
@@ -1690,8 +1754,7 @@ function ShipmentsBoard(): JSX.Element {
   // Shared by both presentations. Needs Attention and On hold both filter
   // on an ERP-stamped metadata key server-side; every other view must
   // clear it or its status filter would intersect with those worklists.
-  const onStatusFilterChange = (status: string[]) =>
-    updateFilter({
+  const buildStatusFilter = (status: string[]) => ({
       status,
       metadata_key: status.includes(ADDRESS_REVIEW_SENTINEL)
         ? ADDRESS_REVIEW_FLAG
@@ -1700,6 +1763,8 @@ function ShipmentsBoard(): JSX.Element {
           : undefined,
       offset: 0,
     });
+  const onStatusFilterChange = (status: string[]) => updateFilter(buildStatusFilter(status));
+  const onStatusFilterIntent = (status: string[]) => { void context.prefetch({ ...filter, ...buildStatusFilter(status) } as ShipmentFilter); };
 
   return (
     <>
@@ -1765,15 +1830,29 @@ function ShipmentsBoard(): JSX.Element {
           filters={getFilterOptions()}
           activeFilter={filter?.status || []}
           onFilterChange={onStatusFilterChange}
+          onFilterIntent={onStatusFilterIntent}
         />
       ) : (
         <FiltersCard
           filters={getFilterOptions()}
           activeFilter={filter?.status || []}
           onFilterChange={onStatusFilterChange}
+          onFilterIntent={onStatusFilterIntent}
         />
       )}
 
+      {Object.keys(bulkRows).length > 0 && (
+        <div role="status" aria-live="polite" className="my-3 rounded-md border bg-blue-50 p-3 text-sm">
+          {Object.values(bulkRows).filter((state) => state === "Done" || state === "Failed").length} of {Object.keys(bulkRows).length} processed · {Object.values(bulkRows).filter((state) => state === "Failed").length} failed
+          {!bulkAction && <span> · Completed items are deselected; failed items remain selected for retry.</span>}
+        </div>
+      )}
+      {showRefresh && query.isFetching && !isFailedView && (
+        <div role="status" className="flex items-center gap-2 py-2 text-sm text-gray-500"><Spinner /> {slowRefresh ? "Taking longer than usual…" : query.isPreviousData ? "Loading this view…" : "Updating shipments…"}</div>
+      )}
+      {query.isError && !isFailedView && (
+        <div role="alert" className="my-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm">Could not load shipments. Please try again. <button className="underline" onClick={() => query.refetch()}>Retry</button></div>
+      )}
       {isFailedView && <FailedShipmentsList />}
 
       {!isFailedView && !query.isFetched && (
@@ -1796,6 +1875,7 @@ function ShipmentsBoard(): JSX.Element {
 
       {!isFailedView && query.isFetched && visibleShipments.length > 0 && (
         <>
+          <div aria-busy={query.isFetching} inert={query.isPreviousData || bulkAction !== null ? true : undefined} className={query.isPreviousData ? "opacity-60 transition-opacity" : "transition-opacity"}>
           <StickyTableWrapper>
             <Table className="shipments-table">
               <TableHeader>
@@ -2068,7 +2148,9 @@ function ShipmentsBoard(): JSX.Element {
                     appName={references.APP_NAME}
                     userConnections={user_connections || []}
                     systemConnections={system_connections || []}
+                    actionState={bulkRows[shipment.id]}
                     onPreview={previewShipment}
+                    onPrefetch={prefetchShipment}
                     onToggle={handleCheckboxChange}
                     onSelectorClick={handleSelectorClick}
                   />
@@ -2076,6 +2158,7 @@ function ShipmentsBoard(): JSX.Element {
               </TableBody>
             </Table>
           </StickyTableWrapper>
+          </div>
 
           {/* Sticky Footer */}
           <div className="sticky bottom-0 left-0 right-0 z-10 bg-white border-t border-gray-200 pb-16 md:pb-0">
@@ -2093,7 +2176,7 @@ function ShipmentsBoard(): JSX.Element {
         </>
       )}
 
-      {!isFailedView && query.isFetched && visibleShipments.length == 0 && (
+      {!isFailedView && query.isFetched && !query.isFetching && !query.isError && visibleShipments.length == 0 && (
         <div className="bg-white rounded-lg shadow-sm border my-6">
           <div className="p-6 text-center">
             <p>No shipment found.</p>

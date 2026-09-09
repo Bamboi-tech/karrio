@@ -5782,6 +5782,8 @@ export interface search_data_shipment_results_edges_node_recipient {
 }
 
 export interface search_data_shipment_results_edges_node {
+  reference: string | null;
+  metadata: any;
   id: string;
   status: ShipmentStatusEnum;
   tracking_number: string | null;

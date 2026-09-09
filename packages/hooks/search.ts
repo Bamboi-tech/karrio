@@ -2,37 +2,18 @@ import { SEARCH_DATA, search_data, search_dataVariables } from "@karrio/types";
 import { gqlstr, isNone, onError } from "@karrio/lib";
 import { useAuthenticatedQuery } from "./karrio";
 import { useKarrio } from "./karrio";
-import { useState, useCallback, useEffect } from "react";
+import { useState, useEffect } from "react";
 
 export function useSearch() {
   const karrio = useKarrio();
   const [filter, setFilter] = useState<search_dataVariables>({});
   const [debouncedFilter, setDebouncedFilter] = useState<search_dataVariables>({});
 
-  // Debounce the filter to avoid too many API calls
-  const debounceFilter = useCallback(
-    (() => {
-      let timeoutId: NodeJS.Timeout;
-      return (newFilter: search_dataVariables) => {
-        clearTimeout(timeoutId);
-        timeoutId = setTimeout(() => {
-          // Only update if keyword actually changed (distinctUntilChanged equivalent)
-          setDebouncedFilter(prev => {
-            if (prev.keyword !== newFilter.keyword) {
-              return newFilter;
-            }
-            return prev;
-          });
-        }, 800); // Increased debounce time
-      };
-    })(),
-    []
-  );
-
-  // Update debounced filter when filter changes
+  const keyword = filter.keyword?.trim() || "";
   useEffect(() => {
-    debounceFilter(filter);
-  }, [filter, debounceFilter]);
+    const timer = setTimeout(() => setDebouncedFilter({ keyword }), 250);
+    return () => clearTimeout(timer);
+  }, [keyword]);
 
   // Queries
   const query = useAuthenticatedQuery({
@@ -64,5 +45,9 @@ export function useSearch() {
     query,
     filter,
     setFilter,
+    isPending: keyword.length >= 2 && (keyword !== debouncedFilter.keyword || query.isFetching),
+    isCurrent: keyword === debouncedFilter.keyword,
+    // Suggest removing one accidentally repeated final digit; never silently substitute an ID.
+    suggestion: /^\d{4,}(\d)\1$/.test(keyword) ? keyword.slice(0, -1) : undefined,
   };
 }

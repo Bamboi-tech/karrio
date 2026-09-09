@@ -569,7 +569,7 @@ const ShipmentRow = React.memo(function ShipmentRow({
     service: <div className="flex items-center gap-2">
       {isSelfDelivery(shipment.metadata)
         ? <img src={p`/bamboi_icon.png`} width={20} height={20} alt="Own delivery" className="rounded" />
-        : <CarrierImage carrier_name={shipment.meta?.custom_carrier_name || shipment.meta?.carrier || rate.meta?.rate_provider || rate.carrier_name || formatCarrierSlug(appName)} height={20} width={20} containerClassName="shrink-0" text_color={carrier?.config?.text_color} background={carrier?.config?.brand_color} />}
+        : <CarrierImage carrier_name={shipment.meta?.custom_carrier_name || shipment.meta?.carrier || rate.meta?.rate_provider || rate.carrier_name || formatCarrierSlug(appName)} height={20} width={20} containerClassName="shrink-0" text_color={(carrier as ConnectionLike)?.config?.text_color} background={(carrier as ConnectionLike)?.config?.brand_color} />}
       <span className="max-w-[180px] truncate" title={route || rate.service || ""}>{route || (rate.service ? formatRef(rate.service) : "Not assigned")}</span>
     </div>,
     address: review ? <AddressValidationBadge status={review.status} title={[review.note, review.suggestion].filter(Boolean).join(" · ")} /> : <span className="text-gray-400">—</span>,

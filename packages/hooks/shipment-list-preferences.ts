@@ -8,7 +8,7 @@ export function useShipmentListPreferences() {
   const { pageData } = useKarrio();
   const { orgId, testMode } = useQueryScope();
   const { query: sessionQuery } = useSyncedSession();
-  const userId = pageData?.user?.id || sessionQuery.data?.user?.email;
+  const userId = pageData?.user?.email || sessionQuery.data?.user?.email;
   const key = userId ? `karrio:shipment-list:v1:${userId}:${orgId || "personal"}:${testMode ? "test" : "live"}` : null;
   const [stored, setStored] = React.useState<{ key: string | null; value: ShipmentListPreferences }>({ key: null, value: DEFAULT_SHIPMENT_LIST_PREFERENCES });
   const [loadedKey, setLoadedKey] = React.useState<string | null>(null);

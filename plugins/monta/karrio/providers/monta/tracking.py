@@ -10,12 +10,25 @@ Both sources are merged into one normalized Karrio event stream. The overall
 status is taken from the collo carrier statuses when available (these reflect
 the actual DHL/DPD/PostNL delivery state), falling back to the latest order
 event.
+
+Timestamps: Monta writes wall-clock time in Europe/Amsterdam without an
+offset — ISO-ish on the order/events feed (`2026-09-10T15:41:14.147`) and
+Dutch day-first on the collo summary (`11-9-2026 16:22:39`, no zero padding).
+Every timestamp is parsed here, localized and emitted as UTC, so a Shipped at
+15:41 Amsterdam lands as 13:41Z instead of 15:41Z (seen live on 2026-09-11: the
+customer page showed every Monta step two hours late). A value that fits no
+known format yields no timestamp rather than an exception: one order with an
+odd date must never take the whole tracking batch down with it (the first
+collo carrying a carrier status did exactly that on 2026-09-10 — 164 crashed
+batches, every Monta tracker frozen for a day).
 """
 
 import karrio.schemas.monta.order_event_response as monta
 import karrio.schemas.monta.collo_response as collo_schema
 
 import typing
+import datetime
+import zoneinfo
 import karrio.lib as lib
 import karrio.core.models as models
 import karrio.providers.monta.error as error
@@ -29,7 +42,16 @@ DATETIME_FORMATS = [
     "%Y-%m-%dT%H:%M:%SZ",
     "%Y-%m-%dT%H:%M:%S.%f",
     "%Y-%m-%dT%H:%M:%S",
+    # GET /order/{id}/colli → ShippedCarrierInfo.DeliveryStatusUpdatedAt
+    "%d-%m-%Y %H:%M:%S",
+    "%d-%m-%Y %H:%M",
 ]
+
+#: Monta's wall clock. A timestamp without an offset is in this zone.
+MONTA_TIMEZONE = zoneinfo.ZoneInfo("Europe/Amsterdam")
+
+#: What a tracking event carries when its source timestamp cannot be read.
+PARSE_ERROR_CODE = "PARSING_ERROR"
 
 
 def parse_tracking_response(
@@ -49,11 +71,24 @@ def parse_tracking_response(
         ],
         start=[],
     )
-    tracking_details = [
-        _extract_details(response, settings, number)
-        for number, response in responses
-        if any(response.get("events") or []) or any(response.get("colli") or [])
-    ]
+    tracking_details: typing.List[models.TrackingDetails] = []
+    for number, response in responses:
+        if not (any(response.get("events") or []) or any(response.get("colli") or [])):
+            continue
+        # One order Monta describes in a shape we cannot read must not abort
+        # the batch: every other tracker in it would stay frozen, silently.
+        try:
+            tracking_details.append(_extract_details(response, settings, number))
+        except Exception as exc:  # noqa: BLE001 — anything; the batch must survive
+            messages.append(
+                models.Message(
+                    carrier_id=settings.carrier_id,
+                    carrier_name=settings.carrier_name,
+                    code=PARSE_ERROR_CODE,
+                    message=f"Monta tracking data for {number} could not be parsed: {exc}",
+                    details=dict(tracking_number=number),
+                )
+            )
 
     return tracking_details, messages
 
@@ -74,15 +109,7 @@ def _extract_details(
 
     events = [
         models.TrackingEvent(
-            date=lib.fdate(
-                event.Occured or event.Created, try_formats=DATETIME_FORMATS
-            ),
-            time=lib.flocaltime(
-                event.Occured or event.Created, try_formats=DATETIME_FORMATS
-            ),
-            timestamp=lib.fiso_timestamp(
-                event.Occured or event.Created, try_formats=DATETIME_FORMATS
-            ),
+            **_moment(event.Occured or event.Created),
             code=event.TypeCode,
             description=event.Description or event.TypeCode,
             status=provider_units.to_tracking_status(event.TypeCode, event.Description),
@@ -90,13 +117,7 @@ def _extract_details(
         for event in order_events
     ] + [
         models.TrackingEvent(
-            date=lib.fdate(item.DeliveryStatusUpdated, try_formats=DATETIME_FORMATS),
-            time=lib.flocaltime(
-                item.DeliveryStatusUpdated, try_formats=DATETIME_FORMATS
-            ),
-            timestamp=lib.fiso_timestamp(
-                item.DeliveryStatusUpdated, try_formats=DATETIME_FORMATS
-            ),
+            **_moment(item.DeliveryStatusUpdated),
             code=item.DeliveryStatusCode,
             description=lib.text(
                 f"Collo {item.Number}",
@@ -139,6 +160,39 @@ def _extract_details(
             tracking_numbers=tracking_numbers,
             tracking_links=tracking_links,
         ),
+    )
+
+
+def parse_instant(value: typing.Optional[str]) -> typing.Optional[datetime.datetime]:
+    """A Monta timestamp as an aware UTC datetime, or None when unreadable.
+
+    An offset in the value wins; without one the value is Monta's Amsterdam
+    wall clock. Both Monta spellings are accepted (see DATETIME_FORMATS).
+    """
+    if not value or not str(value).strip():
+        return None
+    text = str(value).strip()
+    for fmt in DATETIME_FORMATS:
+        try:
+            parsed = datetime.datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=MONTA_TIMEZONE)
+        return parsed.astimezone(datetime.timezone.utc)
+    return None
+
+
+def _moment(value: typing.Optional[str]) -> dict:
+    """The date/time/timestamp trio of a TrackingEvent, in UTC — the same
+    shapes lib.fdate / lib.flocaltime / lib.fiso_timestamp produce."""
+    instant = parse_instant(value)
+    if instant is None:
+        return dict(date=None, time=None, timestamp=None)
+    return dict(
+        date=instant.strftime("%Y-%m-%d"),
+        time=instant.strftime("%H:%M %p"),
+        timestamp=instant.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
     )
 
 

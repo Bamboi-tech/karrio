@@ -20,78 +20,6 @@ class TestMontaRating(unittest.TestCase):
 
         self.assertEqual(request.serialize(), RateRequest)
 
-    def test_create_rate_request_passes_future_date_hints(self):
-        future = (_utc_today() + datetime.timedelta(days=3)).strftime("%Y-%m-%d")
-        request = gateway.mapper.create_rate_request(
-            models.RateRequest(
-                **{
-                    **RatePayload,
-                    "options": {
-                        "monta_delivery_date_requested": future,
-                        "monta_planned_shipment_date": future,
-                    },
-                }
-            )
-        )
-
-        order = request.serialize()["order"]
-        self.assertEqual(order["DeliveryDateRequested"], future)
-        self.assertEqual(order["PlannedShipmentDate"], future)
-
-    def test_create_rate_request_drops_past_date_hints(self):
-        """A stale date hint must never reach Monta: a past
-        DeliveryDateRequested gets the whole order rejected."""
-        past = (_utc_today() - datetime.timedelta(days=3)).strftime("%Y-%m-%d")
-        request = gateway.mapper.create_rate_request(
-            models.RateRequest(
-                **{
-                    **RatePayload,
-                    "options": {
-                        "monta_delivery_date_requested": past,
-                        "monta_planned_shipment_date": past,
-                    },
-                }
-            )
-        )
-
-        order = request.serialize()["order"]
-        self.assertNotIn("DeliveryDateRequested", order)
-        self.assertNotIn("PlannedShipmentDate", order)
-
-    def test_create_rate_request_drops_same_day_delivery_but_keeps_shipment_date(
-        self,
-    ):
-        """Same-day delivery is never honorable (the parcel still has to
-        ship), but shipping today is legitimate."""
-        today = _utc_today().strftime("%Y-%m-%d")
-        request = gateway.mapper.create_rate_request(
-            models.RateRequest(
-                **{
-                    **RatePayload,
-                    "options": {
-                        "monta_delivery_date_requested": today,
-                        "monta_planned_shipment_date": today,
-                    },
-                }
-            )
-        )
-
-        order = request.serialize()["order"]
-        self.assertNotIn("DeliveryDateRequested", order)
-        self.assertEqual(order["PlannedShipmentDate"], today)
-
-    def test_create_rate_request_drops_unparseable_date_hints(self):
-        request = gateway.mapper.create_rate_request(
-            models.RateRequest(
-                **{
-                    **RatePayload,
-                    "options": {"monta_delivery_date_requested": "asap"},
-                }
-            )
-        )
-
-        self.assertNotIn("DeliveryDateRequested", request.serialize()["order"])
-
     def test_get_rates_upserts_the_monta_order(self):
         with patch("karrio.mappers.monta.proxy.lib.request") as mock:
             mock.return_value = OrderResponse
@@ -192,9 +120,122 @@ class TestMontaRating(unittest.TestCase):
             )
 
 
-def _utc_today() -> datetime.date:
-    """The guard in rate.py compares date hints against today in UTC."""
-    return datetime.datetime.now(datetime.timezone.utc).date()
+CLOCK = "karrio.providers.monta.rate._utc_now"
+# The incident's clock: Monday 21-09-2026, 13:14 UTC.
+NOW = datetime.datetime(2026, 9, 21, 13, 14, tzinfo=datetime.timezone.utc)
+
+
+class TestMontaRateDateHints(unittest.TestCase):
+    """rate_request drops the date hints Monta would reject as stale, judged
+    against a frozen clock so the tests never depend on the wall clock."""
+
+    def setUp(self):
+        clock = patch(CLOCK, return_value=NOW)
+        clock.start()
+        self.addCleanup(clock.stop)
+
+    def _order(self, **hints) -> dict:
+        request = gateway.mapper.create_rate_request(
+            models.RateRequest(**{**RatePayload, "options": hints})
+        )
+        return request.serialize()["order"]
+
+    def test_future_date_hints_pass(self):
+        order = self._order(
+            monta_delivery_date_requested="2026-09-24",
+            monta_planned_shipment_date="2026-09-24",
+        )
+        self.assertEqual(order["DeliveryDateRequested"], "2026-09-24")
+        self.assertEqual(order["PlannedShipmentDate"], "2026-09-24")
+
+    def test_past_date_hints_are_dropped(self):
+        """A stale date hint must never reach Monta: a past
+        DeliveryDateRequested gets the whole order rejected."""
+        order = self._order(
+            monta_delivery_date_requested="2026-09-18",
+            monta_planned_shipment_date="2026-09-18",
+        )
+        self.assertNotIn("DeliveryDateRequested", order)
+        self.assertNotIn("PlannedShipmentDate", order)
+
+    def test_same_day_date_drops_delivery_but_keeps_shipment_date(self):
+        """Same-day delivery is never honorable (the parcel still has to
+        ship), but shipping today is legitimate. A bare date is a calendar
+        day — this also guards the lib.to_date current_format trap, where a
+        bare date would otherwise parse as a midnight timestamp."""
+        order = self._order(
+            monta_delivery_date_requested="2026-09-21",
+            monta_planned_shipment_date="2026-09-21",
+        )
+        self.assertNotIn("DeliveryDateRequested", order)
+        self.assertEqual(order["PlannedShipmentDate"], "2026-09-21")
+
+    def test_unparseable_date_hints_are_dropped(self):
+        order = self._order(monta_delivery_date_requested="asap")
+        self.assertNotIn("DeliveryDateRequested", order)
+
+    def test_same_day_shipment_timestamp_still_ahead_is_kept(self):
+        order = self._order(
+            monta_delivery_date_requested="2026-09-21T15:00:00Z",
+            monta_planned_shipment_date="2026-09-21T15:00:00Z",
+        )
+        self.assertEqual(order["PlannedShipmentDate"], "2026-09-21T15:00:00Z")
+        self.assertNotIn("DeliveryDateRequested", order)
+
+    def test_same_day_shipment_timestamp_already_passed_is_dropped(self):
+        """The 2026-09-21 incident: 12:00:00Z sent at 13:14 UTC passed the
+        old date-only guard and Monta rejected the order (code 12)."""
+        order = self._order(monta_planned_shipment_date="2026-09-21T12:00:00Z")
+        self.assertNotIn("PlannedShipmentDate", order)
+
+    def test_tomorrow_timestamp_hints_are_kept(self):
+        order = self._order(
+            monta_delivery_date_requested="2026-09-22T12:00:00Z",
+            monta_planned_shipment_date="2026-09-22T12:00:00Z",
+        )
+        self.assertEqual(order["DeliveryDateRequested"], "2026-09-22T12:00:00Z")
+        self.assertEqual(order["PlannedShipmentDate"], "2026-09-22T12:00:00Z")
+
+    def test_naive_timestamp_is_read_as_amsterdam_wall_clock(self):
+        # 15:00 Amsterdam is 13:00Z, behind the 13:14Z clock: dropped. The
+        # UTC reading would have kept it — the permissive direction for a
+        # guard whose failure mode is a rejected order.
+        self.assertNotIn(
+            "PlannedShipmentDate",
+            self._order(monta_planned_shipment_date="2026-09-21T15:00:00"),
+        )
+        self.assertEqual(
+            self._order(monta_planned_shipment_date="2026-09-21T15:30:00")[
+                "PlannedShipmentDate"
+            ],
+            "2026-09-21T15:30:00",
+        )
+
+    def test_an_instant_equal_to_now_is_already_too_late(self):
+        # Strict comparison: the hint must lie ahead of the clock.
+        self.assertNotIn(
+            "PlannedShipmentDate",
+            self._order(monta_planned_shipment_date="2026-09-21T13:14:00Z"),
+        )
+        self.assertEqual(
+            self._order(monta_planned_shipment_date="2026-09-21T13:14:01Z")[
+                "PlannedShipmentDate"
+            ],
+            "2026-09-21T13:14:01Z",
+        )
+
+    def test_offset_timestamp_is_compared_as_an_instant(self):
+        # 15:00+02:00 is 13:00Z, behind the 13:14Z clock; 15:30+02:00 is not.
+        self.assertNotIn(
+            "PlannedShipmentDate",
+            self._order(monta_planned_shipment_date="2026-09-21T15:00:00+02:00"),
+        )
+        self.assertEqual(
+            self._order(monta_planned_shipment_date="2026-09-21T15:30:00+02:00")[
+                "PlannedShipmentDate"
+            ],
+            "2026-09-21T15:30:00+02:00",
+        )
 
 
 if __name__ == "__main__":

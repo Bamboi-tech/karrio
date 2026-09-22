@@ -77,6 +77,28 @@ def _extract_details(
     )
 
 
+# The two spellings the ERP sends for a date hint. A timestamp is judged as an
+# instant, a bare date as a calendar day (see _actionable_date_hint).
+TIMESTAMP_HINT_FORMATS = ["%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S"]
+DATE_HINT_FORMATS = ["%Y-%m-%d"]
+
+
+def _utc_now() -> datetime.datetime:
+    """The clock the date-hint guard reads; a seam so tests can freeze it."""
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+def _parse_hint(
+    value: str, formats: typing.List[str]
+) -> typing.Optional[datetime.datetime]:
+    # current_format repeats the first spelling on purpose: lib.to_date falls
+    # back to it when every try_format misses, and its default ("%Y-%m-%d")
+    # would let a bare date pass as a midnight timestamp.
+    return lib.failsafe(
+        lambda: lib.to_date(value, current_format=formats[0], try_formats=formats)
+    )
+
+
 def _actionable_date_hint(
     value: typing.Optional[str],
     allow_today: bool = False,
@@ -84,31 +106,44 @@ def _actionable_date_hint(
     """Return the date hint only when Monta can still act on it.
 
     Monta rejects an order whose DeliveryDateRequested is in the past, and a
-    stale PlannedShipmentDate is equally dead weight. Dropping the hint is
-    always safe: DeliveryDateRequested is only a request toward Monta's
-    shipping process (per Monta, 24-08-2026 — it does not make Monta compute
-    or return dates), and Monta plans its own PlannedShipmentDate regardless,
-    which reaches consumers via the rate meta and the post-upsert order read
-    when Monta serves it. The comparison is on the date part against today
-    in UTC; an unparseable value is dropped for the same reason — we cannot
-    prove it is still actionable.
+    PlannedShipmentDate whose moment has passed gets the whole order rejected
+    as well (code 12 "Planned shipment date is in the past" — seen live on
+    21-09-2026: a 12:00:00Z hint sent at 13:14 UTC; the same hint sent at
+    10:58 UTC was accepted). Dropping the hint is always safe:
+    DeliveryDateRequested is only a request toward Monta's shipping process
+    (per Monta, 24-08-2026 — it does not make Monta compute or return dates),
+    and Monta plans its own PlannedShipmentDate regardless, which reaches
+    consumers via the rate meta and the post-upsert order read when Monta
+    serves it.
+
+    A value carrying a time is compared as an instant against now (UTC); a
+    naive timestamp is read as UTC — the ERP always sends a trailing Z, and a
+    bare wall clock has no better reading here. A bare date is compared as a
+    calendar day against today in UTC. ``allow_today`` admits the current day
+    (an instant still ahead of us, or today's date); without it the day itself
+    must be a later one — same-day delivery is never honorable, whatever the
+    hour. An unparseable value is dropped for the same reason — we cannot
+    prove it is still actionable. The original string is returned untouched.
     """
     if value is None:
         return None
 
-    parsed = lib.failsafe(
-        lambda: lib.to_date(
-            value,
-            try_formats=["%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"],
-        )
-    )
+    now = _utc_now()
+    today = now.date()
 
-    if parsed is None:
+    instant = _parse_hint(value, TIMESTAMP_HINT_FORMATS)
+    if instant is not None:
+        if instant.tzinfo is None:
+            instant = instant.replace(tzinfo=datetime.timezone.utc)
+        instant = instant.astimezone(datetime.timezone.utc)
+        is_actionable = instant > now and (allow_today or instant.date() > today)
+        return value if is_actionable else None
+
+    day = _parse_hint(value, DATE_HINT_FORMATS)
+    if day is None:
         return None
 
-    today = datetime.datetime.now(datetime.timezone.utc).date()
-    is_actionable = parsed.date() > today or (allow_today and parsed.date() == today)
-
+    is_actionable = day.date() > today or (allow_today and day.date() == today)
     return value if is_actionable else None
 
 
@@ -164,8 +199,9 @@ def rate_request(
             ShippingComment=options.monta_shipping_comment.state,
             CommunicationLanguageCode=recipient.country_code,
         ),
-        # Shipping today is legitimate; only a planned date in the past is a
-        # stale hint.
+        # Shipping today is legitimate as long as the moment has not passed:
+        # a same-day timestamp still ahead of us is kept, one behind us is a
+        # stale hint Monta rejects the whole order over (code 12).
         PlannedShipmentDate=_actionable_date_hint(
             options.monta_planned_shipment_date.state, allow_today=True
         ),
@@ -174,7 +210,8 @@ def rate_request(
             or settings.connection_config.shipper_code.state
         ),
         # A same-day (or past) requested delivery date gets the whole order
-        # rejected — strictly in the future or not at all.
+        # rejected — the day must be strictly after today (UTC), whatever the
+        # hour, or the hint is dropped.
         DeliveryDateRequested=_actionable_date_hint(
             options.monta_delivery_date_requested.state
         ),

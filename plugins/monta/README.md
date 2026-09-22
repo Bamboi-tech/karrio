@@ -63,6 +63,16 @@ shipment lifecycle.
 `monta_b2b`, `monta_include_return_labels`. On cancellation only:
 `monta_cancel_note` (the reason Monta stores with the deleted order).
 
+`monta_planned_shipment_date` and `monta_delivery_date_requested` accept
+`YYYY-MM-DD` or an ISO timestamp (`YYYY-MM-DDTHH:MM:SS[Z|±HH:MM]`; a naive
+timestamp is read as UTC). Both are hints Monta rejects the *whole order* over
+when stale, so the plugin drops them silently instead of sending them: the
+planned shipment date is sent while its moment (timestamp) or day (bare date,
+UTC) has not passed — shipping today is fine; the requested delivery date is
+sent only when its day is strictly after today (UTC) — same-day delivery is
+never honorable. Monta then plans its own dates, which round-trip through the
+rate `meta` (`planned_shipment_date`, `estimated_delivery_*`).
+
 ## Installation
 
 ```bash

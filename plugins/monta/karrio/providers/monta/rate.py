@@ -15,7 +15,9 @@ import karrio.schemas.monta.order_request as monta
 import karrio.schemas.monta.order_response as shipping
 
 import typing
+import logging
 import datetime
+import zoneinfo
 import karrio.lib as lib
 import karrio.core.models as models
 import karrio.core.errors as errors
@@ -77,10 +79,16 @@ def _extract_details(
     )
 
 
+logger = logging.getLogger(__name__)
+
 # The two spellings the ERP sends for a date hint. A timestamp is judged as an
 # instant, a bare date as a calendar day (see _actionable_date_hint).
 TIMESTAMP_HINT_FORMATS = ["%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S"]
 DATE_HINT_FORMATS = ["%Y-%m-%d"]
+# A naive timestamp is read as Monta's (and the ERP's) wall clock, the same
+# reading tracking.parse_instant gives Monta's own timestamps. Ahead of UTC,
+# so it is also the fail-safe reading: the instant lands earlier, never later.
+HINT_TIMEZONE = zoneinfo.ZoneInfo("Europe/Amsterdam")
 
 
 def _utc_now() -> datetime.datetime:
@@ -117,13 +125,16 @@ def _actionable_date_hint(
     serves it.
 
     A value carrying a time is compared as an instant against now (UTC); a
-    naive timestamp is read as UTC — the ERP always sends a trailing Z, and a
-    bare wall clock has no better reading here. A bare date is compared as a
-    calendar day against today in UTC. ``allow_today`` admits the current day
-    (an instant still ahead of us, or today's date); without it the day itself
-    must be a later one — same-day delivery is never honorable, whatever the
-    hour. An unparseable value is dropped for the same reason — we cannot
-    prove it is still actionable. The original string is returned untouched.
+    naive timestamp is read as Amsterdam wall clock (HINT_TIMEZONE — the ERP
+    always sends a trailing Z, and the local reading is the fail-safe one
+    for a sender that does not). A bare date is compared as a calendar day
+    against today in UTC. ``allow_today`` admits the current day (an instant
+    still ahead of us, or today's date); without it the day itself must be a
+    later one — same-day delivery can never be honoured, whatever the hour.
+    An unparseable value is dropped for the same reason — we cannot prove it
+    is still actionable. The original string is returned untouched; a dropped
+    hint is logged, because Monta then plans its own day and nothing else in
+    the request or response says why.
     """
     if value is None:
         return None
@@ -134,17 +145,24 @@ def _actionable_date_hint(
     instant = _parse_hint(value, TIMESTAMP_HINT_FORMATS)
     if instant is not None:
         if instant.tzinfo is None:
-            instant = instant.replace(tzinfo=datetime.timezone.utc)
+            instant = instant.replace(tzinfo=HINT_TIMEZONE)
         instant = instant.astimezone(datetime.timezone.utc)
         is_actionable = instant > now and (allow_today or instant.date() > today)
-        return value if is_actionable else None
+        return value if is_actionable else _dropped(value, "instant has passed")
 
     day = _parse_hint(value, DATE_HINT_FORMATS)
     if day is None:
-        return None
+        return _dropped(value, "unparseable")
 
     is_actionable = day.date() > today or (allow_today and day.date() == today)
-    return value if is_actionable else None
+    return value if is_actionable else _dropped(value, "day has passed")
+
+
+def _dropped(value: str, reason: str) -> None:
+    logger.info(
+        "monta: date hint %r dropped (%s); Monta plans its own date", value, reason
+    )
+    return None
 
 
 def rate_request(

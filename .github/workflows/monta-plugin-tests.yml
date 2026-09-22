@@ -1,0 +1,42 @@
+# Fork-owned: the Monta connector lives under plugins/ (not community/plugins),
+# which bin/run-sdk-tests does not scan, so upstream's karrio-tests never runs
+# its tests. This workflow does, on every change to the plugin or the SDK.
+name: monta-plugin-tests
+
+on:
+  push:
+    paths:
+      - "plugins/monta/**"
+      - "modules/sdk/**"
+      - ".github/workflows/monta-plugin-tests.yml"
+  pull_request:
+    paths:
+      - "plugins/monta/**"
+      - "modules/sdk/**"
+      - ".github/workflows/monta-plugin-tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  monta-plugin-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install the SDK and the Monta plugin
+        run: |
+          uv venv .venv-monta
+          uv pip install --python .venv-monta/bin/python -e modules/sdk -e plugins/monta
+
+      - name: Run the Monta plugin tests
+        run: .venv-monta/bin/python -m unittest discover -v plugins/monta/tests

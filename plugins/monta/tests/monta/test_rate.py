@@ -196,16 +196,32 @@ class TestMontaRateDateHints(unittest.TestCase):
         self.assertEqual(order["DeliveryDateRequested"], "2026-09-22T12:00:00Z")
         self.assertEqual(order["PlannedShipmentDate"], "2026-09-22T12:00:00Z")
 
-    def test_naive_timestamp_is_read_as_utc(self):
+    def test_naive_timestamp_is_read_as_amsterdam_wall_clock(self):
+        # 15:00 Amsterdam is 13:00Z, behind the 13:14Z clock: dropped. The
+        # UTC reading would have kept it — the permissive direction for a
+        # guard whose failure mode is a rejected order.
         self.assertNotIn(
             "PlannedShipmentDate",
-            self._order(monta_planned_shipment_date="2026-09-21T12:00:00"),
+            self._order(monta_planned_shipment_date="2026-09-21T15:00:00"),
         )
         self.assertEqual(
-            self._order(monta_planned_shipment_date="2026-09-21T15:00:00")[
+            self._order(monta_planned_shipment_date="2026-09-21T15:30:00")[
                 "PlannedShipmentDate"
             ],
-            "2026-09-21T15:00:00",
+            "2026-09-21T15:30:00",
+        )
+
+    def test_an_instant_equal_to_now_is_already_too_late(self):
+        # Strict comparison: the hint must lie ahead of the clock.
+        self.assertNotIn(
+            "PlannedShipmentDate",
+            self._order(monta_planned_shipment_date="2026-09-21T13:14:00Z"),
+        )
+        self.assertEqual(
+            self._order(monta_planned_shipment_date="2026-09-21T13:14:01Z")[
+                "PlannedShipmentDate"
+            ],
+            "2026-09-21T13:14:01Z",
         )
 
     def test_offset_timestamp_is_compared_as_an_instant(self):

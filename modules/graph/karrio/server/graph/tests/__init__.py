@@ -13,3 +13,4 @@ from karrio.server.graph.tests.test_rate_sheet_bulk_ops import *
 from karrio.server.graph.tests.test_registration import *
 from karrio.server.graph.tests.test_change_shipment_status import *
 from karrio.server.graph.tests.test_warehouse_worklist import *
+from karrio.server.graph.tests.test_manifests import *

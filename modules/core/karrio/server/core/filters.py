@@ -216,10 +216,10 @@ class ShipmentFilters(filters.FilterSet):
 
     def warehouse_view_filter(self, queryset, name, value):
         if value == "picked":
-            # Labeled and waiting for the carrier, plus own-delivery drafts the
-            # ERP marked Picked (own delivery never buys a label, so its row
-            # stays a draft). Filtered here, not in the browser, so the card's
-            # count and pages hold only rows the card actually shows.
+            # Labeled and waiting for the carrier, plus drafts the ERP already
+            # marked Picked: own delivery never buys a label, and a carrier row
+            # can be picked before its label run. Filtered here, not in the
+            # browser, so the card's count and pages hold only its own rows.
             return queryset.filter(
                 models.Q(status="created")
                 | models.Q(status="draft", metadata__erp_status="Picked")

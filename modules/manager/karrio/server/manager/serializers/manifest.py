@@ -5,7 +5,6 @@ import karrio.server.core.gateway as gateway
 import karrio.server.manager.models as models
 import karrio.server.core.serializers as core
 import karrio.server.serializers as serializers
-import karrio.server.manager.serializers as manager
 from karrio.server.core.utils import create_carrier_snapshot
 
 DEFAULT_CARRIER_FILTER: typing.Any = dict(active=True, capability="manifest")
@@ -65,11 +64,13 @@ class ManifestSerializer(core.ManifestData):
             for key, value in core.Manifest(response.manifest).data.items()
             if key in models.Manifest.DIRECT_PROPS
         }
-        address = serializers.save_one_to_one_data(
+        address = serializers.process_json_object_mutation(
             "address",
-            manager.AddressSerializer,
-            payload=validated_data,
-            context=context,
+            validated_data,
+            None,
+            model_class=models.Address,
+            object_type="address",
+            id_prefix="adr",
         )
 
         # Merge request_id into meta for request correlation

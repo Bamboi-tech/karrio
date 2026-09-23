@@ -78,6 +78,7 @@ MANIFEST_RESPONSE = (
 MANIFEST_DOCUMENT_RESPONSE = {
     "category": "manifest",
     "format": "PDF",
+    "print_format": None,
     "base64": "JVBERi0xLjQK",
     "url": ANY,
 }

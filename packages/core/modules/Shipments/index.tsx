@@ -130,6 +130,7 @@ const ADDRESS_REVIEW_SENTINEL = "_address_review";
 const COMPLETE_SENTINEL = "_review_clear";
 const PLANNED_SENTINEL = "_print_planned";
 const TODAY_SENTINEL = "_print_today";
+const PICKED_SENTINEL = "_picked";
 // The On hold card is the exception among the draft views: hold is a plain
 // metadata-key presence, which the API's metadata_key filter CAN test — so
 // this card filters server-side (like Needs Attention) and its pagination
@@ -973,11 +974,11 @@ function ShipmentsBoard(): JSX.Element {
       // Labeled but not yet handed to the carrier ("purchased" is aliased
       // to "created" by useShipments) — plus own-delivery drafts whose
       // mirrored erp_status says Picked: own delivery never buys a label,
-      // so "draft" rides along and visibleShipments narrows the drafts to
-      // the picked ones. Same accepted per-page narrowing limitation as
-      // Complete/Planned/Today.
+      // so "draft" rides along. The API's warehouse_view narrows the drafts
+      // to the picked ones before pagination, so the count holds only rows
+      // the card shows (it used to count every draft, then hide most).
       label: "Picked",
-      value: ["created", "draft"],
+      value: ["created", "draft", PICKED_SENTINEL],
       hint: "Labeled, waiting for the carrier",
     },
     {
@@ -1016,14 +1017,9 @@ function ShipmentsBoard(): JSX.Element {
   const isPlannedView = statusFilter.includes(PLANNED_SENTINEL);
   const isTodayView = statusFilter.includes(TODAY_SENTINEL);
   const isHoldView = statusFilter.includes(HOLD_SENTINEL);
-  // The Picked card is exactly status=["created","draft"] (the drafts are
-  // the own-delivery picked rows, narrowed in visibleShipments). Membership
-  // alone would also match the All card (which contains both among eight
-  // other statuses), so the bulk buttons key on the exact filter.
-  const isPickedView =
-    statusFilter.length === 2 &&
-    statusFilter.includes("created") &&
-    statusFilter.includes("draft");
+  // Keyed on the sentinel, not on "created"/"draft": the All card contains
+  // both too, and the bulk buttons must only light up on Picked itself.
+  const isPickedView = statusFilter.includes(PICKED_SENTINEL);
   const isNeedsAttentionView = statusFilter.includes(ADDRESS_REVIEW_SENTINEL);
   // The five draft-stage cards. A row on any of them is still a draft — a
   // purchased shipment is no longer "draft" — so it can never have a label
@@ -1075,24 +1071,8 @@ function ShipmentsBoard(): JSX.Element {
         ({ node: shipment }) => getShopifyHold(shipment.metadata).held,
       );
     }
-    if (isPickedView) {
-      // "created" rows are picked by definition; a draft is only here when
-      // its erp_status says so (own delivery — see ERP_DRAFT_CARDS).
-      return edges.filter(
-        ({ node: shipment }) =>
-          shipment.status !== "draft" ||
-          erpDraftCard(shipment.metadata) === "picked",
-      );
-    }
     return edges;
-  }, [
-    shipments,
-    isCompleteView,
-    isPlannedView,
-    isTodayView,
-    isHoldView,
-    isPickedView,
-  ]);
+  }, [shipments, isHoldView]);
   visibleRef.current = visibleShipments;
 
   // The selected rows of the current page, in the order the operator sees

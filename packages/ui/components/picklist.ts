@@ -182,3 +182,60 @@ export function buildPicklist(shipments: PicklistShipmentLike[]): Picklist {
     shipmentsWithoutItems,
   };
 }
+
+// The popup's green tick: poll until the ERP has mirrored printed_at on every
+// bought shipment, or give up. The ERP confirms ONE label at a time (purchase
+// webhook → auto-print → PrintNode "done" → stamp → mirror, ~6 s a label)
+// while a purchase takes ~3 s, so on a big stack the confirmations trail the
+// last purchase by well over a minute — 23-09: one 28-box stack, the last
+// four confirmed 98–108 s after their purchase and a fixed 90 s window
+// turned a fully printed row red. The window therefore slides: it is the
+// longest the printer may stay SILENT, restarted by every new confirmation,
+// not a budget for the whole row. A dead printer or PrintNode still turns
+// the row red one idle window after its last sign of life.
+//
+// The popup cannot be closed while a row waits for the printer, so a hard
+// ceiling (maxWaitMs, counted from the start) bounds that lock even when
+// confirmations keep trickling in just inside the idle window.
+export async function awaitPrintConfirmation({
+  ids,
+  fetchPrinted,
+  idleTimeoutMs,
+  maxWaitMs,
+  pollMs,
+  now = Date.now,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+}: {
+  ids: string[];
+  // The subset of `wanted` whose printed_at is mirrored. May throw: a
+  // transient read failure keeps the poll going — the verdict is the
+  // printer's, not the network's.
+  fetchPrinted: (wanted: string[]) => Promise<string[]>;
+  idleTimeoutMs: number;
+  maxWaitMs: number;
+  pollMs: number;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<unknown>;
+}): Promise<PrintConfirmation> {
+  const pending = new Set(ids);
+  const printed: string[] = [];
+  const hardStop = now() + maxWaitMs;
+  let deadline = now() + idleTimeoutMs;
+  while (pending.size > 0) {
+    try {
+      const confirmed = await fetchPrinted(Array.from(pending));
+      const fresh = confirmed.filter((id) => pending.has(id));
+      if (fresh.length > 0) {
+        fresh.forEach((id) => pending.delete(id));
+        printed.push(...fresh);
+        deadline = now() + idleTimeoutMs;
+      }
+    } catch {
+      // Keep polling until the (idle) deadline.
+    }
+    const time = now();
+    if (pending.size === 0 || time >= deadline || time >= hardStop) break;
+    await sleep(pollMs);
+  }
+  return { printed, unconfirmed: Array.from(pending) };
+}

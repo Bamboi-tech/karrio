@@ -100,6 +100,7 @@ import type {
   PicklistShipmentLike,
   PrintConfirmation,
 } from "@karrio/ui/components/picklist-dialog";
+import { awaitPrintConfirmation } from "@karrio/ui/components/picklist";
 import { useKarrio } from "@karrio/hooks/karrio";
 import {
   DropdownMenu,
@@ -351,6 +352,13 @@ type ConnectionLike = {
 // queues at the server and starves the list refetch behind the batch.
 // Purchases are NOT run this way — see buyPicklistShipments.
 const BULK_CONCURRENCY = 3;
+// Pick & Print's printer verdict (awaitPrinted): red after 90 s without a
+// new confirmation — at the ERP's ~6 s per label that is ~15 labels of
+// silence — and never later than 15 minutes into a row (~140 labels), so
+// the popup, which stays locked while a row waits, always frees up.
+const PRINT_CONFIRM_IDLE_MS = 90_000;
+const PRINT_CONFIRM_MAX_MS = 15 * 60_000;
+const PRINT_CONFIRM_POLL_MS = 3_000;
 // Rows of one ERP order must never be written concurrently (the ERP locks
 // per document; multi-colli orders are several rows of one Sales Order).
 const erpLockKey = (shipment: Pick<ListShipment, "id" | "metadata">) => {
@@ -1197,53 +1205,41 @@ function ShipmentsBoard(): JSX.Element {
   // The popup's green tick: poll the bought shipments until the ERP has
   // mirrored printed_at — stamped only after PrintNode reported the jobs
   // DELIVERED to the printer host ("done"), not merely accepted — or give
-  // up. The window is wide on purpose: behind it sit the purchase webhook
-  // (short queue, re-enqueued up to 5× on row locks), the ERP's auto-print
-  // and its own delivery-confirmation poll. Every request carries its own
-  // timeout so one stalled connection cannot hold the dialog past the
-  // deadline, and the first check runs immediately — the mirror often
-  // already landed by the time the purchase returns.
-  const PRINT_CONFIRM_TIMEOUT_MS = 90_000;
-  const PRINT_CONFIRM_POLL_MS = 3_000;
+  // up. Behind it sit the purchase webhook (short queue, re-enqueued up to
+  // 5× on row locks), the ERP's auto-print and its own delivery-confirmation
+  // poll, one label at a time. The window is an IDLE window (see
+  // awaitPrintConfirmation): every confirmation restarts it, so a big stack
+  // stays green as long as the printer keeps talking, up to a hard ceiling
+  // (PRINT_CONFIRM_MAX_MS). The first check runs immediately — the mirror
+  // often already landed by the time the purchase returns.
   //
   // One request per tick, not one per shipment: the GraphQL list takes an
   // id filter, and GET_SHIPMENTS_BADGE selects just id + metadata. Fifty
   // rows used to be fifty serial GETs per tick, so one tick took 50 × RTT.
-  const awaitPrinted = async (ids: string[]): Promise<PrintConfirmation> => {
-    const deadline = Date.now() + PRINT_CONFIRM_TIMEOUT_MS;
-    const pending = new Set(ids);
-    const printed: string[] = [];
-    while (pending.size > 0) {
-      const wanted = Array.from(pending);
-      try {
-        const { shipments } = await Promise.race([
-          karrio.graphql.request<get_shipments_badge>(
-            gqlstr(GET_SHIPMENTS_BADGE),
-            { variables: { filter: { id: wanted, first: wanted.length } } },
-          ),
-          // Every tick carries its own timeout so one stalled connection
-          // cannot hold the dialog past the deadline.
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error("timeout")), 10_000),
-          ),
-        ]);
-        for (const { node } of shipments?.edges || []) {
-          if (pending.has(node.id) && (node.metadata || {})["printed_at"]) {
-            pending.delete(node.id);
-            printed.push(node.id);
-          }
-        }
-      } catch {
-        // Transient read failure: keep polling until the deadline; the
-        // verdict is the printer's, not the network's.
-      }
-      if (pending.size === 0 || Date.now() >= deadline) break;
-      await new Promise((resolve) =>
-        setTimeout(resolve, PRINT_CONFIRM_POLL_MS),
-      );
-    }
-    return { printed, unconfirmed: Array.from(pending) };
+  const fetchPrinted = async (wanted: string[]): Promise<string[]> => {
+    const { shipments } = await Promise.race([
+      karrio.graphql.request<get_shipments_badge>(
+        gqlstr(GET_SHIPMENTS_BADGE),
+        { variables: { filter: { id: wanted, first: wanted.length } } },
+      ),
+      // Every tick carries its own timeout so one stalled connection
+      // cannot hold the dialog past the deadline.
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("timeout")), 10_000),
+      ),
+    ]);
+    return (shipments?.edges || [])
+      .filter(({ node }) => (node.metadata || {})["printed_at"])
+      .map(({ node }) => node.id);
   };
+  const awaitPrinted = (ids: string[]): Promise<PrintConfirmation> =>
+    awaitPrintConfirmation({
+      ids,
+      fetchPrinted,
+      idleTimeoutMs: PRINT_CONFIRM_IDLE_MS,
+      maxWaitMs: PRINT_CONFIRM_MAX_MS,
+      pollMs: PRINT_CONFIRM_POLL_MS,
+    });
 
   // The popup's closing confirmation. Carrier rows recorded their pick at
   // purchase; the own-delivery rows get theirs here, so "alles bevestigd"

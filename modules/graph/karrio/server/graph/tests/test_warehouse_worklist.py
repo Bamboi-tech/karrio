@@ -46,6 +46,35 @@ class TestWarehouseWorklist(GraphTestCase):
         self.assertEqual(self.page("planned")["edges"][0]["node"]["id"], future.id)
         self.assertEqual(self.page("complete")["page_info"]["count"], 4)
 
+    def test_picked_view_counts_only_rows_on_the_card(self):
+        # Seen live 23-09: 29 labeled rows, but the footer said 39 because
+        # ten Monta drafts (nine on hold) were counted, then hidden.
+        expected = {
+            self.shipment(status="created").id,
+            self.shipment({"erp_status": "Label Created"}, status="created").id,
+            # Own delivery never buys a label: its picked row stays a draft.
+            self.shipment({"erp_status": "Picked", "fulfilment_mode": "self_delivery"}).id,
+        }
+        for metadata in (
+            {}, {"erp_status": "Synced"}, {"shopify_hold": "1", "erp_status": "Synced"},
+            {"erp_status": "Out for Delivery"}, {"erp_status": "picked"},
+        ):
+            self.shipment(metadata)
+        self.shipment({"erp_status": "Picked"}, status="in_transit")
+        first = self.page("picked", first=2)
+        rest = self.page("picked", offset=2)
+        self.assertEqual(first["page_info"], {"count": 3, "has_next_page": True})
+        self.assertEqual(len(first["edges"]), 2)
+        self.assertEqual(
+            {e["node"]["id"] for e in first["edges"] + rest["edges"]}, expected
+        )
+        # The dashboard sends the card's real statuses along; same rows.
+        both = self.query(QUERY, operation_name="worklist", variables={"filter": {
+            "warehouse_view": "picked", "status": ["created", "draft"], "first": 50,
+        }})
+        self.assertResponseNoErrors(both)
+        self.assertEqual(both.data["data"]["shipments"]["page_info"]["count"], 3)
+
     def test_invalid_dates_and_null_metadata_stay_visible(self):
         for value in (None, False, 123, "", "not-a-date"):
             self.shipment({"print_date": value})

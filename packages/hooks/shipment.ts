@@ -146,7 +146,7 @@ export function useShipments<V extends ShipmentsVariant = "full">({
       .concat((variables.filter.status as any) || [])
       .filter((s) => !`${s}`.startsWith("_"));
     const warehouseView = ([] as string[]).concat(variables.filter.status || [])
-      .map((status) => ({ _print_today: "today", _print_planned: "planned", _review_clear: "complete" } as Record<string, string>)[status])
+      .map((status) => ({ _print_today: "today", _print_planned: "planned", _review_clear: "complete", _picked: "picked" } as Record<string, string>)[status])
       .find(Boolean);
     const filter = {
       ...variables.filter,

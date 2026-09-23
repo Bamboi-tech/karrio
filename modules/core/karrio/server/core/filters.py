@@ -199,7 +199,7 @@ class CarrierConnectionFilter(filters.FilterSet):
 
 class ShipmentFilters(filters.FilterSet):
     warehouse_view = filters.ChoiceFilter(
-        choices=[(value, value) for value in ("today", "planned", "complete")],
+        choices=[(value, value) for value in ("today", "planned", "complete", "picked")],
         method="warehouse_view_filter",
     )
     order_by = filters.ChoiceFilter(
@@ -215,6 +215,15 @@ class ShipmentFilters(filters.FilterSet):
         return queryset.order_by(field, "id")
 
     def warehouse_view_filter(self, queryset, name, value):
+        if value == "picked":
+            # Labeled and waiting for the carrier, plus own-delivery drafts the
+            # ERP marked Picked (own delivery never buys a label, so its row
+            # stays a draft). Filtered here, not in the browser, so the card's
+            # count and pages hold only rows the card actually shows.
+            return queryset.filter(
+                models.Q(status="created")
+                | models.Q(status="draft", metadata__erp_status="Picked")
+            )
         # Match the warehouse UI: key presence parks a draft, even for null/false.
         queryset = queryset.filter(status="draft").exclude(
             metadata__has_key="address_review_required"

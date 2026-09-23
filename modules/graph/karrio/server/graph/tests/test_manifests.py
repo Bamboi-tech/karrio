@@ -69,6 +69,10 @@ class TestManifestQueries(GraphTestCase):
         self.assertResponseNoErrors(response)
         self.assertDictEqual(response.data, MANIFESTS_RESPONSE)
 
+        node = response.data["data"]["manifests"]["edges"][0]["node"]
+        self.assertEqual(node["id"], self.manifest["id"])
+        self.assertEqual(node["address"]["id"], self.manifest["address"]["id"])
+
 
 MANIFEST_DATA = {
     "carrier_name": "canadapost",

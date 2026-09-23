@@ -44,6 +44,7 @@ $KARRIO_TEST --failfast \
     karrio.server.graph.tests \
     karrio.server.orders.tests \
     karrio.server.documents.tests \
+    karrio.server.data.tests \
     karrio.server.admin.tests \
     || exit 1
 

@@ -3,6 +3,7 @@ from unittest.mock import patch, ANY
 from django.urls import reverse
 from rest_framework import status
 from karrio.core.models import ManifestDetails as ManifestDetailsModel
+import karrio.server.manager.models as models
 from karrio.server.manager.tests.test_shipments import (
     TestShipmentFixture,
     RETURNED_RATES_VALUE,
@@ -41,7 +42,16 @@ class TestManifestDocumentDownload(TestShipmentFixture):
         with patch("karrio.server.core.gateway.utils.identity") as mock:
             mock.return_value = MANIFEST_RESPONSE
             response = self.client.post(manifest_url, manifest_data)
+            self.assertEqual(response.status_code, status.HTTP_201_CREATED)
             return json.loads(response.content)
+
+    def test_create_manifest_stores_embedded_address(self):
+        manifest = self.create_manifest()
+        address = models.Manifest.objects.get(pk=manifest["id"]).address
+
+        self.assertRegex(address["id"], r"^adr_")
+        self.assertEqual(manifest["address"]["id"], address["id"])
+        self.assertDictEqual(address, STORED_MANIFEST_ADDRESS)
 
     def test_download_manifest_document(self):
         manifest = self.create_manifest()
@@ -75,9 +85,23 @@ MANIFEST_RESPONSE = (
     [],
 )
 
+STORED_MANIFEST_ADDRESS = {
+    "id": ANY,
+    "object_type": "address",
+    "address_line1": "125 Church St",
+    "city": "Moncton",
+    "postal_code": "E1C4Z8",
+    "state_code": "NB",
+    "country_code": "CA",
+    "residential": False,
+    "validate_location": False,
+    "meta": {},
+}
+
 MANIFEST_DOCUMENT_RESPONSE = {
     "category": "manifest",
     "format": "PDF",
+    "print_format": None,
     "base64": "JVBERi0xLjQK",
     "url": ANY,
 }

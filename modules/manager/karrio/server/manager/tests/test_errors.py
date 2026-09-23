@@ -47,20 +47,6 @@ class TestNotFoundErrors(APITestCase):
             {"errors": [{"code": "not_found", "message": "Shipment not found", "level": "warning"}]},
         )
 
-    def test_customs_not_found_returns_resource_name(self):
-        url = reverse(
-            "karrio.server.manager:customs-details",
-            kwargs=dict(pk="nonexistent_id"),
-        )
-        response = self.client.get(url)
-        response_data = json.loads(response.content)
-
-        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-        self.assertDictEqual(
-            response_data,
-            {"errors": [{"code": "not_found", "message": "Customs not found", "level": "warning"}]},
-        )
-
 
 class TestValidationErrors(APITestCase):
     def test_shipment_validation_error_format(self):

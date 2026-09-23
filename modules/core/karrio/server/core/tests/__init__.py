@@ -24,6 +24,36 @@ from karrio.server.core.tests.test_request_id import (
     TestRequestIDValidation,
     TestRequestIDMiddleware,
     TestRequestIDInAPI,
+    TestRequestIDPropagation,
+)
+from karrio.server.core.tests.test_constance_batch import (
+    TestBatchFetchConstance,
+    TestUpdateSettings,
+)
+from karrio.server.core.tests.test_erp_gate import (
+    TestLabelGate,
+    TestShipmentActionRelay,
+    TestFeaturesRelay,
+    TestRefusalDetailIsSerializable,
+)
+from karrio.server.core.tests.test_jwt_refresh import (
+    TestTokenRefresh,
+)
+from karrio.server.core.tests.test_references_i18n import (
+    TestReferencesTranslation,
+    TestCarriersTranslation,
+)
+from karrio.server.core.tests.test_schema_safety import (
+    TestRollingDeploySafetyCheck,
+)
+from karrio.server.core.tests.test_sentry_noise import (
+    TestSentryNoise,
+)
+from karrio.server.core.tests.test_sentry_shipment_context import (
+    TestPropagateToSentry,
+)
+from karrio.server.core.tests.test_shipment_documents import (
+    TestShipmentDocumentsAccessor,
 )
 
 # Import our custom APITestCase (must be last to avoid being overridden)

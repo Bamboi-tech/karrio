@@ -7,3 +7,4 @@ from karrio.server.events.tests.test_webhooks import *
 from karrio.server.events.tests.test_batch_webhooks import *
 from karrio.server.events.tests.test_events import *
 from karrio.server.events.tests.test_shipment_events import *
+from karrio.server.events.tests.test_tracing_retention import *

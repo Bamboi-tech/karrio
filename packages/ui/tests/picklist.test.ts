@@ -134,12 +134,14 @@ const printStream = (printedAt: Record<string, number>) => {
       clock += ms;
     },
     fetchPrinted: async (wanted: string[]) =>
-      wanted.filter((id) => printedAt[id] !== undefined && printedAt[id] <= clock),
+      wanted.filter(
+        (id) => printedAt[id] !== undefined && printedAt[id] <= clock,
+      ),
   };
 };
 
 describe("awaitPrintConfirmation", () => {
-  const timing = { idleTimeoutMs: 90_000, pollMs: 3_000 };
+  const timing = { idleTimeoutMs: 90_000, maxWaitMs: 900_000, pollMs: 3_000 };
 
   it("keeps waiting while the printer keeps confirming, however long the stack", async () => {
     // 23-09: one 28-box stack; the ERP confirmed a label every ~6 s and the
@@ -172,6 +174,43 @@ describe("awaitPrintConfirmation", () => {
     // later, not one window after the start.
     expect(stream.now()).toBeGreaterThanOrEqual(4_000 + 90_000);
     expect(stream.now()).toBeLessThan(4_000 + 90_000 + 2 * 3_000);
+  });
+
+  it("names the one jammed label of a big stack one idle window after the rest", async () => {
+    // The rest of the stack keeps re-arming the window; the stuck label is
+    // reported once the printer has gone quiet, not while it is still busy.
+    const ids = Array.from({ length: 28 }, (_, i) => `shp_${i}`);
+    const stream = printStream(
+      Object.fromEntries(
+        ids
+          .filter((id) => id !== "shp_13")
+          .map((id, i) => [id, 5_000 + i * 6_000]),
+      ),
+    );
+    const lastConfirmation = 5_000 + 26 * 6_000;
+
+    const result = await awaitPrintConfirmation({ ids, ...timing, ...stream });
+
+    expect(result.unconfirmed).toEqual(["shp_13"]);
+    expect(result.printed).toHaveLength(27);
+    expect(stream.now()).toBeGreaterThanOrEqual(lastConfirmation + 90_000);
+    expect(stream.now()).toBeLessThan(lastConfirmation + 90_000 + 2 * 3_000);
+  });
+
+  it("stops at the hard ceiling even while confirmations keep trickling in", async () => {
+    // The popup cannot be closed while a row waits for the printer, so the
+    // idle window alone must not hold it for n × 90 s.
+    const ids = Array.from({ length: 20 }, (_, i) => `shp_${i}`);
+    const stream = printStream(
+      Object.fromEntries(ids.map((id, i) => [id, (i + 1) * 80_000])),
+    );
+
+    const result = await awaitPrintConfirmation({ ids, ...timing, ...stream });
+
+    expect(result.unconfirmed.length).toBeGreaterThan(0);
+    expect(result.printed.length + result.unconfirmed.length).toBe(20);
+    expect(stream.now()).toBeGreaterThanOrEqual(900_000);
+    expect(stream.now()).toBeLessThan(900_000 + 3_000);
   });
 
   it("gives up after one idle window when nothing ever confirms", async () => {

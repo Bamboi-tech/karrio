@@ -352,6 +352,13 @@ type ConnectionLike = {
 // queues at the server and starves the list refetch behind the batch.
 // Purchases are NOT run this way — see buyPicklistShipments.
 const BULK_CONCURRENCY = 3;
+// Pick & Print's printer verdict (awaitPrinted): red after 90 s without a
+// new confirmation — at the ERP's ~6 s per label that is ~15 labels of
+// silence — and never later than 15 minutes into a row (~140 labels), so
+// the popup, which stays locked while a row waits, always frees up.
+const PRINT_CONFIRM_IDLE_MS = 90_000;
+const PRINT_CONFIRM_MAX_MS = 15 * 60_000;
+const PRINT_CONFIRM_POLL_MS = 3_000;
 // Rows of one ERP order must never be written concurrently (the ERP locks
 // per document; multi-colli orders are several rows of one Sales Order).
 const erpLockKey = (shipment: Pick<ListShipment, "id" | "metadata">) => {
@@ -1202,11 +1209,9 @@ function ShipmentsBoard(): JSX.Element {
   // 5× on row locks), the ERP's auto-print and its own delivery-confirmation
   // poll, one label at a time. The window is an IDLE window (see
   // awaitPrintConfirmation): every confirmation restarts it, so a big stack
-  // stays green as long as the printer keeps talking. The first check runs
-  // immediately — the mirror often already landed by the time the purchase
-  // returns.
-  const PRINT_CONFIRM_IDLE_MS = 90_000;
-  const PRINT_CONFIRM_POLL_MS = 3_000;
+  // stays green as long as the printer keeps talking, up to a hard ceiling
+  // (PRINT_CONFIRM_MAX_MS). The first check runs immediately — the mirror
+  // often already landed by the time the purchase returns.
   //
   // One request per tick, not one per shipment: the GraphQL list takes an
   // id filter, and GET_SHIPMENTS_BADGE selects just id + metadata. Fifty
@@ -1232,6 +1237,7 @@ function ShipmentsBoard(): JSX.Element {
       ids,
       fetchPrinted,
       idleTimeoutMs: PRINT_CONFIRM_IDLE_MS,
+      maxWaitMs: PRINT_CONFIRM_MAX_MS,
       pollMs: PRINT_CONFIRM_POLL_MS,
     });
 

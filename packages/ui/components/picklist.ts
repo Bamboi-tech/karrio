@@ -193,10 +193,15 @@ export function buildPicklist(shipments: PicklistShipmentLike[]): Picklist {
 // longest the printer may stay SILENT, restarted by every new confirmation,
 // not a budget for the whole row. A dead printer or PrintNode still turns
 // the row red one idle window after its last sign of life.
+//
+// The popup cannot be closed while a row waits for the printer, so a hard
+// ceiling (maxWaitMs, counted from the start) bounds that lock even when
+// confirmations keep trickling in just inside the idle window.
 export async function awaitPrintConfirmation({
   ids,
   fetchPrinted,
   idleTimeoutMs,
+  maxWaitMs,
   pollMs,
   now = Date.now,
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
@@ -207,25 +212,29 @@ export async function awaitPrintConfirmation({
   // printer's, not the network's.
   fetchPrinted: (wanted: string[]) => Promise<string[]>;
   idleTimeoutMs: number;
+  maxWaitMs: number;
   pollMs: number;
   now?: () => number;
   sleep?: (ms: number) => Promise<unknown>;
 }): Promise<PrintConfirmation> {
   const pending = new Set(ids);
   const printed: string[] = [];
+  const hardStop = now() + maxWaitMs;
   let deadline = now() + idleTimeoutMs;
   while (pending.size > 0) {
     try {
       const confirmed = await fetchPrinted(Array.from(pending));
-      const fresh = confirmed.filter((id) => pending.delete(id));
+      const fresh = confirmed.filter((id) => pending.has(id));
       if (fresh.length > 0) {
+        fresh.forEach((id) => pending.delete(id));
         printed.push(...fresh);
         deadline = now() + idleTimeoutMs;
       }
     } catch {
       // Keep polling until the (idle) deadline.
     }
-    if (pending.size === 0 || now() >= deadline) break;
+    const time = now();
+    if (pending.size === 0 || time >= deadline || time >= hardStop) break;
     await sleep(pollMs);
   }
   return { printed, unconfirmed: Array.from(pending) };

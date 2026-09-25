@@ -115,7 +115,6 @@ class TrackingStatus(lib.Enum):
     on_hold = ["ONHOLD", "BLOCKED", "QUARANTAINE", "ADDRESSISSUE", "HOLD"]
     delivered = ["DELIVERED", "AFGELEVERD", "BEZORGD", "POD"]
     in_transit = [
-        "SHIPPED",
         "INTRANSIT",
         "TRANSIT",
         "SORTING",
@@ -148,7 +147,15 @@ class TrackingStatus(lib.Enum):
 # - COLLECTED as the bare event code is the consumer collecting the parcel
 #   (it follows AvailablePickup), but the word inside a free-text description
 #   could equally be a carrier collection — so only the exact code maps;
-# - PACKING/AVAILABLEPICKUP simply have no matching keyword of their own.
+# - PACKING/AVAILABLEPICKUP simply have no matching keyword of their own;
+# - SHIPPED is Monta's own warehouse step, not a carrier one: it fires the
+#   moment the shipping labels exist ("ready for shipper pickup") while the
+#   box is still on the warehouse floor. The first carrier scan comes that
+#   night in the sorting centre (seen live 22/23-09-2026). It is therefore
+#   also kept out of the in_transit keywords;
+# - NOTYETENROUTE, the collo pre-announcement ("Voorgemeld bij verzender, nog
+#   niet in distributie"), contains ENROUTE and would land on in_transit —
+#   it means the opposite.
 EXACT_EVENT_STATUS = {
     "UNBLOCKED": "pending",
     "VERIFYINGBLOCKED": "on_hold",
@@ -158,7 +165,30 @@ EXACT_EVENT_STATUS = {
     "COLLECTED": "delivered",
     "AVAILABLEPICKUP": "ready_for_pickup",
     "PACKING": "picked_up",
+    "SHIPPED": "picked_up",
+    "NOTYETENROUTE": "pending",
 }
+
+# Monta's own warehouse steps on the /orderevents feed. They tell where the
+# order is inside Monta, never where the parcel is, so they never decide the
+# overall tracker status — whatever their free text holds (the keyword scan
+# reads it by substring: INFORMATIE holds RMA, HOUSEHOLD holds HOLD).
+WAREHOUSE_EVENT_CODES = frozenset(
+    [
+        "RECEIVED",
+        "VERIFIED",
+        "BACKORDER",
+        "OUTOFBACKORDER",
+        "PICKING",
+        "PACKING",
+        "SHIPPED",
+    ]
+)
+
+
+def is_warehouse_event(code: str) -> bool:
+    """Whether a Monta order event TypeCode is a warehouse step."""
+    return bool(code) and _normalize(code) in WAREHOUSE_EVENT_CODES
 
 
 def to_tracking_status(*codes: str) -> str:

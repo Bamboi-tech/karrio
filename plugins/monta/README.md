@@ -32,6 +32,15 @@ shipment lifecycle.
 - **Tracking is keyed by the WebshopOrderId**, not the carrier T&T code. The
   shipment's `tracking_number` is the order id so Karrio's tracking poller
   asks Monta about the right resource. Carrier codes ride along in `meta`.
+- **Only the carrier moves a tracker.** Monta flips an order to `Shipped` the
+  moment its labels exist, while the box is still in the warehouse. Warehouse
+  steps (`Received`, `Picking`, `Packing`, `Shipped`, …) show in the timeline
+  (`Shipped` as `picked_up`) but leave the tracker `pending`, and so the
+  Karrio shipment where it is. The tracker moves on a collo carrier status or
+  a carrier event on the order feed (`EnRoute`, `AvailablePickup`,
+  `Delivered`, …), or on the order's own fate (`OrderDeleted` → `cancelled`,
+  `Blocked` → `on_hold`). The collo pre-announcement `NotYetEnRoute` is
+  `pending` too and never hides the order feed.
 - **Return labels** are reference-only in Monta v6 (carrier + T&T + link, no
   file); the first one is exposed as `return_shipment`, the full list in
   `meta.return_labels`.

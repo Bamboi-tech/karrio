@@ -169,6 +169,27 @@ EXACT_EVENT_STATUS = {
     "NOTYETENROUTE": "pending",
 }
 
+# Monta's own warehouse steps on the /orderevents feed. They tell where the
+# order is inside Monta, never where the parcel is, so they never decide the
+# overall tracker status — whatever their free text holds (the keyword scan
+# reads it by substring: INFORMATIE holds RMA, HOUSEHOLD holds HOLD).
+WAREHOUSE_EVENT_CODES = frozenset(
+    [
+        "RECEIVED",
+        "VERIFIED",
+        "BACKORDER",
+        "OUTOFBACKORDER",
+        "PICKING",
+        "PACKING",
+        "SHIPPED",
+    ]
+)
+
+
+def is_warehouse_event(code: str) -> bool:
+    """Whether a Monta order event TypeCode is a warehouse step."""
+    return bool(code) and _normalize(code) in WAREHOUSE_EVENT_CODES
+
 
 def to_tracking_status(*codes: str) -> str:
     """Resolve the first matching normalized Karrio status for the given

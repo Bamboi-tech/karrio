@@ -251,20 +251,40 @@ class TestMontaWarehouseEventsStayPending(unittest.TestCase):
         self.assertEqual(messages, [])
         return details[0]
 
-    def _status_after(self, *codes: str) -> str:
-        events = lib.to_json(
+    def _status_after(self, *events, colli: str = "[]") -> str:
+        """The overall status after these order events (a TypeCode, or a
+        (TypeCode, Description) pair), oldest first."""
+        pairs = [
+            event if isinstance(event, tuple) else (event, None) for event in events
+        ]
+        feed = lib.to_json(
             [
                 dict(
                     Id=index,
                     WebshopOrderId="SAL-ORD-2026-00001",
                     TypeCode=code,
+                    Description=description,
                     Occured=f"2026-09-22T1{index}:00:00",
                     Created=f"2026-09-22T1{index}:00:00",
                 )
-                for index, code in enumerate(codes)
+                for index, (code, description) in enumerate(pairs)
             ]
         )
-        return self._track(events, "[]")["status"]
+        return self._track(feed, colli)["status"]
+
+    def _colli(self, *codes: str) -> str:
+        """A collo list (POST shape) with these DeliveryStatusCodes."""
+        return lib.to_json(
+            [
+                dict(
+                    Number=number,
+                    TrackAndTraceCode=f"0521200000000{number}",
+                    DeliveryStatusCode=code,
+                    DeliveryStatusUpdated="23-9-2026 22:00:00",
+                )
+                for number, code in enumerate(codes, start=1)
+            ]
+        )
 
     def test_label_only_order_stays_pending(self):
         # (a) SO-Shopify-06855, 2026-09-23: Packing + Shipped at label
@@ -345,6 +365,48 @@ class TestMontaWarehouseEventsStayPending(unittest.TestCase):
             (("Packing", "Shipped", "EnRoute", "Returned"), "return_to_sender"),
         ]:
             self.assertEqual(self._status_after(*codes), expected, codes)
+
+    def test_pre_announced_collo_does_not_hide_the_order_feed(self):
+        # DHL pre-announces the collo at label creation, so NotYetEnRoute sits
+        # on the box from then on; it must not mask the order's own fate or a
+        # carrier event that reaches the order feed first.
+        for codes, expected in [
+            (("Packing", "Shipped", "OrderDeleted"), "cancelled"),
+            (("Packing", "Shipped", "Blocked"), "on_hold"),
+            (("Packing", "Shipped", "EnRoute"), "in_transit"),
+            (("Packing", "Shipped"), "pending"),
+        ]:
+            self.assertEqual(
+                self._status_after(*codes, colli=PreAnnouncedColliResponse),
+                expected,
+                codes,
+            )
+
+    def test_mixed_colli_follow_the_box_the_carrier_has(self):
+        self.assertEqual(
+            self._status_after(
+                "Packing", "Shipped", colli=self._colli("NotYetEnRoute", "EnRoute")
+            ),
+            "in_transit",
+        )
+
+    def test_unmapped_collo_code_leaves_warehouse_steps_pending(self):
+        self.assertEqual(units.to_tracking_status("Registered"), "unknown")
+        self.assertEqual(
+            self._status_after("Packing", "Shipped", colli=self._colli("Registered")),
+            "pending",
+        )
+
+    def test_warehouse_code_never_decides_whatever_its_text_says(self):
+        # The keyword scan also reads the free text, by substring: INFORMATIE
+        # holds RMA (return_to_sender), HOUSEHOLD holds HOLD (on_hold). A
+        # warehouse step stays a warehouse step.
+        for event in [
+            ("Received", "Order received: 'Aanvullende informatie volgt'."),
+            ("Picking", "Picking list printed: 'Household goods'."),
+            ("Verified", "Order verified: 'Delivered to Monta by supplier'."),
+        ]:
+            self.assertEqual(self._status_after(event), "pending", event)
 
 
 if __name__ == "__main__":

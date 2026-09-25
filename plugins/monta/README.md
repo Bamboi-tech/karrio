@@ -40,7 +40,7 @@ shipment lifecycle.
   a carrier event on the order feed (`EnRoute`, `AvailablePickup`,
   `Delivered`, …), or on the order's own fate (`OrderDeleted` → `cancelled`,
   `Blocked` → `on_hold`). The collo pre-announcement `NotYetEnRoute` is
-  `pending` too.
+  `pending` too and never hides the order feed.
 - **Return labels** are reference-only in Monta v6 (carrier + T&T + link, no
   file); the first one is exposed as `return_shipment`, the full list in
   `meta.return_labels`.

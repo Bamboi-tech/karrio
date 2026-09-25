@@ -8,8 +8,9 @@ Karrio trackers for Monta shipments are keyed by the Monta WebshopOrderId
 
 Both sources are merged into one normalized Karrio event stream. The overall
 status is taken from the collo carrier statuses when available (these reflect
-the actual DHL/DPD/PostNL delivery state), falling back to the latest order
-event — but only when that event is a carrier event or the order's own fate
+the actual DHL/DPD/PostNL delivery state; a collo that is only pre-announced,
+NotYetEnRoute, does not count), falling back to the latest order event — but
+only when that event is a carrier event or the order's own fate
 (DECISIVE_EVENT_STATUSES). Monta's warehouse steps leave the tracker pending:
 Monta flips an order to Shipped the moment its labels exist, and read as
 in_transit that emptied the Picked board half an hour after Pick & Print while
@@ -59,19 +60,22 @@ MONTA_TIMEZONE = zoneinfo.ZoneInfo("Europe/Amsterdam")
 PARSE_ERROR_CODE = "PARSING_ERROR"
 
 #: The order-event verdicts that may set the overall status: carrier events
-#: and the order's own fate (OrderDeleted, Blocked). Anything else (Received,
-#: Picking, Packing, Shipped, Unblocked, unknown codes) leaves it pending.
-DECISIVE_EVENT_STATUSES = [
-    "in_transit",
-    "out_for_delivery",
-    "ready_for_pickup",
-    "delivered",
-    "delivery_failed",
-    "return_to_sender",
-    "delivery_delayed",
-    "cancelled",
-    "on_hold",
-]
+#: and the order's own fate (OrderDeleted, Blocked). Anything else (Unblocked,
+#: unknown codes) leaves it pending, and so does a warehouse step whatever its
+#: verdict (provider_units.WAREHOUSE_EVENT_CODES).
+DECISIVE_EVENT_STATUSES = frozenset(
+    [
+        "in_transit",
+        "out_for_delivery",
+        "ready_for_pickup",
+        "delivered",
+        "delivery_failed",
+        "return_to_sender",
+        "delivery_delayed",
+        "cancelled",
+        "on_hold",
+    ]
+)
 
 
 def parse_tracking_response(
@@ -228,7 +232,11 @@ def _overall_status(order_events: list, colli: list) -> str:
     ]
     known = [status for status in collo_statuses if status != "unknown"]
 
-    if any(known):
+    # A collo that is only pre-announced (NotYetEnRoute) has not been seen by
+    # the carrier: DHL sets it at label creation, so it must not hide the
+    # order's own fate or a carrier event on the order feed. Colli lead as
+    # soon as one of them is past pending.
+    if any(status != "pending" for status in known):
         # the least advanced collo dictates the shipment status so a partially
         # delivered multi-box shipment stays "in_transit" until all boxes land
         for name in [status.name for status in list(provider_units.TrackingStatus)]:
@@ -247,7 +255,7 @@ def _overall_status(order_events: list, colli: list) -> str:
         None,
     )
 
-    if latest is None:
+    if latest is None or provider_units.is_warehouse_event(latest.TypeCode):
         return "pending"
 
     status = provider_units.to_tracking_status(latest.TypeCode, latest.Description)

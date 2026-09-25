@@ -197,6 +197,9 @@ export function buildPicklist(shipments: PicklistShipmentLike[]): Picklist {
 // The popup cannot be closed while a row waits for the printer, so a hard
 // ceiling (maxWaitMs, counted from the start) bounds that lock even when
 // confirmations keep trickling in just inside the idle window.
+//
+// onProgress feeds the row's "Waiting for printer… 12/29": a big stack waits
+// for minutes, and a bare spinner reads like a hung printer.
 export async function awaitPrintConfirmation({
   ids,
   fetchPrinted,
@@ -205,6 +208,8 @@ export async function awaitPrintConfirmation({
   pollMs,
   now = Date.now,
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  onProgress,
+  signal,
 }: {
   ids: string[];
   // The subset of `wanted` whose printed_at is mirrored. May throw: a
@@ -216,12 +221,17 @@ export async function awaitPrintConfirmation({
   pollMs: number;
   now?: () => number;
   sleep?: (ms: number) => Promise<unknown>;
+  // Every id confirmed so far, called only after a tick that confirmed new
+  // ones — never on a silent tick, never after the verdict.
+  onProgress?: (printed: string[]) => void;
+  // Aborted when the popup unmounts: stop polling for a row nobody sees.
+  signal?: AbortSignal;
 }): Promise<PrintConfirmation> {
   const pending = new Set(ids);
   const printed: string[] = [];
   const hardStop = now() + maxWaitMs;
   let deadline = now() + idleTimeoutMs;
-  while (pending.size > 0) {
+  while (pending.size > 0 && !signal?.aborted) {
     try {
       const confirmed = await fetchPrinted(Array.from(pending));
       const fresh = confirmed.filter((id) => pending.has(id));
@@ -229,6 +239,7 @@ export async function awaitPrintConfirmation({
         fresh.forEach((id) => pending.delete(id));
         printed.push(...fresh);
         deadline = now() + idleTimeoutMs;
+        onProgress?.([...printed]);
       }
     } catch {
       // Keep polling until the (idle) deadline.

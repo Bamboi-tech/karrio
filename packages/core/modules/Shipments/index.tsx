@@ -1212,13 +1212,19 @@ function ShipmentsBoard(): JSX.Element {
       .filter(({ node }) => (node.metadata || {})["printed_at"])
       .map(({ node }) => node.id);
   };
-  const awaitPrinted = (ids: string[]): Promise<PrintConfirmation> =>
+  const awaitPrinted = (
+    ids: string[],
+    onProgress?: (printed: string[]) => void,
+    signal?: AbortSignal,
+  ): Promise<PrintConfirmation> =>
     awaitPrintConfirmation({
       ids,
       fetchPrinted,
       idleTimeoutMs: PRINT_CONFIRM_IDLE_MS,
       maxWaitMs: PRINT_CONFIRM_MAX_MS,
       pollMs: PRINT_CONFIRM_POLL_MS,
+      onProgress,
+      signal,
     });
 
   // The popup's closing confirmation. Carrier rows recorded their pick at

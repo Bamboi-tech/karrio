@@ -259,4 +259,100 @@ describe("awaitPrintConfirmation", () => {
 
     expect(result).toEqual({ printed: ["shp_1"], unconfirmed: [] });
   });
+
+  it("reports the confirmations so far after every tick that brings new ones", async () => {
+    // The row's "Waiting for printer… 12/29": a big stack waits for minutes,
+    // and a bare spinner cannot tell a busy printer from a dead one.
+    const stream = printStream({
+      shp_1: 0,
+      shp_2: 5_000,
+      shp_3: 5_000,
+      shp_4: 12_000,
+    });
+    const progress: Array<[number, string[]]> = [];
+
+    const result = await awaitPrintConfirmation({
+      ids: ["shp_1", "shp_2", "shp_3", "shp_4"],
+      ...timing,
+      ...stream,
+      onProgress: (printed) => progress.push([stream.now(), printed]),
+    });
+
+    // Cumulative snapshots, and nothing on the silent ticks (3 s, 9 s).
+    expect(progress).toEqual([
+      [0, ["shp_1"]],
+      [6_000, ["shp_1", "shp_2", "shp_3"]],
+      [12_000, ["shp_1", "shp_2", "shp_3", "shp_4"]],
+    ]);
+    expect(result).toEqual({
+      printed: ["shp_1", "shp_2", "shp_3", "shp_4"],
+      unconfirmed: [],
+    });
+  });
+
+  it("reports nothing on a failed read, a silent tick or after the verdict", async () => {
+    const stream = printStream({ shp_1: 3_000 });
+    let calls = 0;
+    const flaky = async (wanted: string[]) => {
+      calls += 1;
+      if (calls === 2) throw new Error("timeout");
+      return stream.fetchPrinted(wanted);
+    };
+    const progress: Array<[number, string[]]> = [];
+
+    const result = await awaitPrintConfirmation({
+      ids: ["shp_1", "shp_2"],
+      ...timing,
+      now: stream.now,
+      sleep: stream.sleep,
+      fetchPrinted: flaky,
+      onProgress: (printed) => progress.push([stream.now(), printed]),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(result).toEqual({ printed: ["shp_1"], unconfirmed: ["shp_2"] });
+    // shp_1 printed at 3 s, but that read failed: reported on the next one.
+    expect(progress).toEqual([[6_000, ["shp_1"]]]);
+  });
+
+  it("polls exactly as before without a progress listener", async () => {
+    const run = async (onProgress?: (printed: string[]) => void) => {
+      const stream = printStream({ shp_1: 4_000, shp_2: 20_000 });
+      const result = await awaitPrintConfirmation({
+        ids: ["shp_1", "shp_2", "shp_3"],
+        ...timing,
+        ...stream,
+        onProgress,
+      });
+      return { result, stoppedAt: stream.now() };
+    };
+
+    expect(await run()).toEqual(await run(() => {}));
+  });
+
+  it("stops polling once the popup is gone", async () => {
+    // Leaving the page mid-wait unmounts the popup; its poll must not keep
+    // hitting the API for the rest of the 15 minutes.
+    const stream = printStream({ shp_1: 3_000 });
+    const controller = new AbortController();
+    let calls = 0;
+
+    const result = await awaitPrintConfirmation({
+      ids: ["shp_1", "shp_2"],
+      ...timing,
+      now: stream.now,
+      sleep: async (ms: number) => {
+        await stream.sleep(ms);
+        if (stream.now() >= 6_000) controller.abort();
+      },
+      fetchPrinted: async (wanted: string[]) => {
+        calls += 1;
+        return stream.fetchPrinted(wanted);
+      },
+      signal: controller.signal,
+    });
+
+    expect(calls).toBe(2);
+    expect(result).toEqual({ printed: ["shp_1"], unconfirmed: ["shp_2"] });
+  });
 });

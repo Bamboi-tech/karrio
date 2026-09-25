@@ -45,6 +45,7 @@ import {
 import {
   buildPicklist,
   labelCount,
+  progressLabels,
   BuyResult,
   MixedOrder,
   Picklist,
@@ -175,16 +176,10 @@ export function PicklistDialog({
         return;
       }
 
-      // Counted in labels (boxes), over what was bought: a failed purchase
-      // prints nothing, so the count never waits for it.
-      const bought = targets.filter((t) => result.purchased.includes(t.id));
       const progress = (printed: string[]) =>
         setRow(key, {
           phase: "confirming",
-          labels: labelCount(bought),
-          confirmedLabels: labelCount(
-            bought.filter((t) => printed.includes(t.id)),
-          ),
+          ...progressLabels(targets, result.purchased, printed),
         });
       progress([]);
       const confirmation = await onAwaitPrinted(

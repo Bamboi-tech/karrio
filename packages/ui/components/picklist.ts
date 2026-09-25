@@ -95,6 +95,22 @@ const orderLabelOf = (shipment: PicklistShipmentLike): string =>
 export const labelCount = (shipments: ShipmentSummary[]): number =>
   shipments.reduce((total, shipment) => total + shipment.labels, 0);
 
+// The waiting row's "12/29": labels (boxes), not orders, and over what was
+// bought — a failed purchase prints nothing, so the count never waits for it.
+export const progressLabels = (
+  targets: ShipmentSummary[],
+  purchased: string[],
+  printed: string[],
+): { labels: number; confirmedLabels: number } => {
+  const bought = targets.filter((target) => purchased.includes(target.id));
+  return {
+    labels: labelCount(bought),
+    confirmedLabels: labelCount(
+      bought.filter((shipment) => printed.includes(shipment.id)),
+    ),
+  };
+};
+
 export function buildPicklist(shipments: PicklistShipmentLike[]): Picklist {
   const groups = new Map<string, SkuGroup>();
   const mixed: MixedOrder[] = [];
@@ -225,6 +241,8 @@ export async function awaitPrintConfirmation({
   // ones — never on a silent tick, never after the verdict.
   onProgress?: (printed: string[]) => void;
   // Aborted when the popup unmounts: stop polling for a row nobody sees.
+  // The rest then comes back as unconfirmed — not a verdict; only the
+  // unmounted popup reads it.
   signal?: AbortSignal;
 }): Promise<PrintConfirmation> {
   const pending = new Set(ids);
@@ -239,6 +257,8 @@ export async function awaitPrintConfirmation({
         fresh.forEach((id) => pending.delete(id));
         printed.push(...fresh);
         deadline = now() + idleTimeoutMs;
+        // Inside the try on purpose: a listener that throws is swallowed
+        // like a failed read — the display must never break the verdict.
         onProgress?.([...printed]);
       }
     } catch {

@@ -8,6 +8,7 @@ import {
   awaitPrintConfirmation,
   buildPicklist,
   labelCount,
+  progressLabels,
 } from "../components/picklist";
 
 // The ERP's Monta layout: one parcel per product unit, order lines riding on
@@ -120,6 +121,45 @@ describe("buildPicklist", () => {
     ]);
 
     expect(picklist.groups[0].perMethod).toEqual({ Monta: 1 });
+  });
+});
+
+// The waiting row's "12/29" (see picklist-dialog.tsx).
+describe("progressLabels", () => {
+  // One stack: shp_1 is two boxes, shp_2 one, shp_3 three.
+  const [stack] = buildPicklist([
+    montaShipment("shp_1", "BAM-01", 2),
+    montaShipment("shp_2", "BAM-01", 1),
+    montaShipment("shp_3", "BAM-01", 3),
+  ]).groups;
+  const all = ["shp_1", "shp_2", "shp_3"];
+
+  it("counts labels (boxes), not orders", () => {
+    expect(progressLabels(stack.buyable, all, ["shp_1", "shp_3"])).toEqual({
+      labels: 6,
+      confirmedLabels: 5,
+    });
+    // A direct-carrier box is one label however many units it holds.
+    const [order] = buildPicklist([directShipment("shp_4", "BAM-02", 3)]).mixed;
+    expect(progressLabels([order], ["shp_4"], ["shp_4"])).toEqual({
+      labels: 1,
+      confirmedLabels: 1,
+    });
+  });
+
+  it("counts over what was bought, not over the whole row", () => {
+    // shp_3's purchase failed: it prints nothing, so the count never waits
+    // for its three boxes.
+    expect(
+      progressLabels(stack.buyable, ["shp_1", "shp_2"], ["shp_1"]),
+    ).toEqual({ labels: 3, confirmedLabels: 2 });
+  });
+
+  it("starts at zero before the printer confirms anything", () => {
+    expect(progressLabels(stack.buyable, all, [])).toEqual({
+      labels: 6,
+      confirmedLabels: 0,
+    });
   });
 });
 
@@ -308,14 +348,13 @@ describe("awaitPrintConfirmation", () => {
       fetchPrinted: flaky,
       onProgress: (printed) => progress.push([stream.now(), printed]),
     });
-    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(result).toEqual({ printed: ["shp_1"], unconfirmed: ["shp_2"] });
     // shp_1 printed at 3 s, but that read failed: reported on the next one.
     expect(progress).toEqual([[6_000, ["shp_1"]]]);
   });
 
-  it("polls exactly as before without a progress listener", async () => {
+  it("a listener does not change the result or the timing", async () => {
     const run = async (onProgress?: (printed: string[]) => void) => {
       const stream = printStream({ shp_1: 4_000, shp_2: 20_000 });
       const result = await awaitPrintConfirmation({

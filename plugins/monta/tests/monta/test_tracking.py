@@ -267,6 +267,9 @@ class TestMontaStatusMapping(unittest.TestCase):
             "expected to be delivered during the day",
             "Delivery status changed to En route: status update from GLS "
             "(00XX0001): The parcel is expected to be delivered during the day. (11)",
+            # worse news in the text is ignored too, on purpose: Monta sends
+            # its own DeliveryFailed/Returned code when it is real
+            "Delivery failed, next attempt tomorrow",
         ]:
             self.assertEqual(
                 units.to_tracking_status("EnRoute", description),
@@ -280,10 +283,19 @@ class TestMontaStatusMapping(unittest.TestCase):
         self.assertEqual(
             units.to_tracking_status("XYZ", "Afgeleverd bij de buren"), "delivered"
         )
+        self.assertEqual(units.to_tracking_status("XYZ", "Bezorgd"), "delivered")
         self.assertEqual(
             units.to_tracking_status("XYZ", "Status onbekend bij vervoerder"),
             "unknown",
         )
+
+    def test_a_missing_code_keeps_its_place(self):
+        # A collo can carry a description without a DeliveryStatusCode. That
+        # text must not pass for the code: only the exact code Collected means
+        # delivered, the word in free text does not.
+        self.assertEqual(units.to_tracking_status(None, "Collected"), "unknown")
+        self.assertEqual(units.to_tracking_status(None, "Bezorgd"), "delivered")
+        self.assertEqual(units.to_tracking_status("", "Delivered"), "delivered")
 
 
 class TestMontaWarehouseEventsStayPending(unittest.TestCase):

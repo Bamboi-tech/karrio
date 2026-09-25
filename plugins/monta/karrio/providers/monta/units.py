@@ -1,4 +1,5 @@
 import re
+import typing
 import karrio.lib as lib
 import karrio.core.units as units
 
@@ -197,14 +198,27 @@ def to_tracking_status(*codes: str) -> str:
 
     The first value is the code itself (callers pass the code before the
     free-text description): when it is one of the exactly documented event
-    codes, that verdict wins (EXACT_EVENT_STATUS). Only then are all values
-    scanned against the keyword lists.
+    codes, that verdict wins (EXACT_EVENT_STATUS). Otherwise the keyword scan
+    reads the code before the description, which only speaks for a code that
+    matches no keyword (Monta publishes no enum for collo codes). Free text
+    never overrides a code: GLS's EnRoute "The parcel is expected to be
+    delivered during the day" is in_transit, not delivered (SO-Shopify-06412).
     """
     normalized = [_normalize(code) for code in codes if code]
 
     if normalized and normalized[0] in EXACT_EVENT_STATUS:
         return EXACT_EVENT_STATUS[normalized[0]]
 
+    code_status = _keyword_status(normalized[:1])
+    if code_status != "unknown":
+        return code_status
+
+    return _keyword_status(normalized[1:])
+
+
+def _keyword_status(normalized: typing.List[str]) -> str:
+    """The first TrackingStatus, in declaration order, with a keyword in any
+    of these normalized values."""
     for status in list(TrackingStatus):
         keywords = [_normalize(keyword) for keyword in status.value]
 

@@ -57,6 +57,38 @@ class TestMontaTracking(unittest.TestCase):
             self.assertEqual(details["status"], "in_transit")
             self.assertFalse(details["delivered"])
 
+    def test_carrier_text_does_not_turn_en_route_into_delivered(self):
+        # Regression (SO-Shopify-06412, GLS, 2026-09-14): an EnRoute event
+        # whose text says the parcel "is expected to be delivered during the
+        # day" read as delivered — the keyword scan matched DELIVERED in the
+        # description before ENROUTE in the code. On 06412 the colli were
+        # already EnRoute and led; without a collo carrier status (none yet,
+        # or only the pre-announcement) such an event sets the tracker, and
+        # through it the Karrio shipment and the ERP, to Delivered.
+        for case, colli in [
+            ("no collo status yet", GlsRegisteredColliResponse),
+            ("colli pre-announced", GlsPreAnnouncedColliResponse),
+        ]:
+            with self.subTest(case), patch(
+                "karrio.mappers.monta.proxy.lib.request"
+            ) as mock:
+                mock.side_effect = lambda colli=colli, **kwargs: (
+                    ExpectedTodayEventsResponse
+                    if kwargs["url"].endswith("/events")
+                    else colli
+                )
+                details, messages = lib.to_dict(
+                    karrio.Tracking.fetch(self.TrackingRequest).from_(gateway).parse()
+                )
+
+                self.assertEqual(messages, [])
+                self.assertEqual(details[0]["status"], "in_transit")
+                self.assertFalse(details[0]["delivered"])
+                latest = details[0]["events"][0]
+                self.assertEqual(
+                    (latest["code"], latest["status"]), ("EnRoute", "in_transit")
+                )
+
     def test_parse_error_response(self):
         with patch("karrio.mappers.monta.proxy.lib.request") as mock:
             mock.return_value = NotFoundResponse
@@ -226,6 +258,44 @@ class TestMontaStatusMapping(unittest.TestCase):
             units.to_tracking_status("EnRoute", "Collected by carrier driver"),
             "in_transit",
         )
+
+    def test_description_never_overrides_a_known_code(self):
+        # Regression (SO-Shopify-06412, GLS): code and description were
+        # scanned together, status by status, so DELIVERED in the text beat
+        # the ENROUTE code. A code that maps decides; its text does not.
+        for description in [
+            "expected to be delivered during the day",
+            "Delivery status changed to En route: status update from GLS "
+            "(00XX0001): The parcel is expected to be delivered during the day. (11)",
+            # worse news in the text is ignored too, on purpose: Monta sends
+            # its own DeliveryFailed/Returned code when it is real
+            "Delivery failed, next attempt tomorrow",
+        ]:
+            self.assertEqual(
+                units.to_tracking_status("EnRoute", description),
+                "in_transit",
+                description,
+            )
+
+    def test_description_speaks_for_an_unknown_code(self):
+        # Monta publishes no enum for collo DeliveryStatusCodes: when the code
+        # itself matches nothing, its text still decides.
+        self.assertEqual(
+            units.to_tracking_status("XYZ", "Afgeleverd bij de buren"), "delivered"
+        )
+        self.assertEqual(units.to_tracking_status("XYZ", "Bezorgd"), "delivered")
+        self.assertEqual(
+            units.to_tracking_status("XYZ", "Status onbekend bij vervoerder"),
+            "unknown",
+        )
+
+    def test_a_missing_code_keeps_its_place(self):
+        # A collo can carry a description without a DeliveryStatusCode. That
+        # text must not pass for the code: only the exact code Collected means
+        # delivered, the word in free text does not.
+        self.assertEqual(units.to_tracking_status(None, "Collected"), "unknown")
+        self.assertEqual(units.to_tracking_status(None, "Bezorgd"), "delivered")
+        self.assertEqual(units.to_tracking_status("", "Delivered"), "delivered")
 
 
 class TestMontaWarehouseEventsStayPending(unittest.TestCase):
@@ -614,6 +684,68 @@ PreAnnouncedColliResponse = """{
             "DeliveryStatusDescription": "Voorgemeld bij verzender, nog niet in distributie",
             "DeliveryStatusCode": "NotYetEnRoute",
             "DeliveryStatusUpdatedAt": "22-9-2026 16:07:02"}}
+    ]
+}
+"""
+
+# Rebuilt from SO-Shopify-06412 (GLS, two colli; read-only Monta GET /events
+# and /colli + Karrio tracker trk_cabd6d297f284189905bc324d3102175,
+# 2026-09-25). Codes and texts are verbatim, and so are the times (the
+# pre-announcement to the minute, seconds are ours); T&T codes and postcode
+# are replaced. The GLS order event of 2026-09-14 09:53 Amsterdam, on its own.
+ExpectedTodayEventsResponse = """[
+    {"Id": 1, "WebshopOrderId": "SAL-ORD-2026-00001", "TypeCode": "EnRoute",
+     "Description": "Delivery status changed to En route: status update from GLS (00XX0001): The parcel is expected to be delivered during the day. (11)",
+     "Occured": "2026-09-14T09:53:16.31", "Created": "2026-09-14T09:53:16.31"}
+]
+"""
+
+# The two GLS boxes registered at label creation, no carrier status yet.
+GlsRegisteredColliResponse = """{
+    "TotalWeightInKg": 9, "PalletsShipped": 0, "BoxesShipped": 2,
+    "ShippedPallets": {}, "ShippedBoxesOnPallets": [],
+    "ShippedBoxesNotOnPallets": [
+        {"DistinctProducts": 0, "TotalProducts": 0, "ShippedCarrierInfo": {
+            "TTColloNr": 1, "PackageDescription": "Eigen verpakking product",
+            "WeightInGrams": 4800, "LengthInMM": 440, "WidthInMM": 340, "HeightInMM": 220,
+            "TTCode": "00XX0001",
+            "TTLink": "https://www.gls-info.nl/Tracking?parcelNo=00XX0001&zipcode=1234AB&lang=NL",
+            "DeliveryStatusDescription": null,
+            "DeliveryStatusCode": null,
+            "DeliveryStatusUpdatedAt": null}},
+        {"DistinctProducts": 0, "TotalProducts": 0, "ShippedCarrierInfo": {
+            "TTColloNr": 2, "PackageDescription": "Eigen verpakking product",
+            "WeightInGrams": 4800, "LengthInMM": 440, "WidthInMM": 340, "HeightInMM": 220,
+            "TTCode": "00XX0002",
+            "TTLink": "https://www.gls-info.nl/Tracking?parcelNo=00XX0002&zipcode=1234AB&lang=NL",
+            "DeliveryStatusDescription": null,
+            "DeliveryStatusCode": null,
+            "DeliveryStatusUpdatedAt": null}}
+    ]
+}
+"""
+
+# The same two boxes as GLS pre-announced them on 2026-09-10.
+GlsPreAnnouncedColliResponse = """{
+    "TotalWeightInKg": 9, "PalletsShipped": 0, "BoxesShipped": 2,
+    "ShippedPallets": {}, "ShippedBoxesOnPallets": [],
+    "ShippedBoxesNotOnPallets": [
+        {"DistinctProducts": 0, "TotalProducts": 0, "ShippedCarrierInfo": {
+            "TTColloNr": 1, "PackageDescription": "Eigen verpakking product",
+            "WeightInGrams": 4800, "LengthInMM": 440, "WidthInMM": 340, "HeightInMM": 220,
+            "TTCode": "00XX0001",
+            "TTLink": "https://www.gls-info.nl/Tracking?parcelNo=00XX0001&zipcode=1234AB&lang=NL",
+            "DeliveryStatusDescription": "Voorgemeld bij verzender, nog niet in distributie",
+            "DeliveryStatusCode": "NotYetEnRoute",
+            "DeliveryStatusUpdatedAt": "10-9-2026 13:25:56"}},
+        {"DistinctProducts": 0, "TotalProducts": 0, "ShippedCarrierInfo": {
+            "TTColloNr": 2, "PackageDescription": "Eigen verpakking product",
+            "WeightInGrams": 4800, "LengthInMM": 440, "WidthInMM": 340, "HeightInMM": 220,
+            "TTCode": "00XX0002",
+            "TTLink": "https://www.gls-info.nl/Tracking?parcelNo=00XX0002&zipcode=1234AB&lang=NL",
+            "DeliveryStatusDescription": "Voorgemeld bij verzender, nog niet in distributie",
+            "DeliveryStatusCode": "NotYetEnRoute",
+            "DeliveryStatusUpdatedAt": "10-9-2026 13:25:56"}}
     ]
 }
 """

@@ -9,7 +9,12 @@ Karrio trackers for Monta shipments are keyed by the Monta WebshopOrderId
 Both sources are merged into one normalized Karrio event stream. The overall
 status is taken from the collo carrier statuses when available (these reflect
 the actual DHL/DPD/PostNL delivery state), falling back to the latest order
-event.
+event — but only when that event is a carrier event or the order's own fate
+(DECISIVE_EVENT_STATUSES). Monta's warehouse steps leave the tracker pending:
+Monta flips an order to Shipped the moment its labels exist, and read as
+in_transit that emptied the Picked board half an hour after Pick & Print while
+the boxes still sat on the floor (2026-09-22/23). Karrio keeps a shipment's
+status on a pending tracker, so it only moves on a real carrier scan.
 
 Timestamps: Monta writes wall-clock time in Europe/Amsterdam without an
 offset — ISO-ish on the order/events feed (`2026-09-10T15:41:14.147`) and
@@ -52,6 +57,21 @@ MONTA_TIMEZONE = zoneinfo.ZoneInfo("Europe/Amsterdam")
 
 #: What a tracking event carries when its source timestamp cannot be read.
 PARSE_ERROR_CODE = "PARSING_ERROR"
+
+#: The order-event verdicts that may set the overall status: carrier events
+#: and the order's own fate (OrderDeleted, Blocked). Anything else (Received,
+#: Picking, Packing, Shipped, Unblocked, unknown codes) leaves it pending.
+DECISIVE_EVENT_STATUSES = [
+    "in_transit",
+    "out_for_delivery",
+    "ready_for_pickup",
+    "delivered",
+    "delivery_failed",
+    "return_to_sender",
+    "delivery_delayed",
+    "cancelled",
+    "on_hold",
+]
 
 
 def parse_tracking_response(
@@ -197,7 +217,8 @@ def _moment(value: typing.Optional[str]) -> dict:
 
 
 def _overall_status(order_events: list, colli: list) -> str:
-    """Carrier-level collo statuses lead; order events are the fallback."""
+    """Carrier-level collo statuses lead; order events are the fallback, and
+    only a decisive one counts — warehouse steps leave the tracker pending."""
     collo_statuses = [
         provider_units.to_tracking_status(
             item.DeliveryStatusCode, item.DeliveryStatusDescription
@@ -226,11 +247,11 @@ def _overall_status(order_events: list, colli: list) -> str:
         None,
     )
 
-    if latest is not None:
-        status = provider_units.to_tracking_status(latest.TypeCode, latest.Description)
-        return status if status != "unknown" else "in_transit"
+    if latest is None:
+        return "pending"
 
-    return "in_transit"
+    status = provider_units.to_tracking_status(latest.TypeCode, latest.Description)
+    return status if status in DECISIVE_EVENT_STATUSES else "pending"
 
 
 def tracking_request(

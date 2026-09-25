@@ -95,7 +95,7 @@ class TestMontaTracking(unittest.TestCase):
                     ("Delivered", "delivered", "2026-09-11T14:22:39.000Z"),
                     ("Delivered", "delivered", "2026-09-11T14:22:39.000Z"),
                     ("EnRoute", "in_transit", "2026-09-11T03:37:20.000Z"),
-                    ("Shipped", "in_transit", "2026-09-10T13:41:14.000Z"),
+                    ("Shipped", "picked_up", "2026-09-10T13:41:14.000Z"),
                     ("Packing", "picked_up", "2026-09-10T13:41:14.000Z"),
                 ],
             )
@@ -184,7 +184,7 @@ class TestMontaStatusMapping(unittest.TestCase):
             "OutOfBackorder": "pending",
             "Picking": "picked_up",
             "Packing": "picked_up",
-            "Shipped": "in_transit",
+            "Shipped": "picked_up",
         }.items():
             self.assertEqual(units.to_tracking_status(code), expected, code)
 
@@ -198,6 +198,27 @@ class TestMontaStatusMapping(unittest.TestCase):
     def test_undocumented_blocked_code_still_lands_on_hold(self):
         self.assertEqual(units.to_tracking_status("Blocked"), "on_hold")
 
+    def test_not_yet_en_route_is_pending_despite_the_enroute_substring(self):
+        # Regression (2026-09-22, SO-Shopify-06812): the DHL pre-announcement
+        # on the collo contains ENROUTE and landed on in_transit.
+        self.assertEqual(
+            units.to_tracking_status(
+                "NotYetEnRoute", "Voorgemeld bij verzender, nog niet in distributie"
+            ),
+            "pending",
+        )
+
+    def test_shipped_in_a_warehouse_text_is_no_carrier_movement(self):
+        # Monta's warehouse texts say "shipped" when the label is made; a
+        # warehouse code carrying such a text must not read as in_transit.
+        self.assertEqual(
+            units.to_tracking_status(
+                "Picking",
+                "Set to picked: ''Picked' automatically set when order is marked as shipped'.",
+            ),
+            "picked_up",
+        )
+
     def test_collected_in_free_text_does_not_mean_delivered(self):
         # Only the exact event code maps; a description mentioning "collected"
         # next to a real carrier code must not override that code.
@@ -205,6 +226,125 @@ class TestMontaStatusMapping(unittest.TestCase):
             units.to_tracking_status("EnRoute", "Collected by carrier driver"),
             "in_transit",
         )
+
+
+class TestMontaWarehouseEventsStayPending(unittest.TestCase):
+    """Monta marks an order Shipped the moment its labels exist, while the box
+    is still on the warehouse floor; the first real carrier scan comes that
+    night in the sorting centre. Until then the tracker stays pending, which
+    leaves the Karrio shipment (and the ERP's Label Created) where it is.
+    Only a carrier status or the order's own fate may move it."""
+
+    def setUp(self):
+        self.maxDiff = None
+        self.TrackingRequest = models.TrackingRequest(**TrackingPayload)
+
+    def _track(self, events: str, colli: str) -> dict:
+        with patch("karrio.mappers.monta.proxy.lib.request") as mock:
+            mock.side_effect = lambda **kwargs: (
+                events if kwargs["url"].endswith("/events") else colli
+            )
+            details, messages = lib.to_dict(
+                karrio.Tracking.fetch(self.TrackingRequest).from_(gateway).parse()
+            )
+
+        self.assertEqual(messages, [])
+        return details[0]
+
+    def _status_after(self, *codes: str) -> str:
+        events = lib.to_json(
+            [
+                dict(
+                    Id=index,
+                    WebshopOrderId="SAL-ORD-2026-00001",
+                    TypeCode=code,
+                    Occured=f"2026-09-22T1{index}:00:00",
+                    Created=f"2026-09-22T1{index}:00:00",
+                )
+                for index, code in enumerate(codes)
+            ]
+        )
+        return self._track(events, "[]")["status"]
+
+    def test_label_only_order_stays_pending(self):
+        # (a) SO-Shopify-06855, 2026-09-23: Packing + Shipped at label
+        # creation, the box registered without a carrier status yet. Went
+        # in_transit half an hour later in production.
+        details = self._track(LabelOnlyEventsResponse, LabelOnlyColliResponse)
+
+        self.assertEqual(details["status"], "pending")
+        self.assertFalse(details["delivered"])
+        self.assertEqual(
+            [(e["code"], e["status"]) for e in details["events"]],
+            [("Shipped", "picked_up"), ("Packing", "picked_up")],
+        )
+        self.assertEqual(details["meta"]["tracking_numbers"], ["05212000000001"])
+
+    def test_pre_announced_collo_stays_pending(self):
+        # (b) SO-Shopify-06812, 2026-09-22: the collo reads NotYetEnRoute
+        # ("Voorgemeld bij verzender, nog niet in distributie").
+        details = self._track(PreAnnouncedEventsResponse, PreAnnouncedColliResponse)
+
+        self.assertEqual(details["status"], "pending")
+        self.assertEqual(
+            [(e["code"], e["status"]) for e in details["events"]],
+            [
+                ("Shipped", "picked_up"),
+                ("Packing", "picked_up"),
+                ("Unblocked", "pending"),
+                ("Blocked", "on_hold"),
+                ("NotYetEnRoute", "pending"),
+            ],
+        )
+
+    def test_first_carrier_scan_moves_the_shipment(self):
+        # (c) SO-Shopify-06855 that night: DPD sorted the box.
+        details = self._track(FirstScanEventsResponse, FirstScanColliResponse)
+
+        self.assertEqual(details["status"], "in_transit")
+        self.assertEqual(
+            [(e["code"], e["status"]) for e in details["events"]],
+            [
+                ("EnRoute", "in_transit"),
+                ("EnRoute", "in_transit"),
+                ("Shipped", "picked_up"),
+                ("Packing", "picked_up"),
+            ],
+        )
+
+    def test_no_events_is_pending(self):
+        # (d) a registered box and no order events: nothing is known yet.
+        self.assertEqual(
+            self._track("[]", LabelOnlyColliResponse)["status"], "pending"
+        )
+        self.assertEqual(tracking._overall_status([], []), "pending")
+
+    def test_warehouse_steps_never_decide(self):
+        for codes in [
+            ("Received",),
+            ("Received", "Verified", "Picking"),
+            ("Packing", "Shipped"),
+            ("Backorder", "OutOfBackorder"),
+            ("Packing", "Shipped", "LineDeleted"),
+            ("Packing", "Shipped", "NoDeliveryStatusFromCarrier"),
+        ]:
+            self.assertEqual(self._status_after(*codes), "pending", codes)
+
+    def test_order_fate_and_carrier_events_still_decide(self):
+        # (e) Unblocked stays pending, OrderDeleted stays cancelled, and the
+        # carrier events on the order feed keep working without colli.
+        for codes, expected in [
+            (("Packing", "Shipped", "Blocked", "Unblocked"), "pending"),
+            (("Received", "OrderDeleted"), "cancelled"),
+            (("Packing", "Shipped", "Blocked"), "on_hold"),
+            (("Received", "VerifyingBlocked"), "on_hold"),
+            (("Packing", "Shipped", "EnRoute"), "in_transit"),
+            (("Packing", "Shipped", "EnRoute", "AvailablePickup"), "ready_for_pickup"),
+            (("Packing", "Shipped", "EnRoute", "Delivered"), "delivered"),
+            (("Packing", "Shipped", "EnRoute", "DeliveryFailed"), "delivery_failed"),
+            (("Packing", "Shipped", "EnRoute", "Returned"), "return_to_sender"),
+        ]:
+            self.assertEqual(self._status_after(*codes), expected, codes)
 
 
 if __name__ == "__main__":
@@ -319,6 +459,103 @@ LiveColliResponse = """{
 }
 """
 
+# Rebuilt from production trackers (read-only Karrio GraphQL, 2026-09-25):
+# trk_78e76d43b588434c9e9a42314a4ff14a (SO-Shopify-06855, DPD) and
+# trk_2af8b8b468e649a4b4f467cb21311b82 (SO-Shopify-06812, DHL). Codes and
+# texts are verbatim; times match the trackers to the minute (Amsterdam wall
+# clock, as Monta writes them), seconds are ours; T&T codes and postcode are
+# replaced.
+
+# SO-Shopify-06855 right after Pick & Print (2026-09-23 18:07 Amsterdam).
+LabelOnlyEventsResponse = """[
+    {"Id": 2, "WebshopOrderId": "SAL-ORD-2026-00001", "TypeCode": "Shipped",
+     "Description": "Shipped (ready for shipper pickup): 'Shipping labels gemaakt via de REST api'.",
+     "Occured": "2026-09-23T18:07:11.2", "Created": "2026-09-23T18:07:11.2"},
+    {"Id": 1, "WebshopOrderId": "SAL-ORD-2026-00001", "TypeCode": "Packing",
+     "Description": "Set to picked: ''Picked' automatically set when order is marked as shipped'.",
+     "Occured": "2026-09-23T18:07:10.9", "Created": "2026-09-23T18:07:10.9"}
+]
+"""
+
+LabelOnlyColliResponse = """{
+    "TotalWeightInKg": 0, "PalletsShipped": 0, "BoxesShipped": 1,
+    "ShippedPallets": {}, "ShippedBoxesOnPallets": [],
+    "ShippedBoxesNotOnPallets": [
+        {"DistinctProducts": 0, "TotalProducts": 0, "ShippedCarrierInfo": {
+            "TTColloNr": 1, "PackageDescription": "Eigen verpakking product",
+            "WeightInGrams": 3, "LengthInMM": 400, "WidthInMM": 300, "HeightInMM": 200,
+            "TTCode": "05212000000001",
+            "TTLink": "https://www.dpdgroup.com/nl/mydpd/my-parcels/search?lang=nl&parcelNumber=05212000000001",
+            "DeliveryStatusDescription": null,
+            "DeliveryStatusCode": null,
+            "DeliveryStatusUpdatedAt": null}}
+    ]
+}
+"""
+
+# SO-Shopify-06855 that night: the first DPD scan in the sorting centre.
+FirstScanEventsResponse = """[
+    {"Id": 3, "WebshopOrderId": "SAL-ORD-2026-00001", "TypeCode": "EnRoute",
+     "Description": "Delivery status changed to En route: status update from DPD (05212000000001): In transit (BetweenDepots)",
+     "Occured": "2026-09-24T01:53:40.5", "Created": "2026-09-24T01:53:40.5"},
+    {"Id": 2, "WebshopOrderId": "SAL-ORD-2026-00001", "TypeCode": "Shipped",
+     "Description": "Shipped (ready for shipper pickup): 'Shipping labels gemaakt via de REST api'.",
+     "Occured": "2026-09-23T18:07:11.2", "Created": "2026-09-23T18:07:11.2"},
+    {"Id": 1, "WebshopOrderId": "SAL-ORD-2026-00001", "TypeCode": "Packing",
+     "Description": "Set to picked: ''Picked' automatically set when order is marked as shipped'.",
+     "Occured": "2026-09-23T18:07:10.9", "Created": "2026-09-23T18:07:10.9"}
+]
+"""
+
+FirstScanColliResponse = """{
+    "TotalWeightInKg": 0, "PalletsShipped": 0, "BoxesShipped": 1,
+    "ShippedPallets": {}, "ShippedBoxesOnPallets": [],
+    "ShippedBoxesNotOnPallets": [
+        {"DistinctProducts": 0, "TotalProducts": 0, "ShippedCarrierInfo": {
+            "TTColloNr": 1, "PackageDescription": "Eigen verpakking product",
+            "WeightInGrams": 3, "LengthInMM": 400, "WidthInMM": 300, "HeightInMM": 200,
+            "TTCode": "05212000000001",
+            "TTLink": "https://www.dpdgroup.com/nl/mydpd/my-parcels/search?lang=nl&parcelNumber=05212000000001",
+            "DeliveryStatusDescription": "In distributie (gesorteerd in sorteercentrum) / onderweg",
+            "DeliveryStatusCode": "EnRoute",
+            "DeliveryStatusUpdatedAt": "24-9-2026 0:34:18"}}
+    ]
+}
+"""
+
+# SO-Shopify-06812 right after Pick & Print (2026-09-22): DHL pre-announced.
+PreAnnouncedEventsResponse = """[
+    {"Id": 4, "WebshopOrderId": "SAL-ORD-2026-00001", "TypeCode": "Shipped",
+     "Description": "Shipped (ready for shipper pickup): 'Shipping labels gemaakt via de REST api'.",
+     "Occured": "2026-09-22T18:07:04.6", "Created": "2026-09-22T18:07:04.6"},
+    {"Id": 3, "WebshopOrderId": "SAL-ORD-2026-00001", "TypeCode": "Packing",
+     "Description": "Set to picked: ''Picked' automatically set when order is marked as shipped'.",
+     "Occured": "2026-09-22T18:07:04.3", "Created": "2026-09-22T18:07:04.3"},
+    {"Id": 2, "WebshopOrderId": "SAL-ORD-2026-00001", "TypeCode": "Unblocked",
+     "Description": "Order unblocked: 'UBlock tbv update via MontaRESTApi verwijderd'.",
+     "Occured": "2026-09-22T17:15:09.4", "Created": "2026-09-22T17:15:09.4"},
+    {"Id": 1, "WebshopOrderId": "SAL-ORD-2026-00001", "TypeCode": "Blocked",
+     "Description": "Order blocked: 'Blocked because there was an update in de MontaRESTApi'.",
+     "Occured": "2026-09-22T17:15:08.2", "Created": "2026-09-22T17:15:08.2"}
+]
+"""
+
+PreAnnouncedColliResponse = """{
+    "TotalWeightInKg": 0, "PalletsShipped": 0, "BoxesShipped": 1,
+    "ShippedPallets": {}, "ShippedBoxesOnPallets": [],
+    "ShippedBoxesNotOnPallets": [
+        {"DistinctProducts": 0, "TotalProducts": 0, "ShippedCarrierInfo": {
+            "TTColloNr": 1, "PackageDescription": "Eigen verpakking product",
+            "WeightInGrams": 3, "LengthInMM": 400, "WidthInMM": 300, "HeightInMM": 200,
+            "TTCode": "JVGL06212989000000000001",
+            "TTLink": "https://my.dhlecommerce.nl/home/tracktrace/JVGL06212989000000000001/1234AB?lang=nl_NL",
+            "DeliveryStatusDescription": "Voorgemeld bij verzender, nog niet in distributie",
+            "DeliveryStatusCode": "NotYetEnRoute",
+            "DeliveryStatusUpdatedAt": "22-9-2026 16:07:02"}}
+    ]
+}
+"""
+
 ParsedTrackingResponse = [
     [
         {
@@ -340,7 +577,7 @@ ParsedTrackingResponse = [
                     "code": "SHIPPED",
                     "date": "2026-06-10",
                     "description": "Order shipped via DHL",
-                    "status": "in_transit",
+                    "status": "picked_up",
                     "time": "15:00 PM",
                     "timestamp": "2026-06-10T15:00:00.000Z",
                 },

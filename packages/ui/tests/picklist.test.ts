@@ -8,6 +8,7 @@ import {
   awaitPrintConfirmation,
   buildPicklist,
   labelCount,
+  progressLabels,
 } from "../components/picklist";
 
 // The ERP's Monta layout: one parcel per product unit, order lines riding on
@@ -120,6 +121,45 @@ describe("buildPicklist", () => {
     ]);
 
     expect(picklist.groups[0].perMethod).toEqual({ Monta: 1 });
+  });
+});
+
+// The waiting row's "12/29" (see picklist-dialog.tsx).
+describe("progressLabels", () => {
+  // One stack: shp_1 is two boxes, shp_2 one, shp_3 three.
+  const [stack] = buildPicklist([
+    montaShipment("shp_1", "BAM-01", 2),
+    montaShipment("shp_2", "BAM-01", 1),
+    montaShipment("shp_3", "BAM-01", 3),
+  ]).groups;
+  const all = ["shp_1", "shp_2", "shp_3"];
+
+  it("counts labels (boxes), not orders", () => {
+    expect(progressLabels(stack.buyable, all, ["shp_1", "shp_3"])).toEqual({
+      labels: 6,
+      confirmedLabels: 5,
+    });
+    // A direct-carrier box is one label however many units it holds.
+    const [order] = buildPicklist([directShipment("shp_4", "BAM-02", 3)]).mixed;
+    expect(progressLabels([order], ["shp_4"], ["shp_4"])).toEqual({
+      labels: 1,
+      confirmedLabels: 1,
+    });
+  });
+
+  it("counts over what was bought, not over the whole row", () => {
+    // shp_3's purchase failed: it prints nothing, so the count never waits
+    // for its three boxes.
+    expect(
+      progressLabels(stack.buyable, ["shp_1", "shp_2"], ["shp_1"]),
+    ).toEqual({ labels: 3, confirmedLabels: 2 });
+  });
+
+  it("starts at zero before the printer confirms anything", () => {
+    expect(progressLabels(stack.buyable, all, [])).toEqual({
+      labels: 6,
+      confirmedLabels: 0,
+    });
   });
 });
 
@@ -258,5 +298,100 @@ describe("awaitPrintConfirmation", () => {
     });
 
     expect(result).toEqual({ printed: ["shp_1"], unconfirmed: [] });
+  });
+
+  it("reports the confirmations so far after every tick that brings new ones", async () => {
+    // The row's "Waiting for printer… 12/29": a big stack waits for minutes,
+    // and a bare spinner cannot tell a busy printer from a dead one.
+    const stream = printStream({
+      shp_1: 0,
+      shp_2: 5_000,
+      shp_3: 5_000,
+      shp_4: 12_000,
+    });
+    const progress: Array<[number, string[]]> = [];
+
+    const result = await awaitPrintConfirmation({
+      ids: ["shp_1", "shp_2", "shp_3", "shp_4"],
+      ...timing,
+      ...stream,
+      onProgress: (printed) => progress.push([stream.now(), printed]),
+    });
+
+    // Cumulative snapshots, and nothing on the silent ticks (3 s, 9 s).
+    expect(progress).toEqual([
+      [0, ["shp_1"]],
+      [6_000, ["shp_1", "shp_2", "shp_3"]],
+      [12_000, ["shp_1", "shp_2", "shp_3", "shp_4"]],
+    ]);
+    expect(result).toEqual({
+      printed: ["shp_1", "shp_2", "shp_3", "shp_4"],
+      unconfirmed: [],
+    });
+  });
+
+  it("reports nothing on a failed read, a silent tick or after the verdict", async () => {
+    const stream = printStream({ shp_1: 3_000 });
+    let calls = 0;
+    const flaky = async (wanted: string[]) => {
+      calls += 1;
+      if (calls === 2) throw new Error("timeout");
+      return stream.fetchPrinted(wanted);
+    };
+    const progress: Array<[number, string[]]> = [];
+
+    const result = await awaitPrintConfirmation({
+      ids: ["shp_1", "shp_2"],
+      ...timing,
+      now: stream.now,
+      sleep: stream.sleep,
+      fetchPrinted: flaky,
+      onProgress: (printed) => progress.push([stream.now(), printed]),
+    });
+
+    expect(result).toEqual({ printed: ["shp_1"], unconfirmed: ["shp_2"] });
+    // shp_1 printed at 3 s, but that read failed: reported on the next one.
+    expect(progress).toEqual([[6_000, ["shp_1"]]]);
+  });
+
+  it("a listener does not change the result or the timing", async () => {
+    const run = async (onProgress?: (printed: string[]) => void) => {
+      const stream = printStream({ shp_1: 4_000, shp_2: 20_000 });
+      const result = await awaitPrintConfirmation({
+        ids: ["shp_1", "shp_2", "shp_3"],
+        ...timing,
+        ...stream,
+        onProgress,
+      });
+      return { result, stoppedAt: stream.now() };
+    };
+
+    expect(await run()).toEqual(await run(() => {}));
+  });
+
+  it("stops polling once the popup is gone", async () => {
+    // Leaving the page mid-wait unmounts the popup; its poll must not keep
+    // hitting the API for the rest of the 15 minutes.
+    const stream = printStream({ shp_1: 3_000 });
+    const controller = new AbortController();
+    let calls = 0;
+
+    const result = await awaitPrintConfirmation({
+      ids: ["shp_1", "shp_2"],
+      ...timing,
+      now: stream.now,
+      sleep: async (ms: number) => {
+        await stream.sleep(ms);
+        if (stream.now() >= 6_000) controller.abort();
+      },
+      fetchPrinted: async (wanted: string[]) => {
+        calls += 1;
+        return stream.fetchPrinted(wanted);
+      },
+      signal: controller.signal,
+    });
+
+    expect(calls).toBe(2);
+    expect(result).toEqual({ printed: ["shp_1"], unconfirmed: ["shp_2"] });
   });
 });

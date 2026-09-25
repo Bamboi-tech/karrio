@@ -45,6 +45,7 @@ import {
 import {
   buildPicklist,
   labelCount,
+  progressLabels,
   BuyResult,
   MixedOrder,
   Picklist,
@@ -66,11 +67,12 @@ export {
 
 // Grey (idle) → buying → waiting for the printer → green (PrintNode
 // confirmed) or red (purchase failed / printer never confirmed). Red keeps a
-// Retry over exactly the shipments that still need a label.
+// Retry over exactly the shipments that still need a label. While waiting,
+// the row counts the labels the printer confirmed so far.
 type RowState =
   | { phase: "idle" }
   | { phase: "buying" }
-  | { phase: "confirming"; labels: number }
+  | { phase: "confirming"; labels: number; confirmedLabels: number }
   | { phase: "printed"; labels: number }
   | {
       phase: "failed";
@@ -96,8 +98,13 @@ export function PicklistDialog({
   onBuyShipments: (ids: string[]) => Promise<BuyResult>;
   // Polls the bought shipments until the ERP mirrors printed_at (stamped
   // after PrintNode reported the jobs delivered to the printer host) or
-  // gives up — the green/red verdict.
-  onAwaitPrinted: (ids: string[]) => Promise<PrintConfirmation>;
+  // gives up — the green/red verdict. onProgress gets every id confirmed so
+  // far; signal stops the poll.
+  onAwaitPrinted: (
+    ids: string[],
+    onProgress?: (printed: string[]) => void,
+    signal?: AbortSignal,
+  ) => Promise<PrintConfirmation>;
   // Fired once when the operator confirms the whole run (every row ticked).
   // The page uses it to record the own-delivery picks.
   onConfirmAll?: (ownIds: string[]) => void;
@@ -117,6 +124,15 @@ export function PicklistDialog({
   const busy = Object.values(rows).some(
     (row) => row.phase === "buying" || row.phase === "confirming",
   );
+  // Leaving the page mid-wait unmounts the popup: stop its printer polls.
+  // Made in the effect, not at render — StrictMode's mount → unmount → mount
+  // would otherwise hand every later poll an already aborted signal.
+  const abortRef = React.useRef<AbortController | null>(null);
+  React.useEffect(() => {
+    const controller = new AbortController();
+    abortRef.current = controller;
+    return () => controller.abort();
+  }, []);
 
   // A fresh run is a fresh sheet: confirmations are about THIS run's boxes,
   // never yesterday's.
@@ -160,8 +176,17 @@ export function PicklistDialog({
         return;
       }
 
-      setRow(key, { phase: "confirming", labels });
-      const confirmation = await onAwaitPrinted(result.purchased);
+      const progress = (printed: string[]) =>
+        setRow(key, {
+          phase: "confirming",
+          ...progressLabels(targets, result.purchased, printed),
+        });
+      progress([]);
+      const confirmation = await onAwaitPrinted(
+        result.purchased,
+        progress,
+        abortRef.current?.signal,
+      );
       const failed = result.failedIds.length + confirmation.unconfirmed.length;
       if (failed > 0) {
         const retrySummaries = targets.filter((t) =>
@@ -203,8 +228,9 @@ export function PicklistDialog({
   };
 
   // One cell tells the row's whole story: grey button (nothing happened),
-  // spinner (buying / waiting for the printer), green (printer confirmed),
-  // red (failed, with a retry over what is still unlabeled).
+  // spinner (buying / waiting for the printer, with its count so far), green
+  // (printer confirmed), red (failed, with a retry over what is still
+  // unlabeled).
   const statusCell = (key: string, targets: ShipmentSummary[]) => {
     const state = rows[key] || { phase: "idle" };
     const labels = labelCount(targets);
@@ -221,9 +247,9 @@ export function PicklistDialog({
         );
       case "confirming":
         return (
-          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground tabular-nums">
             <Loader2 className="h-3.5 w-3.5 animate-spin" /> Waiting for
-            printer…
+            printer… {state.confirmedLabels}/{state.labels}
           </span>
         );
       case "printed":

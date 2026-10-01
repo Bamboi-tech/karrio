@@ -84,6 +84,7 @@ import {
   DELIVERY_OUTCOME_OPTIONS,
   DeliveryOutcomeOption,
   useShipmentERPActions,
+  useERPPrintBatches,
   invalidateShipmentsAroundMirror,
   markShippedAndMove,
   pickForPurchase,
@@ -96,11 +97,15 @@ import { useBamboiFeatures } from "@karrio/hooks/bamboi-features";
 import { ConfirmationDialog } from "@karrio/ui/components/confirmation-dialog";
 import { ReasonPromptDialog } from "@karrio/ui/components/reason-prompt-dialog";
 import type {
+  BuyOptions,
   BuyResult,
   PicklistShipmentLike,
   PrintConfirmation,
 } from "@karrio/ui/components/picklist-dialog";
-import { awaitPrintConfirmation } from "@karrio/ui/components/picklist";
+import {
+  awaitPrintConfirmation,
+  retrying,
+} from "@karrio/ui/components/picklist";
 import { useKarrio } from "@karrio/hooks/karrio";
 import {
   DropdownMenu,
@@ -358,8 +363,19 @@ const BULK_CONCURRENCY = 3;
 // silence — and never later than 15 minutes into a row (~140 labels), so
 // the popup, which stays locked while a row waits, always frees up.
 const PRINT_CONFIRM_IDLE_MS = 90_000;
+// A row printed as an ERP print batch (btn_print_batch) prints nothing until
+// the whole row is bought and released, then comes out as ONE merged job:
+// its first confirmation only lands once the ERP merged the labels and
+// PrintNode delivered that job, so the printer may stay silent longer. The
+// hard ceiling stays the same.
+const PRINT_CONFIRM_IDLE_MS_BATCH = 180_000;
 const PRINT_CONFIRM_MAX_MS = 15 * 60_000;
 const PRINT_CONFIRM_POLL_MS = 3_000;
+// Releasing a print batch is idempotent in the ERP, so a failed release is
+// sent again this many times, this far apart, before the operator hears that
+// the ERP's own fallback will print the row instead.
+const PRINT_BATCH_RELEASE_RETRIES = 2;
+const PRINT_BATCH_RELEASE_RETRY_MS = 2_000;
 // Rows of one ERP order must never be written concurrently (the ERP locks
 // per document; multi-colli orders are several rows of one Sales Order).
 const erpLockKey = (shipment: Pick<ListShipment, "id" | "metadata">) => {
@@ -731,6 +747,8 @@ function ShipmentsBoard(): JSX.Element {
   const karrio = useKarrio();
   // Bamboi fork: warehouse actions relayed to the ERP (Ship Today phase 2).
   const erpActions = useShipmentERPActions(undefined, { silent: true });
+  // Pick & Print's per-row merged print (btn_print_batch).
+  const printBatches = useERPPrintBatches();
   // Same flags as the per-row menu: until the ERP registry loads, the
   // identical client-side defaults answer, so the toolbar never flickers.
   const { isEnabled } = useBamboiFeatures();
@@ -1109,23 +1127,123 @@ function ShipmentsBoard(): JSX.Element {
     setPicklistShipments([...selected]);
   };
 
+  // The ERP print batch one batched popup row's labels are held in, or null
+  // — and the row prints one by one, as before print batches. A null batch
+  // is the ERP's own answer (its flag is off) and stays quiet; a failed call
+  // is said out loud, but never stops the row: the labels simply print on
+  // their purchase webhooks.
+  const openPrintBatch = async (
+    targets: ListShipment[],
+  ): Promise<string | null> => {
+    try {
+      const { batch } = await printBatches.openPrintBatch.mutateAsync({
+        shipment_ids: targets.map(({ id }) => id),
+      });
+      return batch || null;
+    } catch (error) {
+      toast({
+        title: "Batch printing unavailable — labels print one by one",
+        description: describeError(error),
+      });
+      return null;
+    }
+  };
+
+  // Hands the held labels to the printer. Idempotent in the ERP, so a
+  // hiccup is simply sent again; when it keeps failing the ERP's own
+  // fallback (a cron over batches left open) prints the row later, and the
+  // operator hears so instead of watching the printer stay silent.
+  const releasePrintBatch = async (batch: string, failedIds: string[]) => {
+    try {
+      await retrying(
+        () =>
+          printBatches.releasePrintBatch.mutateAsync({
+            batch,
+            failed_ids: failedIds,
+          }),
+        {
+          retries: PRINT_BATCH_RELEASE_RETRIES,
+          delayMs: PRINT_BATCH_RELEASE_RETRY_MS,
+        },
+      );
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Print batch not released",
+        description: `The labels start printing automatically within 20 minutes. ${describeError(error)}`,
+      });
+    }
+  };
+
+  // The popup's Print again on a red batch row: the ERP re-sends the merged
+  // job. Its refusal (nothing to retry, the previous job is still alive)
+  // comes back as a plain Error carrying the ERP's own sentence, which the
+  // row shows as is.
+  const retryPrintBatch = async (batch: string) => {
+    try {
+      await printBatches.retryPrintBatch.mutateAsync({ batch });
+    } catch (error) {
+      throw new Error(describeError(error));
+    }
+  };
+
   // One popup row's purchase run (a SKU stack, or one mixed order).
   // Strictly SEQUENTIAL: parallel purchases would race Monta's
   // verification window and the ERP's row locks. A failing shipment is
   // collected and the row continues, exactly like the ERP's
   // mark_picked_bulk.
-  const buyPicklistShipments = async (ids: string[]): Promise<BuyResult> => {
+  //
+  // With btn_print_batch on, the row comes out of the printer as ONE merged
+  // ERP job instead of label by label: the purchases run in the row's print
+  // order (options.printOrder, grouped by carrier), every pick is recorded
+  // UPFRONT — bounded like the other ERP bulk runs, instead of one round
+  // trip in front of each purchase — and the ERP holds the labels in a print
+  // batch until the row is released below. With the flag off this is the
+  // one-by-one path, unchanged.
+  const buyPicklistShipments = async (
+    ids: string[],
+    options?: BuyOptions,
+  ): Promise<BuyResult> => {
+    const batched = isEnabled("btn_print_batch");
     const byId = new Map(picklistRowsRef.current.map((row) => [row.id, row]));
-    const targets = ids.flatMap((id) => byId.get(id) ?? []);
+    const targets = (batched ? (options?.printOrder ?? ids) : ids).flatMap(
+      (id) => byId.get(id) ?? [],
+    );
 
     setBulkAction("buy_and_print");
     const purchased: string[] = [];
     const failures: string[] = [];
     const failedIds: string[] = [];
     const unrecordedPicks: string[] = [];
+    let printBatch: string | null = null;
 
     failedBulkIds.current.clear();
     setBulkRows(Object.fromEntries(targets.map(({ id }) => [id, "Waiting"])));
+    if (batched && targets.length > 0) {
+      options?.onPhase("picking");
+      // Every pick before the first purchase, for the same reason the
+      // one-by-one path picks right before each one (mark_picked only
+      // accepts "Synced", a label moves the ERP row past it), with the same
+      // best-effort semantics (pickForPurchase): skipped when moot, a
+      // refusal collected, never a blocker for the purchase.
+      await runBounded<ListShipment>(
+        targets,
+        BULK_CONCURRENCY,
+        async (shipment) => {
+          setBulkRows((current) => ({ ...current, [shipment.id]: "Picking" }));
+          const pick = await pickForPurchase(erpActions.markPicked, shipment);
+          if (pick.error) {
+            unrecordedPicks.push(
+              `${shipmentLabel(shipment)}: ${describeError(pick.error)}`,
+            );
+          }
+          setBulkRows((current) => ({ ...current, [shipment.id]: "Waiting" }));
+        },
+        erpLockKey,
+      );
+      printBatch = await openPrintBatch(targets);
+      options?.onPhase("buying");
+    }
     for (const shipment of targets) {
       setBulkRows((current) => ({ ...current, [shipment.id]: "Processing" }));
       try {
@@ -1133,13 +1251,15 @@ function ShipmentsBoard(): JSX.Element {
         // accepts a shipment in status "Synced", and buying the label moves
         // the ERP row to "Label Created" — pick after buy would always be
         // refused. This ordering is the whole reason the two calls are not
-        // swapped.
+        // swapped. (A batched row recorded its picks upfront, above.)
         //
         // Best-effort, though (pickForPurchase): a row that is already
         // picked is skipped rather than asked again, and a refused pick is
         // collected instead of costing the row its label — the purchase
         // runs the ERP's real gate by itself and fails closed.
-        const pick = await pickForPurchase(erpActions.markPicked, shipment);
+        const pick = batched
+          ? { error: null }
+          : await pickForPurchase(erpActions.markPicked, shipment);
         if (pick.error) {
           unrecordedPicks.push(
             `${shipmentLabel(shipment)}: ${describeError(pick.error)}`,
@@ -1160,6 +1280,9 @@ function ShipmentsBoard(): JSX.Element {
         failedIds.push(shipment.id);
       }
     }
+    // Released even when every purchase failed: that is what closes the
+    // batch in the ERP.
+    if (printBatch) await releasePrintBatch(printBatch, failedIds);
 
     setBulkAction(null);
     invalidateShipmentsAroundMirror(queryClient);
@@ -1179,7 +1302,9 @@ function ShipmentsBoard(): JSX.Element {
       });
     }
     reportBulkFailures("Pick & Print", failures);
-    return { purchased, failures, failedIds };
+    return batched
+      ? { purchased, failures, failedIds, printBatch }
+      : { purchased, failures, failedIds };
   };
 
   // The popup's green tick: poll the bought shipments until the ERP has
@@ -1216,11 +1341,14 @@ function ShipmentsBoard(): JSX.Element {
     ids: string[],
     onProgress?: (printed: string[]) => void,
     signal?: AbortSignal,
+    batched?: boolean,
   ): Promise<PrintConfirmation> =>
     awaitPrintConfirmation({
       ids,
       fetchPrinted,
-      idleTimeoutMs: PRINT_CONFIRM_IDLE_MS,
+      idleTimeoutMs: batched
+        ? PRINT_CONFIRM_IDLE_MS_BATCH
+        : PRINT_CONFIRM_IDLE_MS,
       maxWaitMs: PRINT_CONFIRM_MAX_MS,
       pollMs: PRINT_CONFIRM_POLL_MS,
       onProgress,
@@ -2026,6 +2154,7 @@ function ShipmentsBoard(): JSX.Element {
         shipments={picklistShipments || []}
         onBuyShipments={buyPicklistShipments}
         onAwaitPrinted={awaitPrinted}
+        onRetryPrintBatch={retryPrintBatch}
         onConfirmAll={confirmPicklistRun}
         onOpenLabels={
           picklistPurchasedIds.length > 0

@@ -7,8 +7,14 @@ import { describe, expect, it } from "vitest";
 import {
   awaitPrintConfirmation,
   buildPicklist,
+  canPrintAgain,
   labelCount,
+  printFailure,
+  PRINTER_UNCONFIRMED_REASON,
   progressLabels,
+  retrying,
+  rowPrintOrder,
+  ShipmentSummary,
 } from "../components/picklist";
 
 // The ERP's Monta layout: one parcel per product unit, order lines riding on
@@ -393,5 +399,191 @@ describe("awaitPrintConfirmation", () => {
 
     expect(calls).toBe(2);
     expect(result).toEqual({ printed: ["shp_1"], unconfirmed: ["shp_2"] });
+  });
+});
+
+// A popup row's summary as buildPicklist hands it over, reduced to what the
+// print-batch helpers read.
+const summary = (
+  id: string,
+  method: string,
+  orderLabel: string,
+  labels = 1,
+): ShipmentSummary => ({
+  id,
+  method,
+  orderLabel,
+  own: false,
+  units: labels,
+  labels,
+});
+
+// The order a merged ERP print batch comes out of the printer.
+describe("rowPrintOrder", () => {
+  it("groups the labels by carrier, alphabetically and case-insensitively", () => {
+    const ordered = rowPrintOrder([
+      summary("shp_1", "PostNL", "#1001"),
+      summary("shp_2", "DHL", "#1002"),
+      summary("shp_3", "gls", "#1003"),
+      summary("shp_4", "DPD", "#1004"),
+      summary("shp_5", "DHL", "#1005"),
+    ]);
+
+    expect(ordered.map((s) => s.method)).toEqual([
+      "DHL",
+      "DHL",
+      "DPD",
+      "gls",
+      "PostNL",
+    ]);
+  });
+
+  it("orders by order number within a carrier, numeric-aware", () => {
+    const ordered = rowPrintOrder([
+      summary("shp_1", "DHL", "#1000"),
+      summary("shp_2", "DHL", "#999"),
+      summary("shp_3", "DHL", "#10000"),
+      summary("shp_4", "DHL", "#1001"),
+    ]);
+
+    expect(ordered.map((s) => s.orderLabel)).toEqual([
+      "#999",
+      "#1000",
+      "#1001",
+      "#10000",
+    ]);
+  });
+
+  it("keeps the row's own order on a tie", () => {
+    // Two colli of one order: same carrier, same order number.
+    const ordered = rowPrintOrder([
+      summary("shp_b", "DHL", "#1000"),
+      summary("shp_a", "DHL", "#1000"),
+    ]);
+
+    expect(ordered.map((s) => s.id)).toEqual(["shp_b", "shp_a"]);
+  });
+
+  it("follows the popup's carrier columns and leaves the row untouched", () => {
+    const shipments = [
+      montaShipment("shp_1", "BAM-01", 1, { shipping_method: "PostNL" }),
+      montaShipment("shp_2", "BAM-01", 1, { shipping_method: "DHL" }),
+      montaShipment("shp_3", "BAM-01", 1, { shipping_method: "GLS" }),
+      montaShipment("shp_4", "BAM-01", 1, { shipping_method: "DHL" }),
+    ];
+    const picklist = buildPicklist(shipments);
+    const [stack] = picklist.groups;
+    const before = stack.buyable.map((s) => s.id);
+
+    const ordered = rowPrintOrder(stack.buyable);
+
+    expect(Array.from(new Set(ordered.map((s) => s.method)))).toEqual(
+      picklist.methods,
+    );
+    expect(ordered.map((s) => s.id)).toEqual([
+      "shp_2",
+      "shp_4",
+      "shp_3",
+      "shp_1",
+    ]);
+    expect(stack.buyable.map((s) => s.id)).toEqual(before);
+  });
+});
+
+// Why a row ends red (see picklist-dialog.tsx) — and whether Print again can
+// re-send it.
+describe("printFailure", () => {
+  const row = [
+    summary("shp_1", "DHL", "#1", 2),
+    summary("shp_2", "DHL", "#2", 1),
+    summary("shp_3", "GLS", "#3", 3),
+  ];
+
+  it("is nothing when every label was bought and confirmed", () => {
+    expect(printFailure(row, [], [], "KPB-1")).toBeNull();
+  });
+
+  it("offers a purchase retry over the failed shipments only", () => {
+    expect(printFailure(row, ["shp_3"], [])).toEqual({
+      reason: "1 purchase(s) failed",
+      retryIds: ["shp_3"],
+      retryLabels: 3,
+      printBatch: null,
+      unconfirmedIds: [],
+    });
+  });
+
+  it("names the silent printer first and keeps the batch to print again", () => {
+    expect(printFailure(row, ["shp_3"], ["shp_1"], "KPB-1")).toEqual({
+      reason: PRINTER_UNCONFIRMED_REASON,
+      retryIds: ["shp_3"],
+      retryLabels: 3,
+      printBatch: "KPB-1",
+      unconfirmedIds: ["shp_1"],
+    });
+  });
+
+  it("offers Print again only for a batch row whose labels never came out", () => {
+    const silentBatch = printFailure(row, [], ["shp_1"], "KPB-1");
+    const silentOneByOne = printFailure(row, [], ["shp_1"], null);
+    const batchPurchaseOnly = printFailure(row, ["shp_3"], [], "KPB-1");
+
+    expect(silentBatch && canPrintAgain(silentBatch)).toBe(true);
+    expect(silentOneByOne && canPrintAgain(silentOneByOne)).toBe(false);
+    expect(batchPurchaseOnly && canPrintAgain(batchPurchaseOnly)).toBe(false);
+  });
+});
+
+// Releasing a print batch is retried (it is idempotent in the ERP).
+describe("retrying", () => {
+  const flaky = (failures: number) => {
+    let calls = 0;
+    return {
+      calls: () => calls,
+      fn: async () => {
+        calls += 1;
+        if (calls <= failures) throw new Error(`attempt ${calls} failed`);
+        return "released";
+      },
+    };
+  };
+
+  it("does not wait when the first attempt lands", async () => {
+    const call = flaky(0);
+    const pauses: number[] = [];
+
+    const result = await retrying(call.fn, {
+      retries: 2,
+      delayMs: 2_000,
+      sleep: async (ms) => pauses.push(ms),
+    });
+
+    expect(result).toBe("released");
+    expect(call.calls()).toBe(1);
+    expect(pauses).toEqual([]);
+  });
+
+  it("sends it again, delayMs apart, until it lands", async () => {
+    const call = flaky(2);
+    const pauses: number[] = [];
+
+    const result = await retrying(call.fn, {
+      retries: 2,
+      delayMs: 2_000,
+      sleep: async (ms) => pauses.push(ms),
+    });
+
+    expect(result).toBe("released");
+    expect(call.calls()).toBe(3);
+    expect(pauses).toEqual([2_000, 2_000]);
+  });
+
+  it("gives up after the retries with the last error", async () => {
+    const call = flaky(5);
+
+    await expect(
+      retrying(call.fn, { retries: 2, delayMs: 0, sleep: async () => {} }),
+    ).rejects.toThrow("attempt 3 failed");
+    expect(call.calls()).toBe(3);
   });
 });

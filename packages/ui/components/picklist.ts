@@ -69,6 +69,10 @@ export interface BuyResult {
   purchased: string[];
   failures: string[];
   failedIds: string[];
+  // The ERP print batch the row's labels were held in (see rowPrintOrder),
+  // or null/absent when they printed one by one on their purchase webhook —
+  // the btn_print_batch flag is off, or opening the batch failed.
+  printBatch?: string | null;
 }
 
 export interface PrintConfirmation {
@@ -187,16 +191,105 @@ export function buildPicklist(shipments: PicklistShipmentLike[]): Picklist {
       a.sku.localeCompare(b.sku),
     ),
     mixed: mixed.sort((a, b) => a.orderLabel.localeCompare(b.orderLabel)),
-    // Own delivery closes the walk: the van is loaded after the parcels.
-    methods: Array.from(methods).sort((a, b) =>
-      a === OWN_DELIVERY_METHOD
-        ? 1
-        : b === OWN_DELIVERY_METHOD
-          ? -1
-          : a.localeCompare(b),
-    ),
+    methods: Array.from(methods).sort(compareMethods),
     shipmentsWithoutItems,
   };
+}
+
+// The popup's column order, shared with rowPrintOrder so a merged print comes
+// out in the order the picker reads the columns. Own delivery closes the
+// walk: the van is loaded after the parcels.
+function compareMethods(a: string, b: string): number {
+  return a === OWN_DELIVERY_METHOD
+    ? 1
+    : b === OWN_DELIVERY_METHOD
+      ? -1
+      : a.localeCompare(b);
+}
+
+// The order one row's labels come out of the printer when they are printed as
+// ONE merged job (the ERP print batch). Printed one by one, labels of a mixed
+// row came out interleaved — DHL, PostNL, DHL, GLS — and the picker sorted the
+// sheets by carrier by hand before sticking them. Grouped by method (the
+// popup's column order), then by order number, numeric-aware so #999 comes
+// before #1000. Stable: ties keep the row's own order. Purchases run in this
+// order too, and the ERP merges in the order the batch was opened with.
+export const rowPrintOrder = (targets: ShipmentSummary[]): ShipmentSummary[] =>
+  [...targets].sort(
+    (a, b) =>
+      compareMethods(a.method, b.method) ||
+      a.orderLabel.localeCompare(b.orderLabel, undefined, { numeric: true }),
+  );
+
+// Why a row ended red, or null when it is green: every purchase landed and
+// the printer confirmed every bought label. retryIds are the shipments that
+// still need a label (the purchase Retry); unconfirmedIds were bought but the
+// printer never confirmed them — the ones Print again waits for, which it can
+// only ask for when the row was printed as an ERP print batch.
+export interface PrintFailure {
+  reason: string;
+  retryIds: string[];
+  retryLabels: number;
+  printBatch: string | null;
+  unconfirmedIds: string[];
+}
+
+export const PRINTER_UNCONFIRMED_REASON =
+  "Printer did not confirm — check PrintNode, or use Open label PDFs";
+
+export function printFailure(
+  targets: ShipmentSummary[],
+  failedIds: string[],
+  unconfirmed: string[],
+  printBatch?: string | null,
+): PrintFailure | null {
+  if (failedIds.length + unconfirmed.length === 0) return null;
+  const retrySummaries = targets.filter((t) => failedIds.includes(t.id));
+  return {
+    // The printer's silence wins the headline: a failed purchase is plain to
+    // see (its Retry button), a label that never came out is not.
+    reason:
+      unconfirmed.length > 0
+        ? PRINTER_UNCONFIRMED_REASON
+        : `${failedIds.length} purchase(s) failed`,
+    retryIds: retrySummaries.map((t) => t.id),
+    retryLabels: labelCount(retrySummaries),
+    printBatch: printBatch ?? null,
+    unconfirmedIds: unconfirmed,
+  };
+}
+
+// Print again re-sends the row's merged job from the ERP; a row whose labels
+// printed one by one has no job to re-send (Open label PDFs covers it).
+export const canPrintAgain = (failure: {
+  printBatch?: string | null;
+  unconfirmedIds?: string[];
+}): boolean =>
+  Boolean(failure.printBatch) && (failure.unconfirmedIds || []).length > 0;
+
+// Runs `fn`, and on a rejection up to `retries` more times, `delayMs` apart;
+// the last rejection is what the caller sees. For calls that are idempotent
+// on the other end (releasing a print batch) — nothing else belongs here.
+export async function retrying<T>(
+  fn: () => Promise<T>,
+  {
+    retries,
+    delayMs,
+    sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  }: {
+    retries: number;
+    delayMs: number;
+    sleep?: (ms: number) => Promise<unknown>;
+  },
+): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (attempt >= retries) throw error;
+      await sleep(delayMs);
+    }
+  }
 }
 
 // The popup's green tick: poll until the ERP has mirrored printed_at on every

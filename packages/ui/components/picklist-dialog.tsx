@@ -44,13 +44,17 @@ import {
 
 import {
   buildPicklist,
+  canPrintAgain,
   labelCount,
+  printFailure,
   progressLabels,
+  rowPrintOrder,
   BuyResult,
   MixedOrder,
   Picklist,
   PicklistShipmentLike,
   PrintConfirmation,
+  PrintFailure,
   ShipmentSummary,
   SkuGroup,
 } from "./picklist";
@@ -65,21 +69,31 @@ export {
   type SkuGroup,
 };
 
-// Grey (idle) → buying → waiting for the printer → green (PrintNode
-// confirmed) or red (purchase failed / printer never confirmed). Red keeps a
-// Retry over exactly the shipments that still need a label. While waiting,
-// the row counts the labels the printer confirmed so far.
+// What the page reports back while it runs one row's purchase: with ERP
+// print batches on, the row's picks are recorded upfront (picking) before
+// the sequential purchases start (buying). Without them it never calls.
+export type BuyPhase = "picking" | "buying";
+
+export interface BuyOptions {
+  // The row's ids in the order its labels should come out of the printer
+  // (rowPrintOrder) — used by the page only when it prints the row as one
+  // ERP print batch; the one-by-one path keeps the row's own order.
+  printOrder: string[];
+  onPhase: (phase: BuyPhase) => void;
+}
+
+// Grey (idle) → [picking →] buying → waiting for the printer → green
+// (PrintNode confirmed) or red (purchase failed / printer never confirmed).
+// Red keeps a Retry over exactly the shipments that still need a label, and —
+// for a row printed as an ERP print batch — a Print again that re-sends the
+// merged job, with the ERP's refusal (printError) shown in the row. While
+// waiting, the row counts the labels the printer confirmed so far.
 type RowState =
   | { phase: "idle" }
-  | { phase: "buying" }
+  | { phase: BuyPhase }
   | { phase: "confirming"; labels: number; confirmedLabels: number }
   | { phase: "printed"; labels: number }
-  | {
-      phase: "failed";
-      reason: string;
-      retryIds: string[];
-      retryLabels: number;
-    };
+  | ({ phase: "failed"; printError?: string } & PrintFailure);
 
 export function PicklistDialog({
   open,
@@ -87,6 +101,7 @@ export function PicklistDialog({
   shipments,
   onBuyShipments,
   onAwaitPrinted,
+  onRetryPrintBatch,
   onConfirmAll,
   onOpenLabels,
 }: {
@@ -95,16 +110,22 @@ export function PicklistDialog({
   shipments: PicklistShipmentLike[];
   // Buys (pick + purchase, sequentially) the given shipments. Provided by
   // the page, which owns the mutation hooks and the toasts.
-  onBuyShipments: (ids: string[]) => Promise<BuyResult>;
+  onBuyShipments: (ids: string[], options?: BuyOptions) => Promise<BuyResult>;
   // Polls the bought shipments until the ERP mirrors printed_at (stamped
   // after PrintNode reported the jobs delivered to the printer host) or
   // gives up — the green/red verdict. onProgress gets every id confirmed so
-  // far; signal stops the poll.
+  // far; signal stops the poll. batched: the labels come out as one merged
+  // ERP job, so the first confirmation lands only once the whole job printed.
   onAwaitPrinted: (
     ids: string[],
     onProgress?: (printed: string[]) => void,
     signal?: AbortSignal,
+    batched?: boolean,
   ) => Promise<PrintConfirmation>;
+  // Print again: asks the ERP to re-send a print batch's merged job. Rejects
+  // with an Error carrying the ERP's own sentence (nothing to retry, the
+  // previous job is still alive), which the row shows as is.
+  onRetryPrintBatch?: (batch: string) => Promise<void>;
   // Fired once when the operator confirms the whole run (every row ticked).
   // The page uses it to record the own-delivery picks.
   onConfirmAll?: (ownIds: string[]) => void;
@@ -117,12 +138,18 @@ export function PicklistDialog({
   const [rows, setRows] = React.useState<Record<string, RowState>>({});
   // Two different locks. Purchases are strictly sequential (Monta's
   // verification window, the ERP's row locks), so ONE row buying blocks
-  // every other Print. Waiting for the printer is not a purchase: while row
+  // every other Print — and so does one recording its picks, the first half
+  // of the same run. Waiting for the printer is not a purchase: while row
   // A polls for its confirmation, row B may start buying — the picker packs
   // the next stack while the first one prints.
-  const purchasing = Object.values(rows).some((row) => row.phase === "buying");
+  const purchasing = Object.values(rows).some(
+    (row) => row.phase === "picking" || row.phase === "buying",
+  );
   const busy = Object.values(rows).some(
-    (row) => row.phase === "buying" || row.phase === "confirming",
+    (row) =>
+      row.phase === "picking" ||
+      row.phase === "buying" ||
+      row.phase === "confirming",
   );
   // Leaving the page mid-wait unmounts the popup: stop its printer polls.
   // Made in the effect, not at render — StrictMode's mount → unmount → mount
@@ -161,18 +188,29 @@ export function PicklistDialog({
       checked ? [...current, key] : current.filter((k) => k !== key),
     );
 
+  // Nothing of the row got a label: every shipment goes back on the Retry.
+  const purchaseFailed = (targets: ShipmentSummary[]): RowState => ({
+    phase: "failed",
+    reason: "Purchase failed",
+    retryIds: targets.map((t) => t.id),
+    retryLabels: labelCount(targets),
+    printBatch: null,
+    unconfirmedIds: [],
+  });
+
   const buy = async (key: string, targets: ShipmentSummary[]) => {
     const labels = labelCount(targets);
     setRow(key, { phase: "buying" });
     try {
-      const result = await onBuyShipments(targets.map((t) => t.id));
+      const result = await onBuyShipments(
+        targets.map((t) => t.id),
+        {
+          printOrder: rowPrintOrder(targets).map((t) => t.id),
+          onPhase: (phase) => setRow(key, { phase }),
+        },
+      );
       if (result.purchased.length === 0) {
-        setRow(key, {
-          phase: "failed",
-          reason: "Purchase failed",
-          retryIds: targets.map((t) => t.id),
-          retryLabels: labels,
-        });
+        setRow(key, purchaseFailed(targets));
         return;
       }
 
@@ -186,33 +224,75 @@ export function PicklistDialog({
         result.purchased,
         progress,
         abortRef.current?.signal,
+        Boolean(result.printBatch),
       );
-      const failed = result.failedIds.length + confirmation.unconfirmed.length;
-      if (failed > 0) {
-        const retrySummaries = targets.filter((t) =>
-          result.failedIds.includes(t.id),
-        );
-        setRow(key, {
-          phase: "failed",
-          reason:
-            confirmation.unconfirmed.length > 0
-              ? "Printer did not confirm — check PrintNode, or use Open label PDFs"
-              : `${result.failedIds.length} purchase(s) failed`,
-          retryIds: retrySummaries.map((t) => t.id),
-          retryLabels: labelCount(retrySummaries),
-        });
+      const failure = printFailure(
+        targets,
+        result.failedIds,
+        confirmation.unconfirmed,
+        result.printBatch,
+      );
+      if (failure) {
+        setRow(key, { phase: "failed", ...failure });
         return;
       }
       setRow(key, { phase: "printed", labels });
     } catch {
       // The page already toasts the failure; the row goes back to printable.
+      setRow(key, purchaseFailed(targets));
+    }
+  };
+
+  // Print again: the ERP re-sends the row's merged job, and the row waits for
+  // the labels the printer never confirmed — the purchase Retry (retryIds)
+  // stays on the row untouched. An ERP refusal keeps the row red with the
+  // ERP's own sentence next to it; Open label PDFs remains the way out.
+  const printAgain = async (
+    key: string,
+    targets: ShipmentSummary[],
+    failure: PrintFailure,
+  ) => {
+    const batch = failure.printBatch;
+    if (!batch || !onRetryPrintBatch) return;
+    const { unconfirmedIds } = failure;
+    const progress = (printed: string[]) =>
+      setRow(key, {
+        phase: "confirming",
+        ...progressLabels(targets, unconfirmedIds, printed),
+      });
+    progress([]);
+    try {
+      await onRetryPrintBatch(batch);
+    } catch (error) {
       setRow(key, {
         phase: "failed",
-        reason: "Purchase failed",
-        retryIds: targets.map((t) => t.id),
-        retryLabels: labels,
+        ...failure,
+        printError:
+          error instanceof Error && error.message
+            ? error.message
+            : "The ERP refused to print this batch again.",
       });
+      return;
     }
+    // Never leaves the row spinning: the popup stays locked while it does.
+    const confirmation = await onAwaitPrinted(
+      unconfirmedIds,
+      progress,
+      abortRef.current?.signal,
+      true,
+    ).catch(() => ({ printed: [], unconfirmed: unconfirmedIds }));
+    const next = printFailure(
+      targets,
+      failure.retryIds,
+      confirmation.unconfirmed,
+      batch,
+    );
+    setRow(
+      key,
+      next
+        ? { phase: "failed", ...next }
+        : { phase: "printed", labels: labelCount(targets) },
+    );
   };
 
   const confirmAll = () => {
@@ -228,9 +308,9 @@ export function PicklistDialog({
   };
 
   // One cell tells the row's whole story: grey button (nothing happened),
-  // spinner (buying / waiting for the printer, with its count so far), green
-  // (printer confirmed), red (failed, with a retry over what is still
-  // unlabeled).
+  // spinner (picking / buying / waiting for the printer, with its count so
+  // far), green (printer confirmed), red (failed, with a retry over what is
+  // still unlabeled and, for a print batch, a Print again).
   const statusCell = (key: string, targets: ShipmentSummary[]) => {
     const state = rows[key] || { phase: "idle" };
     const labels = labelCount(targets);
@@ -239,6 +319,12 @@ export function PicklistDialog({
       return <span className="text-xs text-muted-foreground">pick only</span>;
     }
     switch (state.phase) {
+      case "picking":
+        return (
+          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Picking…
+          </span>
+        );
       case "buying":
         return (
           <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -262,12 +348,28 @@ export function PicklistDialog({
       case "failed":
         return (
           <span className="inline-flex items-center gap-2">
+            {state.printError && (
+              <span className="max-w-[16rem] whitespace-normal text-left text-xs text-red-700">
+                {state.printError}
+              </span>
+            )}
             <span
               className="inline-flex items-center gap-1.5 rounded-full bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700"
               title={state.reason}
             >
               <XCircle className="h-3.5 w-3.5" /> Failed
             </span>
+            {onRetryPrintBatch && canPrintAgain(state) && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                title="Send this row's labels to the printer again"
+                onClick={() => printAgain(key, targets, state)}
+              >
+                <Printer className="h-3 w-3 mr-1" /> Print again
+              </Button>
+            )}
             {state.retryIds.length > 0 && (
               <Button
                 variant="outline"

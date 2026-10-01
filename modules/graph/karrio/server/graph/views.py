@@ -51,10 +51,10 @@ class GraphQLView(AccessMixin, views.GraphQLView):
         return data
 
     def format_graphql_error(self, error: graphql.GraphQLError):
+        # GraphQLError.formatted replaces format_error, which graphql-core 3.3
+        # removed; on 3.2 it returns the same dict.
         formatted_error: dict = (
-            graphql.format_error(error)  # type: ignore
-            if isinstance(error, graphql.GraphQLError)
-            else {}
+            dict(error.formatted) if isinstance(error, graphql.GraphQLError) else {}
         )
 
         if isinstance(error.original_error, exceptions.APIException):

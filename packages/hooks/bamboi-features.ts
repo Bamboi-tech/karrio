@@ -27,6 +27,9 @@ export const BAMBOI_FEATURE_DEFAULTS: Record<string, boolean> = {
   btn_record_delivery_outcome: true,
   btn_buy_label_dashboard: true,
   btn_confirm_address: true,
+  // Pick & Print: hold a row's labels in an ERP print batch and print them
+  // as one merged job. OFF until the ERP side is rolled out and switched on.
+  btn_print_batch: false,
   // Safety gates
   gate_shopify_hold_probe: true,
   gate_hold_block: true,

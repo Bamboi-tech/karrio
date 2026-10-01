@@ -458,3 +458,114 @@ def run_erp_features_set(key, enabled) -> dict:
     outcome = {"key": result.get("key", key), "enabled": result.get("enabled", enabled)}
     _remember_feature_toggle(outcome["key"], outcome["enabled"])
     return outcome
+
+
+# ---------------------------------------------------------------------------
+# ERP print batches (Pick & Print: one merged PrintNode job per popup row)
+# ---------------------------------------------------------------------------
+
+# Every purchase fires the Karrio webhook and the ERP auto-prints that one
+# label straight away: ~6 s a label, serial, and a row of mixed carriers
+# comes out interleaved. A print batch asks the ERP to HOLD the labels of one
+# popup row while the dashboard buys it, then merge them — in the row's print
+# order, grouped by carrier — into ONE PrintNode job when the row is
+# released. The ERP owns the batch and the feature flag (open answers
+# ``enabled: false`` while it is off); these relays only carry the calls.
+PRINT_BATCH_OPEN_PATH = "/api/method/karrio_shipping.api.printing.open_print_batch"
+PRINT_BATCH_RELEASE_PATH = (
+    "/api/method/karrio_shipping.api.printing.release_print_batch"
+)
+PRINT_BATCH_RETRY_PATH = "/api/method/karrio_shipping.api.printing.retry_print_batch"
+# A popup row is one SKU stack or one mixed order — a few dozen boxes on a
+# busy day. The cap only keeps a runaway payload from reaching Frappe.
+PRINT_BATCH_MAX_SHIPMENTS = 500
+# Frappe's own limit on a document name.
+PRINT_BATCH_NAME_MAX_LENGTH = 140
+
+
+def validate_print_batch_ids(value, field: str, allow_empty: bool = False) -> list:
+    """Check a print-batch id list before it reaches the ERP (or a query).
+
+    A list of non-empty strings, at most PRINT_BATCH_MAX_SHIPMENTS long, order
+    kept — for ``open`` that order IS the print order. Raises 400 otherwise.
+    """
+    if (
+        not isinstance(value, list)
+        or (not value and not allow_empty)
+        or len(value) > PRINT_BATCH_MAX_SHIPMENTS
+        or not all(isinstance(item, str) and item.strip() for item in value)
+    ):
+        bounds = "at most" if allow_empty else "1 to"
+        raise APIException(
+            f"'{field}' must be a list of {bounds} {PRINT_BATCH_MAX_SHIPMENTS} "
+            "shipment ids.",
+            code="erp_print_batch_invalid",
+            status_code=400,
+        )
+    return [item.strip() for item in value]
+
+
+def _print_batch_name(name) -> str:
+    if (
+        not isinstance(name, str)
+        or not name.strip()
+        or len(name.strip()) > PRINT_BATCH_NAME_MAX_LENGTH
+    ):
+        raise APIException(
+            f"Print batch name must be a non-empty string of at most "
+            f"{PRINT_BATCH_NAME_MAX_LENGTH} characters.",
+            code="erp_print_batch_invalid",
+            status_code=400,
+        )
+    return name.strip()
+
+
+def run_erp_print_batch_open(shipment_ids) -> dict:
+    """Ask the ERP to hold the labels of these shipments for one merged print.
+
+    Returns the ERP's answer untouched: ``{"enabled", "batch", "held",
+    "unknown"}``. ``batch`` is None while the ERP's print-batch flag is off;
+    ids in ``unknown`` (not ERP-linked, already printed) are not held and
+    keep printing one by one on their purchase webhook, as before.
+    """
+    message = _post_erp_method(
+        PRINT_BATCH_OPEN_PATH,
+        {"karrio_ids": validate_print_batch_ids(shipment_ids, "shipment_ids")},
+        "print batch open",
+    )
+    return message if isinstance(message, dict) else {}
+
+
+def run_erp_print_batch_release(name, failed_ids) -> dict:
+    """Release a held batch: the ERP merges what was bought and prints it.
+
+    ``failed_ids`` are the shipments whose purchase failed — the ERP stops
+    waiting for their labels. Idempotent on the ERP side, so a caller that
+    lost the answer (timeout) may simply send it again.
+    """
+    message = _post_erp_method(
+        PRINT_BATCH_RELEASE_PATH,
+        {
+            "batch": _print_batch_name(name),
+            "failed_ids": validate_print_batch_ids(
+                failed_ids, "failed_ids", allow_empty=True
+            ),
+        },
+        "print batch release",
+    )
+    return message if isinstance(message, dict) else {}
+
+
+def run_erp_print_batch_retry(name) -> dict:
+    """Send a released batch to the printer again (the popup's Print again).
+
+    The ERP refuses when there is nothing to retry or its previous PrintNode
+    job is not dead yet; that refusal comes back as a 409 carrying the ERP's
+    own sentence, which the popup shows in the row.
+    """
+    message = _post_erp_method(
+        PRINT_BATCH_RETRY_PATH,
+        {"batch": _print_batch_name(name)},
+        "print batch retry",
+    )
+    return message if isinstance(message, dict) else {}

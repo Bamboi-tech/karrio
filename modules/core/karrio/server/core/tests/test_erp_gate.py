@@ -568,6 +568,169 @@ class TestFeaturesRelay(TestCase):
 
 
 @override_settings(ERP_GATE_URL="https://erp.test", ERP_GATE_TOKEN="key:secret")
+class TestPrintBatchRelay(TestCase):
+    """Pick & Print's print batches: the relay carries open / release /
+    retry to the ERP's printing module and hands its answer back verbatim."""
+
+    def test_open_sends_the_ids_in_print_order_and_returns_the_answer(self):
+        answer = {
+            "enabled": True,
+            "batch": "KPB-2026-00001",
+            "held": ["shp_b", "shp_a"],
+            "unknown": ["shp_c"],
+        }
+        with mock.patch.object(
+            erp_gate.requests,
+            "post",
+            return_value=_response(payload={"message": answer}),
+        ) as post:
+            result = erp_gate.run_erp_print_batch_open(["shp_b", "shp_a", "shp_c"])
+        self.assertEqual(result, answer)
+        args, kwargs = post.call_args
+        self.assertEqual(args[0], "https://erp.test" + erp_gate.PRINT_BATCH_OPEN_PATH)
+        self.assertEqual(kwargs["json"], {"karrio_ids": ["shp_b", "shp_a", "shp_c"]})
+        self.assertEqual(kwargs["headers"]["Authorization"], "token key:secret")
+        self.assertEqual(kwargs["timeout"], (5, 30))
+
+    def test_open_while_the_flag_is_off_hands_back_no_batch(self):
+        answer = {"enabled": False, "batch": None, "held": [], "unknown": []}
+        with mock.patch.object(
+            erp_gate.requests,
+            "post",
+            return_value=_response(payload={"message": answer}),
+        ):
+            result = erp_gate.run_erp_print_batch_open(["shp_a"])
+        self.assertEqual(result, answer)
+
+    def test_a_non_object_answer_reads_as_no_batch(self):
+        with mock.patch.object(
+            erp_gate.requests, "post", return_value=_response(payload={"message": None})
+        ):
+            self.assertEqual(erp_gate.run_erp_print_batch_open(["shp_a"]), {})
+
+    def test_release_relays_the_batch_and_its_failed_purchases(self):
+        answer = {"batch": "KPB-2026-00001", "status": "Queued"}
+        with mock.patch.object(
+            erp_gate.requests,
+            "post",
+            return_value=_response(payload={"message": answer}),
+        ) as post:
+            result = erp_gate.run_erp_print_batch_release("KPB-2026-00001", ["shp_c"])
+        self.assertEqual(result, answer)
+        args, kwargs = post.call_args
+        self.assertTrue(args[0].endswith(erp_gate.PRINT_BATCH_RELEASE_PATH))
+        self.assertEqual(
+            kwargs["json"], {"batch": "KPB-2026-00001", "failed_ids": ["shp_c"]}
+        )
+
+    def test_release_without_failures_sends_an_empty_list(self):
+        with mock.patch.object(
+            erp_gate.requests,
+            "post",
+            return_value=_response(payload={"message": {"status": "Queued"}}),
+        ) as post:
+            erp_gate.run_erp_print_batch_release("KPB-2026-00001", [])
+        self.assertEqual(post.call_args[1]["json"]["failed_ids"], [])
+
+    def test_retry_relays_the_batch(self):
+        answer = {"batch": "KPB-2026-00001", "status": "Queued"}
+        with mock.patch.object(
+            erp_gate.requests,
+            "post",
+            return_value=_response(payload={"message": answer}),
+        ) as post:
+            result = erp_gate.run_erp_print_batch_retry("KPB-2026-00001")
+        self.assertEqual(result, answer)
+        args, kwargs = post.call_args
+        self.assertTrue(args[0].endswith(erp_gate.PRINT_BATCH_RETRY_PATH))
+        self.assertEqual(kwargs["json"], {"batch": "KPB-2026-00001"})
+
+    def test_retry_refusal_surfaces_the_erp_sentence(self):
+        body = {
+            "exception": "frappe.exceptions.ValidationError: job still alive",
+            "_server_messages": '["{\\"message\\": \\"The previous print job is still <b>queued</b> at PrintNode.\\"}"]',
+        }
+        with mock.patch.object(
+            erp_gate.requests, "post", return_value=_response(417, payload=body)
+        ):
+            with self.assertRaises(erp_gate.ERPRefusal) as caught:
+                erp_gate.run_erp_print_batch_retry("KPB-2026-00001")
+        self.assertEqual(caught.exception.status_code, 409)
+        self.assertEqual(
+            str(caught.exception.detail),
+            "The previous print job is still queued at PrintNode.",
+        )
+
+    def test_malformed_ids_never_reach_erp(self):
+        for ids in (
+            None,
+            "shp_a",
+            [],
+            [""],
+            ["  "],
+            ["shp_a", 5],
+            ["shp_a", None],
+            [f"shp_{index}" for index in range(erp_gate.PRINT_BATCH_MAX_SHIPMENTS + 1)],
+        ):
+            with self.subTest(ids=repr(ids)[:40]):
+                with mock.patch.object(erp_gate.requests, "post") as post:
+                    with self.assertRaises(APIException) as caught:
+                        erp_gate.run_erp_print_batch_open(ids)
+                post.assert_not_called()
+                self.assertEqual(caught.exception.status_code, 400)
+
+    def test_malformed_release_never_reaches_erp(self):
+        for name, failed_ids in (
+            ("", []),
+            ("   ", []),
+            (None, []),
+            ("x" * (erp_gate.PRINT_BATCH_NAME_MAX_LENGTH + 1), []),
+            ("KPB-2026-00001", None),
+            ("KPB-2026-00001", "shp_a"),
+            ("KPB-2026-00001", [""]),
+        ):
+            with self.subTest(name=name, failed_ids=failed_ids):
+                with mock.patch.object(erp_gate.requests, "post") as post:
+                    with self.assertRaises(APIException) as caught:
+                        erp_gate.run_erp_print_batch_release(name, failed_ids)
+                post.assert_not_called()
+                self.assertEqual(caught.exception.status_code, 400)
+
+    def test_the_largest_allowed_row_passes(self):
+        ids = [f"shp_{index}" for index in range(erp_gate.PRINT_BATCH_MAX_SHIPMENTS)]
+        with mock.patch.object(
+            erp_gate.requests, "post", return_value=_response(payload={"message": {}})
+        ) as post:
+            erp_gate.run_erp_print_batch_open(ids)
+        self.assertEqual(post.call_args[1]["json"]["karrio_ids"], ids)
+
+    def test_unreachable_fails_closed(self):
+        calls = (
+            lambda: erp_gate.run_erp_print_batch_open(["shp_a"]),
+            lambda: erp_gate.run_erp_print_batch_release("KPB-2026-00001", []),
+            lambda: erp_gate.run_erp_print_batch_retry("KPB-2026-00001"),
+        )
+        for index, call in enumerate(calls):
+            with self.subTest(call=index):
+                with mock.patch.object(
+                    erp_gate.requests, "post", side_effect=requests.ReadTimeout("slow")
+                ):
+                    with self.assertRaises(APIException) as caught:
+                        call()
+                self.assertEqual(caught.exception.status_code, 424)
+                self.assertEqual(caught.exception.code, "erp_gate_unreachable")
+
+    @override_settings(ERP_GATE_URL=None, ERP_GATE_TOKEN=None)
+    def test_unconfigured_fails_closed(self):
+        with mock.patch.object(erp_gate.requests, "post") as post:
+            with self.assertRaises(APIException) as caught:
+                erp_gate.run_erp_print_batch_open(["shp_a"])
+        post.assert_not_called()
+        self.assertEqual(caught.exception.status_code, 424)
+        self.assertEqual(caught.exception.code, "erp_gate_unconfigured")
+
+
+@override_settings(ERP_GATE_URL="https://erp.test", ERP_GATE_TOKEN="key:secret")
 class TestRefusalDetailIsSerializable(TestCase):
     """Regression: every erp_gate refusal must carry a plain ``str`` detail.
 
@@ -660,6 +823,21 @@ class TestRefusalDetailIsSerializable(TestCase):
             lambda: self._with_post(
                 mock.MagicMock(side_effect=requests.Timeout("slow")),
                 lambda: erp_gate.run_erp_features_list(),
+            ),
+        )
+        collect(
+            "print batch payload invalid",
+            lambda: erp_gate.run_erp_print_batch_open([]),
+        )
+        collect(
+            "print batch name invalid",
+            lambda: erp_gate.run_erp_print_batch_retry(""),
+        )
+        collect(
+            "print batch retry refused without a server message",
+            lambda: self._with_post(
+                mock.MagicMock(return_value=_response(417, payload={})),
+                lambda: erp_gate.run_erp_print_batch_retry("KPB-2026-00001"),
             ),
         )
 

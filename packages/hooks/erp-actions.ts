@@ -379,3 +379,67 @@ export function useShipmentERPActions(
     confirmAddress,
   };
 }
+
+// Pick & Print's print batches (flag btn_print_batch). Each purchase used to
+// make the ERP auto-print its one label straight away — ~6 s a label, serial,
+// carriers interleaved. A batch asks the ERP to HOLD one popup row's labels
+// while the row is bought, then print them as ONE merged PrintNode job, in
+// the order the batch was opened with, once the row is released. The Karrio
+// server relays all three calls (server-held credentials, like every ERP
+// action above); the ERP owns the batch and answers `enabled: false` with no
+// batch while its flag is off.
+//
+// No cache invalidation: a batch changes nothing Karrio shows. The printed_at
+// mirror it eventually causes is what the popup polls for anyway.
+export type PrintBatchOpened = {
+  enabled: boolean;
+  // null → no batch: every label prints one by one on its webhook, as before.
+  batch: string | null;
+  // Held for the merged print…
+  held: string[];
+  // …and not held (not ERP-linked, already printed): these print one by one.
+  unknown: string[];
+};
+
+export type PrintBatchStatus = { batch: string; status: string };
+
+export function useERPPrintBatches() {
+  const karrio = useKarrio();
+
+  const openPrintBatch = useMutation(
+    // shipment_ids in print order: the ERP merges the labels in this order.
+    ({ shipment_ids }: { shipment_ids: string[] }) =>
+      handleFailure(
+        karrio.axios
+          .post<PrintBatchOpened>("/v1/erp/print-batches", { shipment_ids })
+          .then(({ data }) => data),
+      ),
+  );
+  // failed_ids: the purchases that failed, so the ERP stops waiting for
+  // their labels. Idempotent, so callers may simply send it again. Release
+  // even when every purchase failed: that is what closes the batch in the ERP.
+  const releasePrintBatch = useMutation(
+    ({ batch, failed_ids }: { batch: string; failed_ids: string[] }) =>
+      handleFailure(
+        karrio.axios
+          .post<PrintBatchStatus>(
+            `/v1/erp/print-batches/${encodeURIComponent(batch)}/release`,
+            { failed_ids },
+          )
+          .then(({ data }) => data),
+      ),
+  );
+  // Print again. The ERP refuses (409, its own sentence) when there is
+  // nothing to retry or the previous PrintNode job is not dead yet.
+  const retryPrintBatch = useMutation(({ batch }: { batch: string }) =>
+    handleFailure(
+      karrio.axios
+        .post<PrintBatchStatus>(
+          `/v1/erp/print-batches/${encodeURIComponent(batch)}/retry`,
+        )
+        .then(({ data }) => data),
+    ),
+  );
+
+  return { openPrintBatch, releasePrintBatch, retryPrintBatch };
+}

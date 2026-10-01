@@ -34,6 +34,7 @@ from karrio.server.core.tests.test_erp_gate import (
     TestLabelGate,
     TestShipmentActionRelay,
     TestFeaturesRelay,
+    TestPrintBatchRelay,
     TestRefusalDetailIsSerializable,
 )
 from karrio.server.core.tests.test_jwt_refresh import (

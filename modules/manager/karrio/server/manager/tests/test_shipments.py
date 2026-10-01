@@ -2304,3 +2304,116 @@ class TestShipmentERPAction(TestShipmentFixture):
         response = self.client.post(self._url("delete"), format="json")
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class TestERPPrintBatches(TestShipmentFixture):
+    """Pick & Print's print-batch relay: the routes hand the ERP's answer back
+    verbatim, and a batch can only be opened over the caller's own shipments."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.shipment.metadata = {"karrio_shipment": "KAR-SHIP-2026-00001"}
+        self.shipment.save()
+
+    def test_open_relays_the_ids_and_returns_the_erp_answer(self):
+        answer = {
+            "enabled": True,
+            "batch": "KPB-2026-00001",
+            "held": [self.shipment.pk],
+            "unknown": [],
+        }
+        with patch("karrio.server.core.erp_gate.run_erp_print_batch_open") as run_open:
+            run_open.return_value = answer
+            response = self.client.post(
+                reverse("karrio.server.manager:erp-print-batches"),
+                data=dict(shipment_ids=[self.shipment.pk]),
+                format="json",
+            )
+
+        self.assertResponseNoErrors(response)
+        self.assertDictEqual(response.data, answer)
+        run_open.assert_called_once_with([self.shipment.pk])
+
+    def test_open_refuses_a_shipment_the_caller_cannot_see(self):
+        with patch("karrio.server.core.erp_gate.run_erp_print_batch_open") as run_open:
+            response = self.client.post(
+                reverse("karrio.server.manager:erp-print-batches"),
+                data=dict(shipment_ids=[self.shipment.pk, "shp_not_ours"]),
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        run_open.assert_not_called()
+
+    def test_open_without_ids_is_a_bad_request(self):
+        with patch("karrio.server.core.erp_gate.run_erp_print_batch_open") as run_open:
+            response = self.client.post(
+                reverse("karrio.server.manager:erp-print-batches"),
+                data=dict(shipment_ids=[]),
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        run_open.assert_not_called()
+
+    def test_release_forwards_the_failed_ids(self):
+        with patch(
+            "karrio.server.core.erp_gate.run_erp_print_batch_release"
+        ) as run_release:
+            run_release.return_value = {"batch": "KPB-2026-00001", "status": "Queued"}
+            response = self.client.post(
+                reverse(
+                    "karrio.server.manager:erp-print-batch-release",
+                    kwargs=dict(name="KPB-2026-00001"),
+                ),
+                data=dict(failed_ids=["shp_failed"]),
+                format="json",
+            )
+
+        self.assertResponseNoErrors(response)
+        self.assertDictEqual(
+            response.data, {"batch": "KPB-2026-00001", "status": "Queued"}
+        )
+        run_release.assert_called_once_with("KPB-2026-00001", ["shp_failed"])
+
+    def test_release_without_a_body_means_nothing_failed(self):
+        with patch(
+            "karrio.server.core.erp_gate.run_erp_print_batch_release"
+        ) as run_release:
+            run_release.return_value = {"batch": "KPB-2026-00001", "status": "Queued"}
+            response = self.client.post(
+                reverse(
+                    "karrio.server.manager:erp-print-batch-release",
+                    kwargs=dict(name="KPB-2026-00001"),
+                ),
+                format="json",
+            )
+
+        self.assertResponseNoErrors(response)
+        run_release.assert_called_once_with("KPB-2026-00001", [])
+
+    def test_retry_refusal_carries_the_erp_sentence(self):
+        from karrio.server.core.erp_gate import ERPRefusal
+
+        with patch(
+            "karrio.server.core.erp_gate.run_erp_print_batch_retry"
+        ) as run_retry:
+            run_retry.side_effect = ERPRefusal(
+                "Nothing to retry: every label of this batch printed.",
+                code="erp_action_refused",
+                status_code=409,
+            )
+            response = self.client.post(
+                reverse(
+                    "karrio.server.manager:erp-print-batch-retry",
+                    kwargs=dict(name="KPB-2026-00001"),
+                ),
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(
+            response.data["errors"][0]["message"],
+            "Nothing to retry: every label of this batch printed.",
+        )
+        run_retry.assert_called_once_with("KPB-2026-00001")

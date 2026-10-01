@@ -365,6 +365,74 @@ class ERPFeatures(APIView):
         return Response(run_erp_features_set(data.get("key"), data.get("enabled")))
 
 
+class ERPPrintBatches(APIView):
+    """Bamboi fork: open an ERP print batch for one Pick & Print row.
+
+    The ERP holds the labels of these shipments (instead of auto-printing
+    each on its purchase webhook) until the row is released, then prints
+    them as one merged job. The ERP's answer is returned verbatim; see
+    karrio.server.core.erp_gate for the transport and payload checks.
+    """
+
+    throttle_scope = "carrier_request"
+
+    @openapi.extend_schema(exclude=True)
+    def post(self, request: Request):
+        from karrio.server.core.erp_gate import (
+            run_erp_print_batch_open,
+            validate_print_batch_ids,
+        )
+
+        data = request.data if isinstance(request.data, dict) else {}
+        shipment_ids = validate_print_batch_ids(
+            data.get("shipment_ids"), "shipment_ids"
+        )
+        # The ERP knows nothing of Karrio's orgs: only the caller's own
+        # shipments may have their printing held.
+        accessible = set(
+            models.Shipment.access_by(request)
+            .filter(id__in=shipment_ids)
+            .values_list("id", flat=True)
+        )
+        if any(shipment_id not in accessible for shipment_id in shipment_ids):
+            raise models.Shipment.DoesNotExist()
+
+        return Response(run_erp_print_batch_open(shipment_ids))
+
+
+class ERPPrintBatchRelease(APIView):
+    """Bamboi fork: release a held print batch once its row is bought.
+
+    ``failed_ids`` names the shipments whose purchase failed, so the ERP
+    stops waiting for their labels. Idempotent — the dashboard retries it.
+    """
+
+    throttle_scope = "carrier_request"
+
+    @openapi.extend_schema(exclude=True)
+    def post(self, request: Request, name: str):
+        from karrio.server.core.erp_gate import run_erp_print_batch_release
+
+        data = request.data if isinstance(request.data, dict) else {}
+        return Response(run_erp_print_batch_release(name, data.get("failed_ids", [])))
+
+
+class ERPPrintBatchRetry(APIView):
+    """Bamboi fork: send a released print batch to the printer again.
+
+    The ERP's refusal (nothing to retry, previous job still alive) comes
+    back as a 409 carrying its own sentence for the operator.
+    """
+
+    throttle_scope = "carrier_request"
+
+    @openapi.extend_schema(exclude=True)
+    def post(self, request: Request, name: str):
+        from karrio.server.core.erp_gate import run_erp_print_batch_retry
+
+        return Response(run_erp_print_batch_retry(name))
+
+
 class ShipmentDocs(AccessMixin, VirtualDownloadView):
     @openapi.extend_schema(exclude=True)
     def get(
@@ -519,6 +587,27 @@ router.urls.append(
         "erp/features",
         ERPFeatures.as_view(),
         name="erp-features",
+    )
+)
+router.urls.append(
+    path(
+        "erp/print-batches",
+        ERPPrintBatches.as_view(),
+        name="erp-print-batches",
+    )
+)
+router.urls.append(
+    path(
+        "erp/print-batches/<str:name>/release",
+        ERPPrintBatchRelease.as_view(),
+        name="erp-print-batch-release",
+    )
+)
+router.urls.append(
+    path(
+        "erp/print-batches/<str:name>/retry",
+        ERPPrintBatchRetry.as_view(),
+        name="erp-print-batch-retry",
     )
 )
 router.urls.append(

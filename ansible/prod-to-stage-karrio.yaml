@@ -5,7 +5,27 @@
 #   ansible-playbook prod-to-stage-karrio.yaml -e staging_confirm=CONFIRM
 #
 # Dumps prod postgres, fetches it via the control machine, restores it into
-# the staging db container, then restarts the staging stack.
+# the staging db container, neutralizes everything in the dump that talks to
+# production (carrier credentials, webhooks), then restarts the staging stack.
+#
+# Carrier connections and webhooks are database rows, not env, so the dump
+# carries production's live ones. Started as-is, staging would rate (= upsert
+# a Monta order keyed by the Sales Order name, which staging and production
+# both use) against the live Monta account and post Karrio events into the
+# production ERP. The restore therefore:
+#   - wipes the credentials of every carrier connection and deactivates it;
+#   - re-arms the Monta connection with the Monta TEST environment when
+#     vault/env/staging.yaml defines monta_test_username and
+#     monta_test_password (optional monta_test_origin overrides the config
+#     origin); otherwise Monta stays inactive until someone enters them.
+#     test_mode is left as restored (false): Karrio only offers a connection
+#     to API tokens of the same mode and the staging ERP uses a live-mode
+#     token, while the Monta plugin ignores the flag (one API host). The
+#     credentials are what separates test from production;
+#   - disables every webhook that does not point at the staging ERP
+#     (erp_gate_url). Re-create the staging webhook afterwards and store its
+#     secret in the staging ERP (Karrio Shipping Settings -> Webhook Shared
+#     Secret).
 - name: Dump production database
   hosts: production
   become: true
@@ -72,6 +92,76 @@
           gunzip -c {{ dump_remote }}
           | docker exec -i {{ db_container }}
           psql -U {{ database_username }} -d {{ database_name }}
+
+    - name: Require the staging ERP URL to tell staging webhooks apart
+      ansible.builtin.assert:
+        that:
+          - (erp_gate_url | default('')) is match('^https://')
+        fail_msg: >-
+          erp_gate_url (vars/staging.yaml) is empty; it is needed to keep only
+          the webhooks that point at the staging ERP. The stack stays stopped.
+
+    # Runs before api/worker start, so no rating call or tracking pulse can
+    # reach a carrier with the production credentials in between.
+    - name: Neutralize production carrier connections and webhooks
+      ansible.builtin.command:
+        cmd: >-
+          docker exec -i {{ db_container }}
+          psql -v ON_ERROR_STOP=1 -U {{ database_username }} -d {{ database_name }}
+        stdin: |
+          BEGIN;
+          UPDATE "CarrierConnection" SET credentials = '{}'::jsonb, active = false;
+          UPDATE "SystemConnection" SET credentials = '{}'::jsonb, active = false;
+          UPDATE webhook SET disabled = true
+           WHERE url NOT LIKE '{{ erp_gate_url | regex_replace('/+$', '') }}/%';
+          COMMIT;
+
+    - name: Arm the Monta connection with the Monta test environment
+      when:
+        - (monta_test_username | default('')) | length > 0
+        - (monta_test_password | default('')) | length > 0
+      no_log: true
+      ansible.builtin.command:
+        cmd: >-
+          docker exec -i {{ db_container }}
+          psql -v ON_ERROR_STOP=1 -U {{ database_username }} -d {{ database_name }}
+        stdin: |
+          UPDATE "CarrierConnection"
+             SET credentials = jsonb_build_object(
+                   'username', '{{ monta_test_username | replace("'", "''") }}',
+                   'password', '{{ monta_test_password | replace("'", "''") }}',
+                   'account_country_code', 'NL'),
+                 config = config
+                   {% if monta_test_origin | default('') | length > 0 %}|| jsonb_build_object('origin', '{{ monta_test_origin | replace("'", "''") }}'){% endif %},
+                 active = true
+           WHERE carrier_code = 'monta';
+
+    - name: Say that Monta stays inactive without test credentials
+      when: >-
+        (monta_test_username | default('')) | length == 0
+        or (monta_test_password | default('')) | length == 0
+      ansible.builtin.debug:
+        msg: >-
+          monta_test_username / monta_test_password are not in
+          vault/env/staging.yaml: the Monta connection stays inactive with no
+          credentials. Enter the Monta TEST credentials in the staging
+          dashboard (Connections -> Monta) and activate it before rating.
+
+    - name: Show carrier connections and webhooks after neutralizing
+      ansible.builtin.command:
+        cmd: >-
+          docker exec {{ db_container }}
+          psql -At -U {{ database_username }} -d {{ database_name }} -c
+          "SELECT 'connection', carrier_id, carrier_code, active, test_mode, credentials <> '{}'::jsonb FROM \"CarrierConnection\"
+           UNION ALL
+           SELECT 'webhook', id, url, NOT coalesce(disabled, false), test_mode, NULL FROM webhook
+           ORDER BY 1, 2"
+      register: neutralized
+      changed_when: false
+
+    - name: Report carrier connections and webhooks (kind|id|code-or-url|active|test_mode|has_credentials)
+      ansible.builtin.debug:
+        var: neutralized.stdout_lines
 
     - name: Start api/worker/dashboard
       ansible.builtin.command: docker start karrio-api-1 karrio-worker-1 karrio-dashboard-1

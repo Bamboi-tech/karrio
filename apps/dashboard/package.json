@@ -16,12 +16,12 @@
     "@karrio/lib": "*",
     "@karrio/types": "*",
     "@karrio/ui": "*",
-    "axios": "1.13.2",
+    "axios": "1.20.0",
     "mime-types": "^2.1.35",
     "next-runtime-env": "^3.2.2"
   },
   "devDependencies": {
-    "@next/bundle-analyzer": "16.1.7",
+    "@next/bundle-analyzer": "16.3.8",
     "@types/mime-types": "^3.0.1",
     "copy-webpack-plugin": "^11.0.0",
     "eslint": "7.32.0",

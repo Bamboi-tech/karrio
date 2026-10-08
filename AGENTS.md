@@ -1,5 +1,7 @@
 # Repository Guidelines
 
+> **Bamboi-fork:** lees eerst [`BAMBOI.md`](./BAMBOI.md): productiebranch, release en deploy, en testen voor deze fork. Bij botsing gaat `BAMBOI.md` voor.
+
 > **For AI Agents**: This is the single source of truth for coding preferences and project context.
 > Agent-specific files (CLAUDE.md, GEMINI.md, CODEX.md) reference this document.
 

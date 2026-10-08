@@ -1,5 +1,7 @@
 # Claude Code Instructions
 
+@BAMBOI.md
+
 ## Architecture
 
 Karrio is a **universal shipping API** monorepo:

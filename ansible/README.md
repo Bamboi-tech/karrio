@@ -123,7 +123,15 @@ A nightly GitHub Action (**Backup Karrio**) runs this for production.
 ansible-playbook prod-to-stage-karrio.yaml -e staging_confirm=CONFIRM
 ```
 
-Replaces the staging database with a fresh production dump (carrier connections, orders, shipments). Secrets/env stay per-environment.
+Replaces the staging database with a fresh production dump (carrier connections, orders, shipments). Env secrets stay per-environment, but carrier credentials and webhooks are database rows and arrive from production. Before the stack starts again the playbook therefore wipes every carrier connection's credentials and deactivates it, and disables every webhook that does not point at `erp_gate_url` (the staging ERP). The Monta connection comes back active on the Monta test environment only when `vault/env/staging.yaml` holds:
+
+| Key                            | Value                                                              |
+| ------------------------------ | ------------------------------------------------------------------ |
+| `monta_test_username`          | Monta API user of the test environment                             |
+| `monta_test_password`          | its password                                                       |
+| `monta_test_origin` (optional) | origin code of the test webshop, when it differs from production's |
+
+Without them Monta stays inactive until someone enters the test credentials in the staging dashboard. `test_mode` stays as restored (off): Karrio only offers a connection to API tokens of the same mode, the staging ERP's token is a live-mode one, and the Monta plugin ignores the flag (one API host), so the credentials alone separate test from production. The last task prints every connection and webhook (active, test mode, credentials present) for the run log. Afterwards re-create the staging webhook to `https://stage-erp.bamboi.eu/api/method/karrio_shipping.api.webhooks.karrio_event` and store its secret in the staging ERP (Karrio Shipping Settings, Webhook Shared Secret).
 
 ## Docker image prune
 

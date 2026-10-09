@@ -77,6 +77,15 @@
     - name: Load env vault
       ansible.builtin.include_vars: "vault/env/staging.yaml"
   tasks:
+    - name: Require the staging ERP URL to tell staging webhooks apart
+      ansible.builtin.assert:
+        that:
+          - (erp_gate_url | default('')) is match('^https://')
+        fail_msg: >-
+          erp_gate_url (vars/staging.yaml) is empty; it is needed to keep only
+          the webhooks that point at the staging ERP. Nothing on staging has
+          been touched.
+
     - name: Copy dump to staging VM
       ansible.builtin.copy:
         src: "{{ dump_local }}"
@@ -92,14 +101,6 @@
           gunzip -c {{ dump_remote }}
           | docker exec -i {{ db_container }}
           psql -U {{ database_username }} -d {{ database_name }}
-
-    - name: Require the staging ERP URL to tell staging webhooks apart
-      ansible.builtin.assert:
-        that:
-          - (erp_gate_url | default('')) is match('^https://')
-        fail_msg: >-
-          erp_gate_url (vars/staging.yaml) is empty; it is needed to keep only
-          the webhooks that point at the staging ERP. The stack stays stopped.
 
     # Runs before api/worker start, so no rating call or tracking pulse can
     # reach a carrier with the production credentials in between.
@@ -131,7 +132,7 @@
                    'username', '{{ monta_test_username | replace("'", "''") }}',
                    'password', '{{ monta_test_password | replace("'", "''") }}',
                    'account_country_code', 'NL'),
-                 config = config
+                 config = coalesce(config, '{}'::jsonb)
                    {% if monta_test_origin | default('') | length > 0 %}|| jsonb_build_object('origin', '{{ monta_test_origin | replace("'", "''") }}'){% endif %},
                  active = true
            WHERE carrier_code = 'monta';

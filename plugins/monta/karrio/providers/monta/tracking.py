@@ -89,6 +89,15 @@ DECISIVE_EVENT_STATUSES = frozenset(
     ]
 )
 
+#: Collo verdicts that a delivery on the order feed does not override: the
+#: carrier saying the parcel failed, went back, was stopped or cancelled.
+#: Nothing tells which of the two is newer, and a delivered tracker is never
+#: polled again, so a wrong "delivered" here would stick. The collo keeps its
+#: own verdict until the carrier changes it.
+FEED_DELIVERY_YIELDS_TO = frozenset(
+    ["delivery_failed", "return_to_sender", "cancelled", "on_hold"]
+)
+
 #: How far a box is on its way to the door. Boxes of one shipment in different
 #: statuses put the shipment where its least advanced box is; a pre-announced
 #: box (pending) next to one the carrier already has counts as on its way.
@@ -248,20 +257,13 @@ def _moment(value: typing.Optional[str]) -> dict:
 def _overall_status(order_events: list, colli: list) -> str:
     """Carrier-level collo statuses lead; order events are the fallback, and
     only a decisive one counts — warehouse steps leave the tracker pending.
-    A collo the order feed reports delivered is delivered (_delivered_on_feed)."""
+    A collo the order feed reports delivered is delivered (_delivered_on_feed),
+    unless the collo itself says it failed or went back (FEED_DELIVERY_YIELDS_TO)."""
     delivered = _delivered_on_feed(order_events, colli)
     collo_statuses = [
-        (
-            "delivered"
-            if item.TrackAndTraceCode in delivered
-            else provider_units.to_tracking_status(
-                item.DeliveryStatusCode, item.DeliveryStatusDescription
-            )
-        )
-        for item in colli
-        if item.TrackAndTraceCode in delivered
-        or item.DeliveryStatusCode
-        or item.DeliveryStatusDescription
+        status
+        for status in (_collo_status(item, delivered) for item in colli)
+        if status is not None
     ]
     known = [status for status in collo_statuses if status != "unknown"]
 
@@ -284,6 +286,22 @@ def _overall_status(order_events: list, colli: list) -> str:
 
     status = provider_units.to_tracking_status(latest.TypeCode, latest.Description)
     return status if status in DECISIVE_EVENT_STATUSES else "pending"
+
+
+def _collo_status(item, delivered: typing.Set[str]) -> typing.Optional[str]:
+    """A collo's own status, or delivered when the order feed says so and the
+    collo does not contradict it. None for a collo without any status."""
+    own = (
+        provider_units.to_tracking_status(
+            item.DeliveryStatusCode, item.DeliveryStatusDescription
+        )
+        if item.DeliveryStatusCode or item.DeliveryStatusDescription
+        else None
+    )
+    if item.TrackAndTraceCode in delivered and own not in FEED_DELIVERY_YIELDS_TO:
+        return "delivered"
+
+    return own
 
 
 def _newest_first(order_events: list) -> list:

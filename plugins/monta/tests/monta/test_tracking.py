@@ -581,6 +581,24 @@ class TestMontaOrderFeedDelivery(unittest.TestCase):
 
                 self.assertEqual(details, "in_transit")
 
+    def test_a_feed_delivery_does_not_override_a_failed_or_returned_collo(self):
+        # The feed's delivery may be the older news here, and a delivered
+        # tracker is never polled again: the collo's own verdict stands.
+        feed = [("Delivered", "status update from PostNL (3SXXXX000000001): Bezorgd")]
+        for code, expected in [
+            ("Returned", "return_to_sender"),
+            ("DeliveryFailed", "delivery_failed"),
+            ("Blocked", "on_hold"),
+            ("Cancelled", "cancelled"),
+            ("AvailablePickup", "delivered"),
+            ("EnRoute", "delivered"),
+        ]:
+            with self.subTest(code=code):
+                self.assertEqual(
+                    self._status(feed=feed, colli=[("3SXXXX000000001", code)]),
+                    expected,
+                )
+
     def test_a_tracking_number_matches_only_as_a_whole_word(self):
         feed = [("Delivered", "status update from DPD (05212000000001): Delivered")]
         for number in ["052120000000011", "0521200000000"]:

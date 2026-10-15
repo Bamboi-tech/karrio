@@ -841,7 +841,9 @@ def process_events(
     def parse_time(event: dict) -> typing.Optional[datetime.time]:
         """Parse time from event using multiple format attempts."""
         time_str = event.get("time", "")
-        time_formats = ["%I:%M %p", "%H:%M:%S", "%H:%M", "%I:%M"]
+        # "%H:%M %p" is lib.flocaltime's default output ("23:47 PM", "00:09 AM");
+        # %I cannot read those hours, and an unread time sorted as midnight.
+        time_formats = ["%I:%M %p", "%H:%M %p", "%H:%M:%S", "%H:%M", "%I:%M"]
         parsed = (
             functools.reduce(
                 lambda acc, fmt: acc or try_parse_datetime(time_str, fmt),

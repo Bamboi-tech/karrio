@@ -17,6 +17,17 @@ in_transit that emptied the Picked board half an hour after Pick & Print while
 the boxes still sat on the floor (2026-09-22/23). Karrio keeps a shipment's
 status on a pending tracker, so it only moves on a real carrier scan.
 
+One exception to "colli lead": Monta does not always carry a parcel's last
+carrier status onto its collo. A PostNL parcel collected at the pickup point
+stays AvailablePickup on GET /colli while the order feed (and the order's own
+DeliveryStatusCode) say Collected — SO-Shopify-07416/07511/07559 sat on Out for
+Delivery for days after the customer picked them up (2026-10-15). The feed
+names the parcel each carrier update is about by its T&T code, so a collo
+whose latest feed update is a delivery counts as delivered
+(_delivered_on_feed). Only a delivery: it is final for that parcel, while
+every other feed verdict may already be stale against the collo (GLS's
+Delivered reached the collo 14 hours before the feed on SO-Shopify-06857).
+
 Timestamps: Monta writes wall-clock time in Europe/Amsterdam without an
 offset — ISO-ish on the order/events feed (`2026-09-10T15:41:14.147`) and
 Dutch day-first on the collo summary (`11-9-2026 16:22:39`, no zero padding).
@@ -32,6 +43,7 @@ batches, every Monta tracker frozen for a day).
 import karrio.schemas.monta.order_event_response as monta
 import karrio.schemas.monta.collo_response as collo_schema
 
+import re
 import typing
 import datetime
 import zoneinfo
@@ -76,6 +88,19 @@ DECISIVE_EVENT_STATUSES = frozenset(
         "on_hold",
     ]
 )
+
+#: How far a box is on its way to the door. Boxes of one shipment in different
+#: statuses put the shipment where its least advanced box is; a pre-announced
+#: box (pending) next to one the carrier already has counts as on its way.
+#: A status off this path (a failed delivery, a return, a hold) in the mix
+#: leaves the shipment in transit.
+DELIVERY_STAGES = {
+    "pending": 0,
+    "in_transit": 0,
+    "out_for_delivery": 1,
+    "ready_for_pickup": 1,
+    "delivered": 2,
+}
 
 
 def parse_tracking_response(
@@ -222,13 +247,21 @@ def _moment(value: typing.Optional[str]) -> dict:
 
 def _overall_status(order_events: list, colli: list) -> str:
     """Carrier-level collo statuses lead; order events are the fallback, and
-    only a decisive one counts — warehouse steps leave the tracker pending."""
+    only a decisive one counts — warehouse steps leave the tracker pending.
+    A collo the order feed reports delivered is delivered (_delivered_on_feed)."""
+    delivered = _delivered_on_feed(order_events, colli)
     collo_statuses = [
-        provider_units.to_tracking_status(
-            item.DeliveryStatusCode, item.DeliveryStatusDescription
+        (
+            "delivered"
+            if item.TrackAndTraceCode in delivered
+            else provider_units.to_tracking_status(
+                item.DeliveryStatusCode, item.DeliveryStatusDescription
+            )
         )
         for item in colli
-        if item.DeliveryStatusCode or item.DeliveryStatusDescription
+        if item.TrackAndTraceCode in delivered
+        or item.DeliveryStatusCode
+        or item.DeliveryStatusDescription
     ]
     known = [status for status in collo_statuses if status != "unknown"]
 
@@ -238,11 +271,11 @@ def _overall_status(order_events: list, colli: list) -> str:
     # soon as one of them is past pending.
     if any(status != "pending" for status in known):
         # the least advanced collo dictates the shipment status so a partially
-        # delivered multi-box shipment stays "in_transit" until all boxes land
+        # delivered multi-box shipment is not delivered until all boxes land
         for name in [status.name for status in list(provider_units.TrackingStatus)]:
             if all(status == name for status in known):
                 return name
-        return "in_transit"
+        return _least_advanced(known)
 
     latest = next(
         iter(
@@ -260,6 +293,53 @@ def _overall_status(order_events: list, colli: list) -> str:
 
     status = provider_units.to_tracking_status(latest.TypeCode, latest.Description)
     return status if status in DECISIVE_EVENT_STATUSES else "pending"
+
+
+def _delivered_on_feed(order_events: list, colli: list) -> typing.Set[str]:
+    """The T&T codes of the colli whose latest order-feed update is a delivery.
+
+    A carrier update on the feed names its parcel ("status update from PostNL
+    (3S…): …"); the code is matched as a whole word, never as part of another.
+    """
+    feed = sorted(
+        order_events,
+        key=lambda event: str(event.Occured or event.Created or ""),
+        reverse=True,
+    )
+    latest_update = {
+        number: next(
+            (
+                event
+                for event in feed
+                if number in re.findall(r"[A-Za-z0-9]+", event.Description or "")
+            ),
+            None,
+        )
+        for number in {
+            item.TrackAndTraceCode for item in colli if item.TrackAndTraceCode
+        }
+    }
+
+    return {
+        number
+        for number, event in latest_update.items()
+        if event is not None
+        and provider_units.to_tracking_status(event.TypeCode, event.Description)
+        == "delivered"
+    }
+
+
+def _least_advanced(statuses: typing.List[str]) -> str:
+    """Where a shipment whose boxes differ in status is (DELIVERY_STAGES)."""
+    if any(status not in DELIVERY_STAGES for status in statuses):
+        return "in_transit"
+
+    stage = min(DELIVERY_STAGES[status] for status in statuses)
+    candidates = {status for status in statuses if DELIVERY_STAGES[status] == stage}
+
+    return (
+        next(iter(candidates)) if stage > 0 and len(candidates) == 1 else "in_transit"
+    )
 
 
 def tracking_request(

@@ -479,6 +479,193 @@ class TestMontaWarehouseEventsStayPending(unittest.TestCase):
             self.assertEqual(self._status_after(event), "pending", event)
 
 
+class TestMontaOrderFeedDelivery(unittest.TestCase):
+    """Monta does not always carry a parcel's last carrier status onto its
+    collo. PostNL pickup-point parcels stop at AvailablePickup on GET /colli
+    while the order feed (and the order's own DeliveryStatusCode) say
+    Collected: SO-Shopify-07416, 07511 and 07559 sat on Out for Delivery for
+    days after the customer had picked them up (2026-10-15). The order feed
+    names the parcel it speaks for by its T&T code, so its delivered verdict
+    counts for that collo, and only for that one."""
+
+    def setUp(self):
+        self.maxDiff = None
+        self.TrackingRequest = models.TrackingRequest(**TrackingPayload)
+
+    def _track(self, events: str, colli: str) -> dict:
+        with patch("karrio.mappers.monta.proxy.lib.request") as mock:
+            mock.side_effect = lambda **kwargs: (
+                events if kwargs["url"].endswith("/events") else colli
+            )
+            details, messages = lib.to_dict(
+                karrio.Tracking.fetch(self.TrackingRequest).from_(gateway).parse()
+            )
+
+        self.assertEqual(messages, [])
+        return details[0]
+
+    def test_collection_on_the_order_feed_delivers_the_parcel(self):
+        details = self._track(PostNLCollectedEventsResponse, PostNLPickupColliResponse)
+
+        self.assertEqual(details["status"], "delivered")
+        self.assertTrue(details["delivered"])
+        latest = details["events"][0]
+        self.assertEqual((latest["code"], latest["status"]), ("Collected", "delivered"))
+
+    def test_a_box_the_feed_does_not_name_keeps_its_own_status(self):
+        # SO-Shopify-07215: two PostNL boxes at the pickup point, the feed
+        # reports the collection of the first one only. Nothing says the
+        # second has been picked up, so the shipment is not delivered; it
+        # stays where its least advanced box is, not back in transit.
+        details = self._track(
+            PostNLCollectedEventsResponse, PostNLTwoBoxPickupColliResponse
+        )
+
+        self.assertEqual(details["status"], "ready_for_pickup")
+        self.assertFalse(details["delivered"])
+
+    def test_a_box_still_en_route_keeps_the_shipment_in_transit(self):
+        # SO-Shopify-07472: DPD delivered the first box, the second is still
+        # sorted, the feed only speaks for the first one.
+        details = self._track(
+            DpdFirstBoxDeliveredEventsResponse, DpdFirstBoxDeliveredColliResponse
+        )
+
+        self.assertEqual(details["status"], "in_transit")
+        self.assertFalse(details["delivered"])
+
+    def test_a_collo_ahead_of_the_order_feed_still_leads(self):
+        # SO-Shopify-06857: GLS's delivery reached the collo 14 hours before
+        # the order feed. The feed only ever adds a delivery, it never holds
+        # one back.
+        details = self._track(GlsEnRouteEventsResponse, GlsDeliveredColliResponse)
+
+        self.assertEqual(details["status"], "delivered")
+        self.assertTrue(details["delivered"])
+
+    def test_only_the_latest_feed_event_of_a_parcel_counts(self):
+        events = lib.to_json(
+            [
+                *lib.to_dict(PostNLCollectedEventsResponse),
+                dict(
+                    Id=6,
+                    WebshopOrderId="SAL-ORD-2026-00001",
+                    TypeCode="Returned",
+                    Description="Delivery status changed to Returned: status update from PostNL (3SXXXX000000001): Retour afzender",
+                    Occured="2026-10-14T09:00:00.0",
+                    Created="2026-10-14T09:00:00.0",
+                ),
+            ]
+        )
+
+        details = self._track(events, PostNLPickupColliResponse)
+
+        self.assertEqual(details["status"], "ready_for_pickup")
+        self.assertFalse(details["delivered"])
+
+    def test_free_text_never_delivers_a_parcel(self):
+        # Only the feed's TypeCode may say delivered: "niet afgeleverd"
+        # normalizes to NIETAFGELEVERD, which holds AFGELEVERD.
+        for code in [None, "CarrierUpdate"]:
+            with self.subTest(code=code):
+                details = self._status(
+                    feed=[
+                        (
+                            code,
+                            "Delivery status changed: status update from DPD "
+                            "(05212000000001): Pakket niet afgeleverd",
+                        )
+                    ],
+                    colli=[("05212000000001", "EnRoute")],
+                )
+
+                self.assertEqual(details, "in_transit")
+
+    def test_a_feed_delivery_does_not_override_a_failed_or_returned_collo(self):
+        # The feed's delivery may be the older news here, and a delivered
+        # tracker is never polled again: the collo's own verdict stands.
+        feed = [("Delivered", "status update from PostNL (3SXXXX000000001): Bezorgd")]
+        for code, expected in [
+            ("Returned", "return_to_sender"),
+            ("DeliveryFailed", "delivery_failed"),
+            ("Blocked", "on_hold"),
+            ("Cancelled", "cancelled"),
+            ("AvailablePickup", "delivered"),
+            ("EnRoute", "delivered"),
+        ]:
+            with self.subTest(code=code):
+                self.assertEqual(
+                    self._status(feed=feed, colli=[("3SXXXX000000001", code)]),
+                    expected,
+                )
+
+    def test_a_tracking_number_matches_only_as_a_whole_word(self):
+        feed = [("Delivered", "status update from DPD (05212000000001): Delivered")]
+        for number in ["052120000000011", "0521200000000"]:
+            with self.subTest(number=number):
+                self.assertEqual(
+                    self._status(feed=feed, colli=[(number, "EnRoute")]), "in_transit"
+                )
+
+    def test_boxes_in_different_statuses(self):
+        for codes, expected in [
+            (("OutForDelivery", "Delivered"), "out_for_delivery"),
+            (("AvailablePickup", "Delivered"), "ready_for_pickup"),
+            (("DeliveryFailed", "Delivered"), "in_transit"),
+            (("AvailablePickup", "OutForDelivery"), "in_transit"),
+            (("NotYetEnRoute", "Delivered"), "in_transit"),
+        ]:
+            with self.subTest(codes=codes):
+                colli = [
+                    (f"0521200000000{number}", code)
+                    for number, code in enumerate(codes, start=1)
+                ]
+                self.assertEqual(self._status(feed=[], colli=colli), expected)
+
+    def test_a_box_without_a_status_counts_once_the_feed_delivers_it(self):
+        # SO-Shopify-07267 (DPD): the collo carries a T&T code and nothing
+        # else. Next to a box that is only pre-announced it must not hand the
+        # decision to the feed, which would call the whole order delivered.
+        feed = [("Delivered", "status update from DPD (05212000000001): Delivered")]
+        for colli, expected in [
+            ([("05212000000001", None)], "delivered"),
+            (
+                [("05212000000001", None), ("05212000000002", "NotYetEnRoute")],
+                "in_transit",
+            ),
+        ]:
+            with self.subTest(colli=colli):
+                self.assertEqual(self._status(feed=feed, colli=colli), expected)
+
+    def _status(self, feed: list, colli: list) -> str:
+        """The overall status for feed events (TypeCode, Description), newest
+        first, and colli (T&T code, DeliveryStatusCode) in the POST shape."""
+        events = lib.to_json(
+            [
+                dict(
+                    Id=len(feed) - index,
+                    WebshopOrderId="SAL-ORD-2026-00001",
+                    TypeCode=code,
+                    Description=description,
+                    Occured=f"2026-10-1{5 - index}T10:00:00",
+                )
+                for index, (code, description) in enumerate(feed)
+            ]
+        )
+        boxes = lib.to_json(
+            [
+                dict(
+                    Number=number,
+                    TrackAndTraceCode=tracking_number,
+                    DeliveryStatusCode=code,
+                    DeliveryStatusUpdated="14-10-2026 22:00:00" if code else None,
+                )
+                for number, (tracking_number, code) in enumerate(colli, start=1)
+            ]
+        )
+        return self._track(events, boxes)["status"]
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -746,6 +933,144 @@ GlsPreAnnouncedColliResponse = """{
             "DeliveryStatusDescription": "Voorgemeld bij verzender, nog niet in distributie",
             "DeliveryStatusCode": "NotYetEnRoute",
             "DeliveryStatusUpdatedAt": "10-9-2026 13:25:56"}}
+    ]
+}
+"""
+
+# Recorded from SO-Shopify-07559 (PostNL, pickup point; read-only Monta GET
+# /events and /colli, 2026-10-15). Codes, texts and times are verbatim; the
+# T&T code and postcode are replaced. The collo never got past AvailablePickup.
+PostNLCollectedEventsResponse = """[
+    {"Id": 5, "WebshopOrderId": "SAL-ORD-2026-00001", "TypeCode": "Collected",
+     "Description": "Delivery status changed to Collected from pickup location: status update from PostNL (3SXXXX000000001): Zending is afgehaald bij PostNL-punt (I02)",
+     "Occured": "2026-10-13T17:53:08.033", "Created": "2026-10-13T17:53:08.033"},
+    {"Id": 4, "WebshopOrderId": "SAL-ORD-2026-00001", "TypeCode": "AvailablePickup",
+     "Description": "Delivery status changed to Available on pickup location: status update from PostNL (3SXXXX000000001): Pakket ligt klaar bij PostNL-punt (J12)",
+     "Occured": "2026-10-13T15:40:36.61", "Created": "2026-10-13T15:40:36.61"},
+    {"Id": 3, "WebshopOrderId": "SAL-ORD-2026-00001", "TypeCode": "EnRoute",
+     "Description": "Delivery status changed to En route: status update from PostNL (3SXXXX000000001): Pakket is ontvangen door PostNL (B01)",
+     "Occured": "2026-10-13T00:10:00.563", "Created": "2026-10-13T00:10:00.563"},
+    {"Id": 2, "WebshopOrderId": "SAL-ORD-2026-00001", "TypeCode": "Shipped",
+     "Description": "Shipped (ready for shipper pickup): 'Shipping labels gemaakt via de REST api'.",
+     "Occured": "2026-10-12T17:29:08.913", "Created": "2026-10-12T17:29:08.913"},
+    {"Id": 1, "WebshopOrderId": "SAL-ORD-2026-00001", "TypeCode": "Packing",
+     "Description": "Set to picked: ''Picked' automatically set when order is marked as shipped'.",
+     "Occured": "2026-10-12T17:29:08.907", "Created": "2026-10-12T17:29:08.907"}
+]
+"""
+
+PostNLPickupColliResponse = """{
+    "TotalWeightInKg": 0, "PalletsShipped": 0, "BoxesShipped": 1,
+    "ShippedPallets": {}, "ShippedBoxesOnPallets": [],
+    "ShippedBoxesNotOnPallets": [
+        {"DistinctProducts": 0, "TotalProducts": 0, "ShippedCarrierInfo": {
+            "TTColloNr": 1, "PackageDescription": "Eigen verpakking product",
+            "WeightInGrams": 3, "LengthInMM": 400, "WidthInMM": 300, "HeightInMM": 200,
+            "TTCode": "3SXXXX000000001",
+            "TTLink": "https://postnl.nl/tracktrace/?L=NL&B=3SXXXX000000001&P=1234AB&D=NL&T=C",
+            "DeliveryStatusDescription": "Afgeleverd (ligt klaar) op servicepunt/postkantoor",
+            "DeliveryStatusCode": "AvailablePickup",
+            "DeliveryStatusUpdatedAt": "13-10-2026 14:33:09"}}
+    ]
+}
+"""
+
+# The shape of SO-Shopify-07215 (PostNL, two boxes at the same pickup point):
+# the order feed reports the collection of the first box only.
+PostNLTwoBoxPickupColliResponse = """{
+    "TotalWeightInKg": 0, "PalletsShipped": 0, "BoxesShipped": 2,
+    "ShippedPallets": {}, "ShippedBoxesOnPallets": [],
+    "ShippedBoxesNotOnPallets": [
+        {"DistinctProducts": 0, "TotalProducts": 0, "ShippedCarrierInfo": {
+            "TTColloNr": 1, "PackageDescription": "Eigen verpakking product",
+            "WeightInGrams": 3, "LengthInMM": 400, "WidthInMM": 300, "HeightInMM": 200,
+            "TTCode": "3SXXXX000000001",
+            "TTLink": "https://postnl.nl/tracktrace/?L=NL&B=3SXXXX000000001&P=1234AB&D=NL&T=C",
+            "DeliveryStatusDescription": "Afgeleverd (ligt klaar) op servicepunt/postkantoor",
+            "DeliveryStatusCode": "AvailablePickup",
+            "DeliveryStatusUpdatedAt": "13-10-2026 14:33:09"}},
+        {"DistinctProducts": 0, "TotalProducts": 0, "ShippedCarrierInfo": {
+            "TTColloNr": 2, "PackageDescription": "Eigen verpakking product",
+            "WeightInGrams": 3, "LengthInMM": 400, "WidthInMM": 300, "HeightInMM": 200,
+            "TTCode": "3SXXXX000000002",
+            "TTLink": "https://postnl.nl/tracktrace/?L=NL&B=3SXXXX000000002&P=1234AB&D=NL&T=C",
+            "DeliveryStatusDescription": "Afgeleverd (ligt klaar) op servicepunt/postkantoor",
+            "DeliveryStatusCode": "AvailablePickup",
+            "DeliveryStatusUpdatedAt": "13-10-2026 14:33:09"}}
+    ]
+}
+"""
+
+# Recorded from SO-Shopify-07472 (DPD, two boxes; 2026-10-15). Verbatim but
+# for the T&T codes and postcode: the first box is delivered, the second
+# still reads its sorting-centre scan of 10-10.
+DpdFirstBoxDeliveredEventsResponse = """[
+    {"Id": 4, "WebshopOrderId": "SAL-ORD-2026-00001", "TypeCode": "Delivered",
+     "Description": "Delivery status changed to Delivered: status update from DPD (05212000000001): Your parcel has been delivered successfully (DELIVERED)",
+     "Occured": "2026-10-12T14:59:03.287", "Created": "2026-10-12T14:59:03.287"},
+    {"Id": 3, "WebshopOrderId": "SAL-ORD-2026-00001", "TypeCode": "EnRoute",
+     "Description": "Delivery status changed to En route: status update from DPD (05212000000001): In transit (BetweenDepots)",
+     "Occured": "2026-10-10T01:02:35.273", "Created": "2026-10-10T01:02:35.273"},
+    {"Id": 2, "WebshopOrderId": "SAL-ORD-2026-00001", "TypeCode": "Shipped",
+     "Description": "Shipped (ready for shipper pickup): 'Shipping labels gemaakt via de REST api'.",
+     "Occured": "2026-10-09T18:28:22.483", "Created": "2026-10-09T18:28:22.483"},
+    {"Id": 1, "WebshopOrderId": "SAL-ORD-2026-00001", "TypeCode": "Packing",
+     "Description": "Set to picked: ''Picked' automatically set when order is marked as shipped'.",
+     "Occured": "2026-10-09T18:28:22.457", "Created": "2026-10-09T18:28:22.457"}
+]
+"""
+
+DpdFirstBoxDeliveredColliResponse = """{
+    "TotalWeightInKg": 0, "PalletsShipped": 0, "BoxesShipped": 2,
+    "ShippedPallets": {}, "ShippedBoxesOnPallets": [],
+    "ShippedBoxesNotOnPallets": [
+        {"DistinctProducts": 0, "TotalProducts": 0, "ShippedCarrierInfo": {
+            "TTColloNr": 1, "PackageDescription": "Eigen verpakking product",
+            "WeightInGrams": 3, "LengthInMM": 400, "WidthInMM": 300, "HeightInMM": 200,
+            "TTCode": "05212000000001",
+            "TTLink": "https://www.dpdgroup.com/nl/mydpd/my-parcels/search?lang=nl&parcelNumber=05212000000001",
+            "DeliveryStatusDescription": "Afgeleverd op huisadres",
+            "DeliveryStatusCode": "Delivered",
+            "DeliveryStatusUpdatedAt": "12-10-2026 14:08:24"}},
+        {"DistinctProducts": 0, "TotalProducts": 0, "ShippedCarrierInfo": {
+            "TTColloNr": 2, "PackageDescription": "Eigen verpakking product",
+            "WeightInGrams": 3, "LengthInMM": 400, "WidthInMM": 300, "HeightInMM": 200,
+            "TTCode": "05212000000002",
+            "TTLink": "https://www.dpdgroup.com/nl/mydpd/my-parcels/search?lang=nl&parcelNumber=05212000000002",
+            "DeliveryStatusDescription": "In distributie (gesorteerd in sorteercentrum) / onderweg",
+            "DeliveryStatusCode": "EnRoute",
+            "DeliveryStatusUpdatedAt": "10-10-2026 00:57:53"}}
+    ]
+}
+"""
+
+# Rebuilt from SO-Shopify-06857 (GLS; 2026-10-15): the collo read Delivered on
+# 30-09, the order feed only followed on 01-10. This is the feed before then.
+GlsEnRouteEventsResponse = """[
+    {"Id": 3, "WebshopOrderId": "SAL-ORD-2026-00001", "TypeCode": "EnRoute",
+     "Description": "Delivery status changed to En route: status update from GLS (00XX0001): The parcel has left the parcel center. (1)",
+     "Occured": "2026-09-28T22:05:21.767", "Created": "2026-09-28T22:05:21.767"},
+    {"Id": 2, "WebshopOrderId": "SAL-ORD-2026-00001", "TypeCode": "Shipped",
+     "Description": "Shipped (ready for shipper pickup): 'Shipping labels gemaakt via de REST api'.",
+     "Occured": "2026-09-25T18:25:06.697", "Created": "2026-09-25T18:25:06.697"},
+    {"Id": 1, "WebshopOrderId": "SAL-ORD-2026-00001", "TypeCode": "Packing",
+     "Description": "Set to picked: ''Picked' automatically set when order is marked as shipped'.",
+     "Occured": "2026-09-25T18:25:06.687", "Created": "2026-09-25T18:25:06.687"}
+]
+"""
+
+GlsDeliveredColliResponse = """{
+    "TotalWeightInKg": 0, "PalletsShipped": 0, "BoxesShipped": 1,
+    "ShippedPallets": {}, "ShippedBoxesOnPallets": [],
+    "ShippedBoxesNotOnPallets": [
+        {"DistinctProducts": 0, "TotalProducts": 0, "ShippedCarrierInfo": {
+            "TTColloNr": 1, "PackageDescription": "Eigen verpakking product",
+            "WeightInGrams": 3, "LengthInMM": 400, "WidthInMM": 300, "HeightInMM": 200,
+            "TTCode": "00XX0001",
+            "TTLink": "https://www.gls-info.nl/Tracking?parcelNo=00XX0001&zipcode=1234AB&lang=EN",
+            "DeliveryStatusDescription": "Afgeleverd op huisadres",
+            "DeliveryStatusCode": "Delivered",
+            "DeliveryStatusUpdatedAt": "30-9-2026 15:59:09"}}
     ]
 }
 """

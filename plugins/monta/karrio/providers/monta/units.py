@@ -192,6 +192,17 @@ def is_warehouse_event(code: str) -> bool:
     return bool(code) and _normalize(code) in WAREHOUSE_EVENT_CODES
 
 
+# The order-event TypeCodes that say a parcel reached the customer: at the
+# door, or collected at the pickup point. The free text never counts here —
+# "niet afgeleverd" normalizes to NIETAFGELEVERD, which holds AFGELEVERD.
+DELIVERED_EVENT_CODES = frozenset(["DELIVERED", "COLLECTED"])
+
+
+def is_delivered_event(code: str) -> bool:
+    """Whether a Monta order event TypeCode says the parcel was delivered."""
+    return bool(code) and _normalize(code) in DELIVERED_EVENT_CODES
+
+
 def to_tracking_status(*codes: str) -> str:
     """Resolve the first matching normalized Karrio status for the given
     Monta event/delivery status codes or descriptions.

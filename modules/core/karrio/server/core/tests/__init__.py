@@ -56,6 +56,9 @@ from karrio.server.core.tests.test_sentry_shipment_context import (
 from karrio.server.core.tests.test_shipment_documents import (
     TestShipmentDocumentsAccessor,
 )
+from karrio.server.core.tests.test_tracking_events import (
+    TestTrackingEventsMerge,
+)
 
 # Import our custom APITestCase (must be last to avoid being overridden)
 from karrio.server.core.tests.base import APITestCase

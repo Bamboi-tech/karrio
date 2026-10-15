@@ -277,16 +277,7 @@ def _overall_status(order_events: list, colli: list) -> str:
                 return name
         return _least_advanced(known)
 
-    latest = next(
-        iter(
-            sorted(
-                order_events,
-                key=lambda event: str(event.Occured or event.Created or ""),
-                reverse=True,
-            )
-        ),
-        None,
-    )
+    latest = next(iter(_newest_first(order_events)), None)
 
     if latest is None or provider_units.is_warehouse_event(latest.TypeCode):
         return "pending"
@@ -295,51 +286,55 @@ def _overall_status(order_events: list, colli: list) -> str:
     return status if status in DECISIVE_EVENT_STATUSES else "pending"
 
 
+def _newest_first(order_events: list) -> list:
+    return sorted(
+        order_events,
+        key=lambda event: str(event.Occured or event.Created or ""),
+        reverse=True,
+    )
+
+
 def _delivered_on_feed(order_events: list, colli: list) -> typing.Set[str]:
     """The T&T codes of the colli whose latest order-feed update is a delivery.
 
     A carrier update on the feed names its parcel ("status update from PostNL
     (3S…): …"); the code is matched as a whole word, never as part of another.
+    Whether the update is a delivery is the TypeCode's call alone
+    (provider_units.DELIVERED_EVENT_CODES).
     """
-    feed = sorted(
-        order_events,
-        key=lambda event: str(event.Occured or event.Created or ""),
-        reverse=True,
-    )
+    updates = [
+        (event, set(re.findall(r"[A-Za-z0-9]+", event.Description or "")))
+        for event in _newest_first(order_events)
+    ]
+    numbers = {item.TrackAndTraceCode for item in colli if item.TrackAndTraceCode}
     latest_update = {
-        number: next(
-            (
-                event
-                for event in feed
-                if number in re.findall(r"[A-Za-z0-9]+", event.Description or "")
-            ),
-            None,
-        )
-        for number in {
-            item.TrackAndTraceCode for item in colli if item.TrackAndTraceCode
-        }
+        number: next((event for event, words in updates if number in words), None)
+        for number in numbers
     }
 
     return {
         number
         for number, event in latest_update.items()
-        if event is not None
-        and provider_units.to_tracking_status(event.TypeCode, event.Description)
-        == "delivered"
+        if event is not None and provider_units.is_delivered_event(event.TypeCode)
     }
 
 
 def _least_advanced(statuses: typing.List[str]) -> str:
-    """Where a shipment whose boxes differ in status is (DELIVERY_STAGES)."""
+    """Where a shipment whose boxes differ in status is (DELIVERY_STAGES).
+
+    In transit when a status is off the path to the door, when the least
+    advanced box is still on its way, or when two boxes share a stage in
+    different statuses (one out for delivery, one at a pickup point)."""
     if any(status not in DELIVERY_STAGES for status in statuses):
         return "in_transit"
 
     stage = min(DELIVERY_STAGES[status] for status in statuses)
-    candidates = {status for status in statuses if DELIVERY_STAGES[status] == stage}
+    least_advanced = {status for status in statuses if DELIVERY_STAGES[status] == stage}
 
-    return (
-        next(iter(candidates)) if stage > 0 and len(candidates) == 1 else "in_transit"
-    )
+    if stage == 0 or len(least_advanced) > 1:
+        return "in_transit"
+
+    return least_advanced.pop()
 
 
 def tracking_request(

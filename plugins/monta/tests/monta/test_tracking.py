@@ -563,6 +563,90 @@ class TestMontaOrderFeedDelivery(unittest.TestCase):
         self.assertEqual(details["status"], "ready_for_pickup")
         self.assertFalse(details["delivered"])
 
+    def test_free_text_never_delivers_a_parcel(self):
+        # Only the feed's TypeCode may say delivered: "niet afgeleverd"
+        # normalizes to NIETAFGELEVERD, which holds AFGELEVERD.
+        for code in [None, "CarrierUpdate"]:
+            with self.subTest(code=code):
+                details = self._status(
+                    feed=[
+                        (
+                            code,
+                            "Delivery status changed: status update from DPD "
+                            "(05212000000001): Pakket niet afgeleverd",
+                        )
+                    ],
+                    colli=[("05212000000001", "EnRoute")],
+                )
+
+                self.assertEqual(details, "in_transit")
+
+    def test_a_tracking_number_matches_only_as_a_whole_word(self):
+        feed = [("Delivered", "status update from DPD (05212000000001): Delivered")]
+        for number in ["052120000000011", "0521200000000"]:
+            with self.subTest(number=number):
+                self.assertEqual(
+                    self._status(feed=feed, colli=[(number, "EnRoute")]), "in_transit"
+                )
+
+    def test_boxes_in_different_statuses(self):
+        for codes, expected in [
+            (("OutForDelivery", "Delivered"), "out_for_delivery"),
+            (("AvailablePickup", "Delivered"), "ready_for_pickup"),
+            (("DeliveryFailed", "Delivered"), "in_transit"),
+            (("AvailablePickup", "OutForDelivery"), "in_transit"),
+            (("NotYetEnRoute", "Delivered"), "in_transit"),
+        ]:
+            with self.subTest(codes=codes):
+                colli = [
+                    (f"0521200000000{number}", code)
+                    for number, code in enumerate(codes, start=1)
+                ]
+                self.assertEqual(self._status(feed=[], colli=colli), expected)
+
+    def test_a_box_without_a_status_counts_once_the_feed_delivers_it(self):
+        # SO-Shopify-07267 (DPD): the collo carries a T&T code and nothing
+        # else. Next to a box that is only pre-announced it must not hand the
+        # decision to the feed, which would call the whole order delivered.
+        feed = [("Delivered", "status update from DPD (05212000000001): Delivered")]
+        for colli, expected in [
+            ([("05212000000001", None)], "delivered"),
+            (
+                [("05212000000001", None), ("05212000000002", "NotYetEnRoute")],
+                "in_transit",
+            ),
+        ]:
+            with self.subTest(colli=colli):
+                self.assertEqual(self._status(feed=feed, colli=colli), expected)
+
+    def _status(self, feed: list, colli: list) -> str:
+        """The overall status for feed events (TypeCode, Description), newest
+        first, and colli (T&T code, DeliveryStatusCode) in the POST shape."""
+        events = lib.to_json(
+            [
+                dict(
+                    Id=len(feed) - index,
+                    WebshopOrderId="SAL-ORD-2026-00001",
+                    TypeCode=code,
+                    Description=description,
+                    Occured=f"2026-10-1{5 - index}T10:00:00",
+                )
+                for index, (code, description) in enumerate(feed)
+            ]
+        )
+        boxes = lib.to_json(
+            [
+                dict(
+                    Number=number,
+                    TrackAndTraceCode=tracking_number,
+                    DeliveryStatusCode=code,
+                    DeliveryStatusUpdated="14-10-2026 22:00:00" if code else None,
+                )
+                for number, (tracking_number, code) in enumerate(colli, start=1)
+            ]
+        )
+        return self._track(events, boxes)["status"]
+
 
 if __name__ == "__main__":
     unittest.main()

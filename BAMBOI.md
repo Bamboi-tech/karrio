@@ -16,6 +16,13 @@ Deze repo is de fork van `karrioapi/karrio` die Bamboi zelf host. `AGENTS.md`, `
 6. **Worktrees in één map:** `<werkmap>/.worktrees/<feature>/karrio`, nooit in `/tmp` of `.claude/worktrees`.
 7. **Taal:** overleg in het Nederlands, direct. Code, commits en code-commentaar in het Engels. Nooit het paragraafteken; verwijs naar secties met kale nummers ("3, regel 4").
 
+## ClickUp en diagrammen (Leroy, 15 oktober 2026)
+
+1. **Geen softwarewerk zonder ClickUp-taak.** Elke klus hoort bij een taak in de lijst Software (`901523279902`). Branch en PR-titel bevatten `CU-<taak-id>` (bijv. `fix/CU-1248uf3y8jk-annulering`). Nieuwe worktree: `bamboi clickup bind <taak-id>` (lokaal, geen token). Is er geen taak, stel er een voor en wacht op akkoord.
+2. **De status in ClickUp klopt altijd.** Bij het begin van het werk zet je de taak op de status voor lopend werk; bij een geopende PR plaats je een comment met de PR-link; na een merge die jij zelf uitvoert zet je de taak op `testen` met de comment "gemerged"; bij een blokkade een comment met wat er ontbreekt en van wie. Via de ClickUp-MCP; zonder ClickUp-toegang meld je het in de chat, zodat een mens het doet.
+3. **Comments zonder @mentions en met `notify_all=false`.** Taken van anderen alleen wijzigen met hun akkoord.
+4. **Diagrammen blijven gelijk aan de code.** Raakt een wijziging een stroom, koppeling, datamodel of deploy-route die in een stack-diagram staat (`share.bamboi.eu/stack`, bronnen in `<werkmap>/.archify/`), werk het diagram in dezelfde klus bij: de bron aanpassen, `finalize` draaien, de HTML naar `share-bamboi/stack/<slug>/` en pushen (een push naar `main` in share-bamboi is direct live). Kan de sessie dat niet (geen Archify), noteer dan in de ClickUp-taak en in `HANDOFF.md`: "diagram nog bijwerken".
+
 ## Release en deploy
 
 8. Na een merge in `main` bouwt `gh workflow run build-karrio-images.yml --repo Bamboi-tech/karrio --ref main` het server- en dashboard-image, met tag `<VERSION>-<sha7>` (`apps/api/karrio/server/VERSION`; de tag staat in de job-samenvatting).

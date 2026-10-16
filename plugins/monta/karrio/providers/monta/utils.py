@@ -187,15 +187,18 @@ def parse_house_number(
     if explicit:
         street = " ".join(_ for _ in line.split(" ") if _ != explicit) or line
         number, addition = _split_addition(explicit)
-        return street, number, addition
+    else:
+        match = re.match(r"^(.+?)\s+(\d+[\d/-]*)\s*([a-zA-Z][a-zA-Z0-9-]*)?$", line)
 
-    match = re.match(r"^(.+?)\s+(\d+[\d/-]*)\s*([a-zA-Z][a-zA-Z0-9-]*)?$", line)
+        if match is None:
+            return line, "", ""
 
-    if match is None:
-        return line, "", ""
+        street, number, addition = match.groups()
+        number, addition = number.strip(), (addition or "").strip()
 
-    street, number, addition = match.groups()
-    return street.strip(), number.strip(), (addition or "").strip()
+    # Google's address suggestion writes "Street, number" (Italy and others):
+    # the comma before the number must not stay behind on the street.
+    return street.strip().rstrip(",").strip(), number, addition
 
 
 def _split_addition(value: str) -> typing.Tuple[str, str]:

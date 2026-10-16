@@ -238,6 +238,62 @@ class TestMontaRateDateHints(unittest.TestCase):
         )
 
 
+class TestMontaRateHouseNumber(unittest.TestCase):
+    """rate_request splits address_line1 into the Street, HouseNumber and
+    HouseNumberAddition fields Monta stores separately."""
+
+    def _delivery_address(self, address_line1: str, street_number=None) -> tuple:
+        recipient = {
+            **RatePayload["recipient"],
+            "address_line1": address_line1,
+            "street_number": street_number,
+        }
+        request = gateway.mapper.create_rate_request(
+            models.RateRequest(**{**RatePayload, "recipient": recipient})
+        )
+        address = request.serialize()["order"]["ConsumerDetails"]["DeliveryAddress"]
+        return (
+            address.get("Street"),
+            address.get("HouseNumber"),
+            address.get("HouseNumberAddition"),
+        )
+
+    def test_comma_before_the_house_number_stays_off_the_street(self):
+        """Google's address suggestion writes "Street, number" (Italy and
+        others); the comma must not stay behind on the street."""
+        self.assertEqual(
+            self._delivery_address("Via dei Test, 13"),
+            ("Via dei Test", "13", None),
+        )
+
+    def test_explicit_street_number_also_drops_the_comma(self):
+        """With an explicit street_number the street is cleaned the same way."""
+        self.assertEqual(
+            self._delivery_address("Via Roma, 13", street_number="13"),
+            ("Via Roma", "13", None),
+        )
+
+    def test_comma_spacing_variants(self):
+        for line, expected in [
+            ("Via dei Test , 13", ("Via dei Test", "13", None)),
+            ("Via Roma,  13", ("Via Roma", "13", None)),
+            ("Via Roma, 13 B", ("Via Roma", "13", "B")),
+        ]:
+            with self.subTest(line=line):
+                self.assertEqual(self._delivery_address(line), expected)
+
+    def test_addresses_without_a_comma_are_unchanged(self):
+        for line, expected in [
+            ("Keizersgracht 75 A", ("Keizersgracht", "75", "A")),
+            ("Dorpsstraat 12a", ("Dorpsstraat", "12", "a")),
+            ("Dorpsstraat 12-3", ("Dorpsstraat", "12-3", None)),
+            ("1e Dorpsstraat 20", ("1e Dorpsstraat", "20", None)),
+            ("Dorpsstraat", ("Dorpsstraat", None, None)),
+        ]:
+            with self.subTest(line=line):
+                self.assertEqual(self._delivery_address(line), expected)
+
+
 if __name__ == "__main__":
     unittest.main()
 

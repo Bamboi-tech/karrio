@@ -238,6 +238,51 @@ class TestMontaRateDateHints(unittest.TestCase):
         )
 
 
+class TestMontaRateHouseNumber(unittest.TestCase):
+    """rate_request splits address_line1 into the Street, HouseNumber and
+    HouseNumberAddition fields Monta stores separately."""
+
+    def _delivery_address(self, address_line1: str) -> tuple:
+        recipient = {**RatePayload["recipient"], "address_line1": address_line1}
+        request = gateway.mapper.create_rate_request(
+            models.RateRequest(**{**RatePayload, "recipient": recipient})
+        )
+        address = request.serialize()["order"]["ConsumerDetails"]["DeliveryAddress"]
+        return (
+            address.get("Street"),
+            address.get("HouseNumber"),
+            address.get("HouseNumberAddition"),
+        )
+
+    def test_comma_before_the_house_number_stays_off_the_street(self):
+        """Google's address suggestion writes "Street, number" (Italy and
+        others); Monta received Street "Via Giuseppe Mazzini," for it."""
+        self.assertEqual(
+            self._delivery_address("Via Giuseppe Mazzini, 13"),
+            ("Via Giuseppe Mazzini", "13", None),
+        )
+
+    def test_comma_spacing_variants(self):
+        for line, expected in [
+            ("Via Giuseppe Mazzini , 13", ("Via Giuseppe Mazzini", "13", None)),
+            ("Via Roma,  13", ("Via Roma", "13", None)),
+            ("Via Roma, 13 B", ("Via Roma", "13", "B")),
+        ]:
+            with self.subTest(line=line):
+                self.assertEqual(self._delivery_address(line), expected)
+
+    def test_addresses_without_a_comma_are_unchanged(self):
+        for line, expected in [
+            ("Keizersgracht 75 A", ("Keizersgracht", "75", "A")),
+            ("Dorpsstraat 12a", ("Dorpsstraat", "12", "a")),
+            ("Dorpsstraat 12-3", ("Dorpsstraat", "12-3", None)),
+            ("1e Dorpsstraat 20", ("1e Dorpsstraat", "20", None)),
+            ("Dorpsstraat", ("Dorpsstraat", None, None)),
+        ]:
+            with self.subTest(line=line):
+                self.assertEqual(self._delivery_address(line), expected)
+
+
 if __name__ == "__main__":
     unittest.main()
 

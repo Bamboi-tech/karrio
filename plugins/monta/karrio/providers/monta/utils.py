@@ -195,7 +195,10 @@ def parse_house_number(
         return line, "", ""
 
     street, number, addition = match.groups()
-    return street.strip(), number.strip(), (addition or "").strip()
+    # Google's address suggestion writes "Street, number" (Italy and others):
+    # the comma before the number must not stay behind on the street.
+    street = street.strip().rstrip(",").strip()
+    return street, number.strip(), (addition or "").strip()
 
 
 def _split_addition(value: str) -> typing.Tuple[str, str]:

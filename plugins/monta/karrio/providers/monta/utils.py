@@ -176,11 +176,13 @@ def normalize_colli(response: typing.Any) -> typing.List[dict]:
 # Monta only accepts digits in HouseNumber ("Invalid house number in delivery
 # address", code 9); everything after them belongs in HouseNumberAddition.
 # Dutch floor notation writes the addition after a dash ("56-3" is house 56,
-# floor 3). A digit-led addition needs that "-" or "/", so a street name that
-# ends in a number ("Plein 1944 12") keeps it; a letter-led one may follow
-# directly or after a space ("75A", "75 A"). The separator is dropped.
+# floor 3); "/" and a pasted en dash ("56–3") separate it too, and the
+# addition may itself hold "/" (Vienna's "45/3/12"). A digit-led addition
+# needs one of those separators, so a street name that ends in a number
+# ("Plein 1944 12") keeps it; a letter-led one may follow directly or after a
+# space ("75A", "75 A"). The separator is dropped.
 _HOUSE_NUMBER = (
-    r"(\d+)(?:\s*[-/]\s*([a-zA-Z0-9][a-zA-Z0-9-]*)?|\s*([a-zA-Z][a-zA-Z0-9-]*))?"
+    r"(\d+)(?:\s*[-/–]\s*([a-zA-Z0-9][a-zA-Z0-9/-]*)?|\s*([a-zA-Z][a-zA-Z0-9-]*))?"
 )
 
 
@@ -220,5 +222,4 @@ def _split_addition(value: str) -> typing.Tuple[str, str]:
     if match is None:
         return value.strip(), ""
 
-    number, *additions = match.groups()
-    return number, next((_ for _ in additions if _), "")
+    return match.group(1), match.group(2) or match.group(3) or ""

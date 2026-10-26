@@ -301,8 +301,16 @@ class TestMontaRateHouseNumber(unittest.TestCase):
             ("Joos Banckersweg 11-2", ("Joos Banckersweg", "11", "2")),
             ("Dorpsstraat 56-3A", ("Dorpsstraat", "56", "3A")),
             ("Dorpsstraat 56 - 3", ("Dorpsstraat", "56", "3")),
+            # A range is deliberately house 12, addition "14": building
+            # 12-14 includes house 12, and the old "12-14" got code 9.
             ("Dorpsstraat 12-14", ("Dorpsstraat", "12", "14")),
             ("Dorpsstraat 1/2", ("Dorpsstraat", "1", "2")),
+            ("Via Roma 13/A", ("Via Roma", "13", "A")),
+            ("Dorpsstraat 12-", ("Dorpsstraat", "12", None)),
+            ("Mariahilfer Straße 45/3/12", ("Mariahilfer Straße", "45", "3/12")),
+            ("Kerkstraat 12/3/2", ("Kerkstraat", "12", "3/2")),
+            ("Rue X 12-14/bis", ("Rue X", "12", "14/bis")),
+            ("Dorpsstraat 56–3", ("Dorpsstraat", "56", "3")),
             ("Dorpsstraat 75-A", ("Dorpsstraat", "75", "A")),
             ("Dorpsstraat 75A", ("Dorpsstraat", "75", "A")),
             ("Dorpsstraat 247", ("Dorpsstraat", "247", None)),

@@ -173,6 +173,19 @@ def normalize_colli(response: typing.Any) -> typing.List[dict]:
     ]
 
 
+# Monta only accepts digits in HouseNumber ("Invalid house number in delivery
+# address", code 9); everything after them belongs in HouseNumberAddition.
+# Dutch floor notation writes the addition after a dash ("56-3" is house 56,
+# floor 3); "/" and a pasted en dash ("56–3") separate it too, and the
+# addition may itself hold "/" (Vienna's "45/3/12"). A digit-led addition
+# needs one of those separators, so a street name that ends in a number
+# ("Plein 1944 12") keeps it; a letter-led one may follow directly or after a
+# space ("75A", "75 A"). The separator is dropped.
+_HOUSE_NUMBER = (
+    r"(\d+)(?:\s*[-/–]\s*([a-zA-Z0-9][a-zA-Z0-9/-]*)?|\s*([a-zA-Z][a-zA-Z0-9-]*))?"
+)
+
+
 def parse_house_number(
     address: lib.units.ComputedAddress,
 ) -> typing.Tuple[str, str, str]:
@@ -180,6 +193,8 @@ def parse_house_number(
 
     Prefers the explicit `street_number` when provided; otherwise extracts the
     trailing number (Dutch convention: "Keizersgracht 75 A") from address_line1.
+    The house number is the leading digits only and the addition the rest
+    without its separator ("56-3" -> "56", "3"); see `_HOUSE_NUMBER`.
     """
     line = (address.address_line1 or "").strip()
     explicit = getattr(address.address, "street_number", None)
@@ -188,13 +203,13 @@ def parse_house_number(
         street = " ".join(_ for _ in line.split(" ") if _ != explicit) or line
         number, addition = _split_addition(explicit)
     else:
-        match = re.match(r"^(.+?)\s+(\d+[\d/-]*)\s*([a-zA-Z][a-zA-Z0-9-]*)?$", line)
+        match = re.match(rf"^(.+?)\s+({_HOUSE_NUMBER})$", line)
 
         if match is None:
             return line, "", ""
 
-        street, number, addition = match.groups()
-        number, addition = number.strip(), (addition or "").strip()
+        street = match.group(1)
+        number, addition = _split_addition(match.group(2))
 
     # Google's address suggestion writes "Street, number" (Italy and others):
     # the comma before the number must not stay behind on the street.
@@ -202,10 +217,9 @@ def parse_house_number(
 
 
 def _split_addition(value: str) -> typing.Tuple[str, str]:
-    match = re.match(r"^(\d+[\d/-]*)\s*([a-zA-Z][a-zA-Z0-9-]*)?$", value.strip())
+    match = re.match(rf"^{_HOUSE_NUMBER}$", value.strip())
 
     if match is None:
         return value.strip(), ""
 
-    number, addition = match.groups()
-    return number, (addition or "")
+    return match.group(1), match.group(2) or match.group(3) or ""

@@ -286,9 +286,53 @@ class TestMontaRateHouseNumber(unittest.TestCase):
         for line, expected in [
             ("Keizersgracht 75 A", ("Keizersgracht", "75", "A")),
             ("Dorpsstraat 12a", ("Dorpsstraat", "12", "a")),
-            ("Dorpsstraat 12-3", ("Dorpsstraat", "12-3", None)),
             ("1e Dorpsstraat 20", ("1e Dorpsstraat", "20", None)),
             ("Dorpsstraat", ("Dorpsstraat", None, None)),
+        ]:
+            with self.subTest(line=line):
+                self.assertEqual(self._delivery_address(line), expected)
+
+    def test_house_number_is_only_the_leading_digits(self):
+        """Monta rejects a HouseNumber that is not numeric ("Invalid house
+        number in delivery address", code 9). The Dutch floor notation "56-3"
+        is house 56, addition 3; the separator goes on neither field."""
+        for line, expected in [
+            ("Balboastraat 56-3", ("Balboastraat", "56", "3")),
+            ("Joos Banckersweg 11-2", ("Joos Banckersweg", "11", "2")),
+            ("Dorpsstraat 56-3A", ("Dorpsstraat", "56", "3A")),
+            ("Dorpsstraat 56 - 3", ("Dorpsstraat", "56", "3")),
+            ("Dorpsstraat 12-14", ("Dorpsstraat", "12", "14")),
+            ("Dorpsstraat 1/2", ("Dorpsstraat", "1", "2")),
+            ("Dorpsstraat 75-A", ("Dorpsstraat", "75", "A")),
+            ("Dorpsstraat 75A", ("Dorpsstraat", "75", "A")),
+            ("Dorpsstraat 247", ("Dorpsstraat", "247", None)),
+        ]:
+            with self.subTest(line=line):
+                self.assertEqual(self._delivery_address(line), expected)
+
+    def test_explicit_street_number_is_split_the_same_way(self):
+        for line, street_number, expected in [
+            ("Balboastraat 56-3", "56-3", ("Balboastraat", "56", "3")),
+            ("Joos Banckersweg 11-2", "11-2", ("Joos Banckersweg", "11", "2")),
+            ("Dorpsstraat 56-3A", "56-3A", ("Dorpsstraat", "56", "3A")),
+            ("Keizersgracht", "75 A", ("Keizersgracht", "75", "A")),
+            ("Keizersgracht 75A", "75A", ("Keizersgracht", "75", "A")),
+            ("Dorpsstraat 12-14", "12-14", ("Dorpsstraat", "12", "14")),
+            ("Dorpsstraat 1/2", "1/2", ("Dorpsstraat", "1", "2")),
+            ("Dorpsstraat 247", "247", ("Dorpsstraat", "247", None)),
+        ]:
+            with self.subTest(street_number=street_number):
+                self.assertEqual(
+                    self._delivery_address(line, street_number=street_number),
+                    expected,
+                )
+
+    def test_a_street_ending_in_a_number_keeps_it(self):
+        """Only "-" or "/" turns trailing digits into an addition, so a year in
+        the street name is not mistaken for the house number."""
+        for line, expected in [
+            ("Plein 1944 12", ("Plein 1944", "12", None)),
+            ("Laan 1940-1945 3", ("Laan 1940-1945", "3", None)),
         ]:
             with self.subTest(line=line):
                 self.assertEqual(self._delivery_address(line), expected)

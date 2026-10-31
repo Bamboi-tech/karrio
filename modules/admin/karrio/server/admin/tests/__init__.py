@@ -31,3 +31,6 @@ from karrio.server.admin.tests.test_auth import (  # noqa: F401
     TestAdminMarkupValidation,
     TestAdminDataIsolation,
 )
+from karrio.server.admin.tests.test_worker_signals import (  # noqa: F401
+    TestWorkerTaskSignals,
+)

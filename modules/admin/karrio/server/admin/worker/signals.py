@@ -1,5 +1,11 @@
 import logging
-from django.db import models
+from django.db import (
+    InterfaceError,
+    OperationalError,
+    close_old_connections,
+    connections,
+    models,
+)
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -28,16 +34,7 @@ def register_huey_signals():
         logger.debug("Huey not available, skipping signal registration")
         return
 
-    @huey_instance.signal(
-        SIGNAL_ENQUEUED,
-        SIGNAL_EXECUTING,
-        SIGNAL_COMPLETE,
-        SIGNAL_ERROR,
-        SIGNAL_RETRYING,
-        SIGNAL_REVOKED,
-        SIGNAL_EXPIRED,
-    )
-    def task_signal_handler(signal, task, exc=None):
+    def _record(signal, task, exc=None):
         try:
             from karrio.server.admin.worker.models import TaskExecution
 
@@ -97,6 +94,10 @@ def register_huey_signals():
 
             TaskExecution.objects.filter(task_id=task_id).update(**updates)
 
+        except (InterfaceError, OperationalError):
+            # Connection errors go to the receiver, which may reconnect and retry.
+            raise
+
         except Exception:
             # Handle duplicate records from race conditions on ENQUEUED
             try:
@@ -115,3 +116,50 @@ def register_huey_signals():
                 pass
 
             logger.exception("Failed to record task signal")
+
+    @huey_instance.signal(
+        SIGNAL_ENQUEUED,
+        SIGNAL_EXECUTING,
+        SIGNAL_COMPLETE,
+        SIGNAL_ERROR,
+        SIGNAL_RETRYING,
+        SIGNAL_REVOKED,
+        SIGNAL_EXPIRED,
+    )
+    def task_signal_handler(signal, task, exc=None):
+        try:
+            return _record(signal, task, exc)
+        except (InterfaceError, OperationalError) as error:
+            if not _reset_connections_for_retry():
+                logger.warning(
+                    "Task signal not recorded inside a transaction after database error: %s",
+                    error,
+                )
+                return
+            logger.warning("Retrying task signal after database error: %s", error)
+
+        try:
+            _record(signal, task, exc)
+        except (InterfaceError, OperationalError):
+            logger.exception("Failed to record task signal")
+
+
+def _reset_connections_for_retry():
+    """Let Django drop this thread's unusable or obsolete connections before a retry.
+
+    Huey runs signal handlers outside Django's request cycle: the consumer's
+    scheduler thread enqueues periodic tasks and is never wrapped by djhuey's
+    close_db, so nothing else ever drops a connection the database server
+    closed. Like the close_old_connections() Django runs around a request, this
+    also closes healthy connections past CONN_MAX_AGE and keeps usable ones open,
+    so True means "safe to retry", not "a connection was closed".
+
+    Returns False and touches nothing when any connection of this thread is in
+    a transaction: closing it would roll back the caller's work (post_save
+    handlers enqueue notify_webhooks from atomic serializers).
+    """
+    if any(conn.in_atomic_block for conn in connections.all(initialized_only=True)):
+        return False
+
+    close_old_connections()
+    return True

@@ -160,3 +160,6 @@ htmlcov/
 # Temporary files
 *.tmp
 *.backup
+
+# Second-opinion review documents (never committed)
+reviews/

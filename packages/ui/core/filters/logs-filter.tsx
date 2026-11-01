@@ -1,3 +1,4 @@
+import { Funnel } from "lucide-react";
 import { Dropdown, closeDropdown } from "../components/dropdown";
 import { HTTP_METHODS, HTTP_STATUS_CODES } from "@karrio/types";
 import { CheckBoxField } from "../components/checkbox-field";
@@ -130,7 +131,7 @@ export const LogsFilter = ({ context }): JSX.Element => {
       {/* Dropdown trigger  */}
       <button className="button is-default is-small">
         <span className="icon is-small">
-          <i className="fas fa-filter"></i>
+          <Funnel className="h-4 w-4" />
         </span>
         <span className="has-text-weight-bold">Filter</span>
       </button>

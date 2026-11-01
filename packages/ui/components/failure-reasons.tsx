@@ -1,4 +1,5 @@
 "use client";
+import { Circle } from "lucide-react";
 
 import * as React from "react";
 import { cn } from "@karrio/ui/lib/utils";
@@ -192,7 +193,7 @@ export const FailureReasons: React.FC<FailureReasonsProps> = ({
               <div className="flex items-start gap-3">
                 {/* Error Icon */}
                 <div className="flex-shrink-0">
-                  <i className="fas fa-circle text-red-500 text-xs" />
+                  <Circle className="h-3 w-3 text-red-500" />
                 </div>
 
                 {/* Error Content */}

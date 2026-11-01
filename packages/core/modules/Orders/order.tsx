@@ -1,4 +1,5 @@
 "use client";
+import { ChevronRight, ExternalLink } from "lucide-react";
 import { EnhancedMetadataEditor } from "@karrio/ui/components/enhanced-metadata-editor";
 import { useMetadataMutation } from "@karrio/hooks/metadata";
 import {
@@ -99,7 +100,7 @@ export const OrderComponent = ({
                 href="/orders"
                 className="text-sm font-semibold text-blue-600 tracking-wide hover:text-blue-800 transition-colors duration-150 flex items-center gap-1"
               >
-                Orders <i className="fas fa-chevron-right text-xs"></i>
+                Orders <ChevronRight className="h-3 w-3" />
               </AppLink>
               <div className="flex items-center gap-2">
                 <span className="text-3xl font-bold">{order?.order_id}</span>
@@ -113,7 +114,7 @@ export const OrderComponent = ({
                 {isPreview && isSheet && (
                   <Button variant="ghost" size="sm" asChild className="h-8">
                     <AppLink href={`/orders/${orderId}`} target="_blank">
-                      <i className="fas fa-external-link-alt text-xs"></i>
+                      <ExternalLink className="h-3 w-3" />
                     </AppLink>
                   </Button>
                 )}
@@ -128,7 +129,7 @@ export const OrderComponent = ({
               {isPreview && (
                 <Button variant="ghost" size="sm" asChild className="h-8">
                   <AppLink href={`/orders/${orderId}`} target="_blank">
-                    <i className="fas fa-external-link-alt text-xs"></i>
+                    <ExternalLink className="h-3 w-3" />
                   </AppLink>
                 </Button>
               )}

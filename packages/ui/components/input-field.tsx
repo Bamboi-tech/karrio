@@ -1,3 +1,4 @@
+import { Asterisk } from "lucide-react";
 import { isNone } from "@karrio/lib";
 import React, { RefObject } from "react";
 import { Input } from "@karrio/ui/components/ui/input";
@@ -60,7 +61,7 @@ export const InputField = React.forwardRef<
             {label}
             {required && (
               <span className="ml-1 text-red-500 text-xs">
-                <i className="fas fa-asterisk" style={{ fontSize: ".7em" }}></i>
+                <Asterisk className="h-2.5 w-2.5" />
               </span>
             )}
           </Label>

@@ -9,7 +9,14 @@ import {
   GetSystemUsage_system_usage,
   UsageFilter,
 } from "@karrio/types";
-import { gqlstr, insertUrlParam, isNoneOrEmpty } from "@karrio/lib";
+import {
+  DEFAULT_USAGE_RANGE,
+  USAGE_RANGE_DAYS,
+  gqlstr,
+  insertUrlParam,
+  isNoneOrEmpty,
+  usageFilterFor,
+} from "@karrio/lib";
 import { useKarrio, useAuthenticatedQuery } from "./karrio";
 import { useAPIMetadata } from "./api-metadata";
 import { useSyncedSession } from "./session";
@@ -18,33 +25,15 @@ import React from "react";
 
 type UsageType = GetSystemUsage_system_usage &
   get_organization_organization_usage;
-type FilterType = UsageFilter & { setVariablesToURL?: boolean };
-const USAGE_FILTERS: Record<string, UsageFilter> = {
-  "7 days": {
-    date_before: moment().toISOString(),
-    date_after: moment().subtract(7, "days").toISOString(),
-  },
-  "15 days": {
-    date_before: moment().toISOString(),
-    date_after: moment().subtract(15, "days").toISOString(),
-  },
-  "Last 30 days": {
-    date_before: moment().toISOString(),
-    date_after: moment().subtract(30, "days").toISOString(),
-  },
-  "Last 3 months": {
-    date_before: moment().toISOString(),
-    date_after: moment().subtract(90, "days").toISOString(),
-  },
-  "Last 6 months": {
-    date_before: moment().toISOString(),
-    date_after: moment().subtract(180, "days").toISOString(),
-  },
-  "Last year": {
-    date_before: moment().toISOString(),
-    date_after: moment().subtract(360, "days").toISOString(),
-  },
+type FilterType = UsageFilter & {
+  setVariablesToURL?: boolean;
+  /** Usage for the default range, fetched by the server page so the stat
+   *  cards are in the HTML; the client only fetches on a range change. */
+  initialUsage?: GetSystemUsage_system_usage | null;
 };
+const USAGE_FILTERS: Record<string, UsageFilter> = Object.fromEntries(
+  Object.keys(USAGE_RANGE_DAYS).map((range) => [range, usageFilterFor(range)]),
+);
 const DAYS_LIST: Record<string, string[]> = {
   "7 days": Array.from(Array(7))
     .map((_, i) => i)
@@ -74,6 +63,7 @@ const DAYS_LIST: Record<string, string[]> = {
 
 export function useAPIUsage({
   setVariablesToURL = false,
+  initialUsage,
   ...initialData
 }: FilterType = {}) {
   const karrio = useKarrio();
@@ -81,9 +71,12 @@ export function useAPIUsage({
   const { query: sessionQuery } = useSyncedSession();
   const session = sessionQuery.data;
   const [filter, _setFilter] = React.useState<UsageFilter>({
-    ...USAGE_FILTERS["15 days"],
+    ...USAGE_FILTERS[DEFAULT_USAGE_RANGE],
     ...initialData,
   });
+  const isDefaultRange =
+    filter.date_after === USAGE_FILTERS[DEFAULT_USAGE_RANGE].date_after &&
+    filter.date_before === USAGE_FILTERS[DEFAULT_USAGE_RANGE].date_before;
 
   const systemUsage = () =>
     karrio.graphql
@@ -110,6 +103,11 @@ export function useAPIUsage({
   const query = useAuthenticatedQuery({
     queryKey: ["usage", filter],
     queryFn: metadata.MULTI_ORGANIZATIONS == true ? orgUsage : systemUsage,
+    // Only the default range is prefetched; any other key must fetch.
+    initialData:
+      isDefaultRange && !!initialUsage
+        ? { usage: initialUsage as UsageType }
+        : undefined,
     staleTime: 1500000,
     enabled: metadata.MULTI_ORGANIZATIONS ? !!session?.orgId : true,
     retry: (failureCount, error) => {
@@ -146,9 +144,9 @@ export function useAPIUsage({
     USAGE_FILTERS,
     currentFilter: () =>
       Object.keys(USAGE_FILTERS).find(
-        (_: any) =>
-          USAGE_FILTERS[_].date_before == filter.date_before &&
-          USAGE_FILTERS[_].date_after == filter.date_after,
+        (range) =>
+          USAGE_FILTERS[range].date_before == filter.date_before &&
+          USAGE_FILTERS[range].date_after == filter.date_after,
       ),
   };
 }

@@ -1,3 +1,4 @@
+import { ListChecks, Search } from "lucide-react";
 import { CommodityType, OrderType, ShipmentType } from "@karrio/types";
 import { getShipmentCommodities, isNone } from "@karrio/lib";
 import React, { useEffect, useState } from "react";
@@ -110,7 +111,7 @@ export const LineItemSelector = ({
         onClick={selectItems}
       >
         <span className="icon is-small">
-          <i className="fas fa-tasks"></i>
+          <ListChecks className="h-4 w-4" />
         </span>
         <span>{title || "Add line items"}</span>
       </button>
@@ -135,7 +136,7 @@ export const LineItemSelector = ({
                   onInput={onSearch}
                 />
                 <span className="icon is-left">
-                  <i className="fas fa-search" aria-hidden="true"></i>
+                  <Search className="h-4 w-4" aria-hidden="true" />
                 </span>
               </p>
             </div>

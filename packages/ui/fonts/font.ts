@@ -1,58 +1,12 @@
-import {
-  Inter,
-  JetBrains_Mono,
-  Roboto,
-  Noto_Sans,
-  Ubuntu,
-  Oxygen,
-  Open_Sans,
-} from "next/font/google";
-
-export const inter = Inter({
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-inter",
-});
-
-export const roboto = Roboto({
-  subsets: ["latin"],
-  weight: ["400", "500", "700"],
-  display: "swap",
-  variable: "--font-roboto",
-});
-
-export const noto = Noto_Sans({
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-noto",
-});
-
-export const ubuntu = Ubuntu({
-  subsets: ["latin"],
-  weight: ["400", "500", "700"],
-  display: "swap",
-  variable: "--font-ubuntu",
-});
-
-export const oxygen = Oxygen({
-  subsets: ["latin"],
-  weight: ["400", "700"],
-  display: "swap",
-  variable: "--font-oxygen",
-});
-
-export const jetbrains = JetBrains_Mono({
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-jetbrains",
-});
+import { Open_Sans } from "next/font/google";
 
 // Brand font of the dashboard (Bulma `$family-sans-serif` in theme.scss reads
-// `var(--font-open-sans)`); replaces the render-blocking Google Fonts
-// `@import` that used to sit inside the bundled CSS.
+// `var(--font-open-sans)`). Loaded as the variable font, latin subset only:
+// one preloaded woff2 covers every weight the UI uses (300 to 700). The six
+// other Google fonts that used to be instantiated here were never applied,
+// yet next/font preloaded ten font files for them on every page.
 export const openSans = Open_Sans({
   subsets: ["latin"],
-  weight: ["300", "400", "600", "700"],
   style: ["normal"],
   display: "swap",
   variable: "--font-open-sans",

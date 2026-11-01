@@ -1,4 +1,5 @@
 "use client";
+import { ChevronRight, ExternalLink } from "lucide-react";
 import { EnhancedMetadataEditor } from "@karrio/ui/components/enhanced-metadata-editor";
 import { AddressDescription } from "@karrio/ui/components/address-description";
 import { ParcelDescription } from "@karrio/ui/components/parcel-description";
@@ -104,7 +105,7 @@ export const PickupComponent = ({
                 href="/pickups"
                 className="text-sm font-semibold text-blue-600 tracking-wide hover:text-blue-800 transition-colors duration-150 flex items-center gap-1"
               >
-                Pickups <i className="fas fa-chevron-right text-xs"></i>
+                Pickups <ChevronRight className="h-3 w-3" />
               </AppLink>
               <div className="flex items-center gap-2">
                 <span className="text-3xl font-bold">
@@ -118,7 +119,7 @@ export const PickupComponent = ({
                 {isPreview && isSheet && (
                   <Button variant="ghost" size="sm" asChild className="h-8">
                     <AppLink href={`/pickups`} target="_blank">
-                      <i className="fas fa-external-link-alt text-xs"></i>
+                      <ExternalLink className="h-3 w-3" />
                     </AppLink>
                   </Button>
                 )}
@@ -142,7 +143,7 @@ export const PickupComponent = ({
               {isPreview && (
                 <Button variant="ghost" size="sm" asChild className="h-8">
                   <AppLink href={`/pickups`} target="_blank">
-                    <i className="fas fa-external-link-alt text-xs"></i>
+                    <ExternalLink className="h-3 w-3" />
                   </AppLink>
                 </Button>
               )}

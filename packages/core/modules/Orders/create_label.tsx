@@ -1,4 +1,5 @@
 "use client";
+import { ChevronDown, DollarSign, Pencil, Plus, X } from "lucide-react";
 import {
   AddressType,
   CommodityType,
@@ -633,7 +634,7 @@ export default function Page() {
                                   disabled={loading}
                                 >
                                   <span className="icon is-small">
-                                    <i className="fas fa-pen"></i>
+                                    <Pencil className="h-4 w-4" />
                                   </span>
                                 </button>
                               }
@@ -650,7 +651,7 @@ export default function Page() {
                               )}
                             >
                               <span className="icon is-small">
-                                <i className="fas fa-times"></i>
+                                <X className="h-4 w-4" />
                               </span>
                             </button>
                           </div>
@@ -739,7 +740,7 @@ export default function Page() {
                                   disabled={(pkg.items?.length ?? 0) === 1}
                                 >
                                   <span className="icon is-small">
-                                    <i className="fas fa-times"></i>
+                                    <X className="h-4 w-4" />
                                   </span>
                                 </button>
                               </div>
@@ -903,7 +904,7 @@ export default function Page() {
                         }
                         iconLeft={
                           <span className="icon is-small is-left">
-                            <i className="fas fa-dollar-sign"></i>
+                            <DollarSign className="h-4 w-4" />
                           </span>
                         }
                         iconRight={
@@ -963,7 +964,7 @@ export default function Page() {
                         }
                         iconLeft={
                           <span className="icon is-small is-left">
-                            <i className="fas fa-dollar-sign"></i>
+                            <DollarSign className="h-4 w-4" />
                           </span>
                         }
                         iconRight={
@@ -1021,7 +1022,7 @@ export default function Page() {
                         }
                         iconLeft={
                           <span className="icon is-small is-left">
-                            <i className="fas fa-dollar-sign"></i>
+                            <DollarSign className="h-4 w-4" />
                           </span>
                         }
                         iconRight={
@@ -1097,7 +1098,7 @@ export default function Page() {
                               CARRIER SPECIFIC OPTIONS
                             </div>
                             <span className="icon is-small m-1">
-                              <i className="fas fa-chevron-down"></i>
+                              <ChevronDown className="h-4 w-4" />
                             </span>
                           </div>
                         </CollapsibleTrigger>
@@ -1280,7 +1281,7 @@ export default function Page() {
                                           }
                                         >
                                           <span className="icon is-small">
-                                            <i className="fas fa-pen"></i>
+                                            <Pencil className="h-4 w-4" />
                                           </span>
                                         </button>
                                       )}
@@ -1301,7 +1302,7 @@ export default function Page() {
                                       }
                                     >
                                       <span className="icon is-small">
-                                        <i className="fas fa-times"></i>
+                                        <X className="h-4 w-4" />
                                       </span>
                                     </button>
                                   </div>
@@ -1334,7 +1335,7 @@ export default function Page() {
                                   }
                                 >
                                   <span className="icon is-small">
-                                    <i className="fas fa-plus"></i>
+                                    <Plus className="h-4 w-4" />
                                   </span>
                                   <span>add commodity</span>
                                 </button>

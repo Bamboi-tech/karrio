@@ -1,10 +1,4 @@
-import {
-  inter,
-  jetbrains,
-  noto,
-  ubuntu,
-  oxygen,
-} from "@karrio/ui/fonts/font";
+import { openSans } from "@karrio/ui/fonts/font";
 import { ErrorBoundary } from "@karrio/ui/core/components/error-boudaries";
 import { Toaster } from "@karrio/ui/components/ui/toaster";
 import { PublicEnvScript } from "next-runtime-env";
@@ -17,7 +11,7 @@ export default function Layout({
   return (
     <html
       lang="en"
-      className={`${inter.variable} ${jetbrains.variable} ${noto.variable} ${ubuntu.variable} ${oxygen.variable}`}
+      className={openSans.variable}
     >
       <head>
         <PublicEnvScript />

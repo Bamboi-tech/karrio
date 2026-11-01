@@ -1,3 +1,4 @@
+import { Asterisk } from "lucide-react";
 import React from "react";
 import { Textarea } from "@karrio/ui/components/ui/textarea";
 import { Label } from "@karrio/ui/components/ui/label";
@@ -50,7 +51,7 @@ export const TextareaField = React.forwardRef<
             {label}
             {required && (
               <span className="ml-1 text-red-500 text-xs">
-                <i className="fas fa-asterisk" style={{ fontSize: ".7em" }}></i>
+                <Asterisk className="h-2.5 w-2.5" />
               </span>
             )}
           </Label>

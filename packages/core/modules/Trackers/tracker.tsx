@@ -26,13 +26,14 @@ import {
 import { useEvents } from "@karrio/hooks/event";
 import { useLogs } from "@karrio/hooks/log";
 import {
-  CheckCircle,
-  Truck,
-  MapPin,
-  Package,
   Calendar,
+  CheckCircle,
+  ChevronRight,
   Clock,
   ExternalLink,
+  MapPin,
+  Package,
+  Truck,
 } from "lucide-react";
 import React from "react";
 
@@ -129,7 +130,7 @@ export const TrackerComponent = ({
                 href="/trackers"
                 className="text-sm font-semibold text-blue-600 tracking-wide hover:text-blue-800 transition-colors duration-150 flex items-center gap-1"
               >
-                Trackers <i className="fas fa-chevron-right text-xs"></i>
+                Trackers <ChevronRight className="h-3 w-3" />
               </AppLink>
               <div className="flex items-center gap-2">
                 <span className="text-3xl font-bold">
@@ -143,7 +144,7 @@ export const TrackerComponent = ({
                 {isPreview && isSheet && (
                   <Button variant="ghost" size="sm" asChild className="h-8">
                     <AppLink href={`/trackers/${trackerId}`} target="_blank">
-                      <i className="fas fa-external-link-alt text-xs"></i>
+                      <ExternalLink className="h-3 w-3" />
                     </AppLink>
                   </Button>
                 )}
@@ -157,7 +158,7 @@ export const TrackerComponent = ({
               {isPreview && (
                 <Button variant="ghost" size="sm" asChild className="h-8">
                   <AppLink href={`/trackers/${trackerId}`} target="_blank">
-                    <i className="fas fa-external-link-alt text-xs"></i>
+                    <ExternalLink className="h-3 w-3" />
                   </AppLink>
                 </Button>
               )}

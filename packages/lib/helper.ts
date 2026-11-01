@@ -684,3 +684,26 @@ export function getBaseUrl() {
   // assume localhost
   return `http://localhost:${process.env.PORT ?? 3002}`;
 }
+
+// Usage ranges shared by the dashboard home (client hook) and its server
+// prefetch, so both ask the API for the same window.
+export const DEFAULT_USAGE_RANGE = "15 days";
+export const USAGE_RANGE_DAYS: Record<string, number> = {
+  "7 days": 7,
+  "15 days": 15,
+  "Last 30 days": 30,
+  "Last 3 months": 90,
+  "Last 6 months": 180,
+  "Last year": 360,
+};
+
+export function usageFilterFor(
+  range: string,
+  now: Date = new Date(),
+): { date_after: string; date_before: string } {
+  const days = USAGE_RANGE_DAYS[range] ?? USAGE_RANGE_DAYS[DEFAULT_USAGE_RANGE];
+  return {
+    date_before: now.toISOString(),
+    date_after: new Date(now.getTime() - days * 86_400_000).toISOString(),
+  };
+}

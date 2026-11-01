@@ -1,3 +1,4 @@
+import { ExternalLink, X } from "lucide-react";
 import {
   failsafe,
   isEqual,
@@ -150,7 +151,7 @@ export const LabelTemplateEditModalProvider = ({
                     onClick={close}
                   >
                     <span className="icon is-large">
-                      <i className="fas fa-lg fa-times"></i>
+                      <X className="h-5 w-5" />
                     </span>
                   </button>
                   <span className="title is-6 has-text-weight-semibold p-3">
@@ -227,7 +228,7 @@ export const LabelTemplateEditModalProvider = ({
                           rel="noreferrer"
                         >
                           <span>Jinja variables</span>
-                          <i className="fas fa-external-link-alt pl-2 is-size-7"></i>
+                          <ExternalLink className="h-3 w-3 pl-2" />
                         </a>{" "}
                         .
                       </p>

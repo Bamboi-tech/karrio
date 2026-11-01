@@ -1,3 +1,4 @@
+import { ExternalLink, Plus, Trash2 } from "lucide-react";
 import MetadataStateProvider, {
   MetadataStateContext,
 } from "@karrio/hooks/metadata";
@@ -91,7 +92,7 @@ export const MetadataEditor = ({
                                   >
                                     <span>{value}</span>
                                     <span className="icon is-small is-size-7 mx-2">
-                                      <i className="fas fa-external-link-alt"></i>
+                                      <ExternalLink className="h-4 w-4" />
                                     </span>
                                   </a>
                                 ) : (
@@ -127,7 +128,7 @@ export const MetadataEditor = ({
                                 onClick={() => context.removeItem(uid)}
                               >
                                 <span className="icon is-small">
-                                  <i className="fas fa-trash"></i>
+                                  <Trash2 className="h-4 w-4" />
                                 </span>
                               </button>
                             </div>
@@ -157,7 +158,7 @@ export const MetadataEditor = ({
                         onClick={() => context.addItem()}
                       >
                         <span className="icon is-small">
-                          <i className="fas fa-plus"></i>
+                          <Plus className="h-4 w-4" />
                         </span>
                         <span>Add another item</span>
                       </button>

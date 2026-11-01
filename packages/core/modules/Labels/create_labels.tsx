@@ -1,4 +1,5 @@
 "use client";
+import { ChevronRight, DollarSign, Pencil, Plus, X } from "lucide-react";
 import {
   DEFAULT_CUSTOMS_CONTENT,
   MetadataObjectTypeEnum,
@@ -393,7 +394,7 @@ export default function Page() {
               style={{ borderRadius: "50%" }}
             >
               <span className="icon is-size-6">
-                <i className="fas fa-lg fa-times"></i>
+                <X className="h-5 w-5" />
               </span>
             </AppLink>
             <span className="title is-6 has-text-weight-semibold p-3">
@@ -739,7 +740,7 @@ export default function Page() {
                                       onClick={onClose}
                                     >
                                       <span className="icon is-size-6">
-                                        <i className="fas fa-lg fa-times"></i>
+                                        <X className="h-5 w-5" />
                                       </span>
                                     </button>
                                   </div>
@@ -1202,7 +1203,7 @@ export default function Page() {
                                                     className="button is-small is-white"
                                                   >
                                                     <span className="icon is-small">
-                                                      <i className="fas fa-pen"></i>
+                                                      <Pencil className="h-4 w-4" />
                                                     </span>
                                                   </button>
                                                 }
@@ -1221,7 +1222,7 @@ export default function Page() {
                                                 )}
                                               >
                                                 <span className="icon is-small">
-                                                  <i className="fas fa-times"></i>
+                                                  <X className="h-4 w-4" />
                                                 </span>
                                               </button>
                                             </div>
@@ -1370,7 +1371,7 @@ export default function Page() {
                                                           }
                                                         >
                                                           <span className="icon is-small">
-                                                            <i className="fas fa-pen"></i>
+                                                            <Pencil className="h-4 w-4" />
                                                           </span>
                                                         </button>
                                                       )}
@@ -1387,7 +1388,7 @@ export default function Page() {
                                                       )}
                                                     >
                                                       <span className="icon is-small">
-                                                        <i className="fas fa-times"></i>
+                                                        <X className="h-4 w-4" />
                                                       </span>
                                                     </button>
                                                   </div>
@@ -1422,7 +1423,7 @@ export default function Page() {
                                                   }
                                                 >
                                                   <span className="icon is-small">
-                                                    <i className="fas fa-plus"></i>
+                                                    <Plus className="h-4 w-4" />
                                                   </span>
                                                   <span>Add item</span>
                                                 </button>
@@ -1593,7 +1594,7 @@ export default function Page() {
                                           }
                                           iconLeft={
                                             <span className="icon is-small is-left">
-                                              <i className="fas fa-dollar-sign"></i>
+                                              <DollarSign className="h-4 w-4" />
                                             </span>
                                           }
                                           iconRight={
@@ -1666,7 +1667,7 @@ export default function Page() {
                                           }
                                           iconLeft={
                                             <span className="icon is-small is-left">
-                                              <i className="fas fa-dollar-sign"></i>
+                                              <DollarSign className="h-4 w-4" />
                                             </span>
                                           }
                                           iconRight={
@@ -1817,7 +1818,7 @@ export default function Page() {
                                           >
                                             <div>
                                               <span className="icon mr-1">
-                                                <i className="fas fa-caret-right"></i>
+                                                <ChevronRight className="h-4 w-4" />
                                               </span>
                                               <span>
                                                 CARRIER SPECIFIC OPTIONS
@@ -2100,7 +2101,7 @@ export default function Page() {
                                                           }
                                                         >
                                                           <span className="icon is-small">
-                                                            <i className="fas fa-pen"></i>
+                                                            <Pencil className="h-4 w-4" />
                                                           </span>
                                                         </button>
                                                       )}
@@ -2126,7 +2127,7 @@ export default function Page() {
                                                       }
                                                     >
                                                       <span className="icon is-small">
-                                                        <i className="fas fa-times"></i>
+                                                        <X className="h-4 w-4" />
                                                       </span>
                                                     </button>
                                                   </div>
@@ -2161,7 +2162,7 @@ export default function Page() {
                                                     }
                                                   >
                                                     <span className="icon is-small">
-                                                      <i className="fas fa-plus"></i>
+                                                      <Plus className="h-4 w-4" />
                                                     </span>
                                                     <span>add commodity</span>
                                                   </button>

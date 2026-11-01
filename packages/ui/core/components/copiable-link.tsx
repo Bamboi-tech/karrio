@@ -1,3 +1,4 @@
+import { Clipboard } from "lucide-react";
 import React from "react";
 
 interface CopiableLinkComponent extends React.InputHTMLAttributes<HTMLAnchorElement> {
@@ -29,7 +30,7 @@ export const CopiableLink = ({
       {...props}
     >
       <span>{text}</span>
-      <i className="fas fa-clipboard ml-3"></i>
+      <Clipboard className="h-4 w-4 ml-3" />
     </a>
   );
 };

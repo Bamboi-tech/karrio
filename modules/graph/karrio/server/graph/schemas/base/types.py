@@ -2,6 +2,8 @@ import typing
 import datetime
 import strawberry
 from django.utils import timezone
+from django.utils import dateparse
+from django.core.cache import cache
 from itertools import groupby
 from operator import itemgetter
 import django.db.models as models
@@ -377,6 +379,214 @@ class WorkspaceConfigType:
         return workspace_config
 
 
+SYSTEM_USAGE_CACHE_TTL = 300  # seconds
+SYSTEM_USAGE_BUCKET = datetime.timedelta(minutes=5)
+SYSTEM_USAGE_SERIES = (
+    "api_errors",
+    "api_requests",
+    "order_volumes",
+    "shipment_count",
+    "shipping_spend",
+    "tracker_count",
+)
+
+
+def _parse_usage_bound(
+    value: typing.Union[str, datetime.datetime],
+) -> datetime.datetime:
+    if isinstance(value, datetime.datetime):
+        parsed = value
+    else:
+        parsed = dateparse.parse_datetime(value) or lib.identity(
+            dateparse.parse_date(value),
+            lambda day: datetime.datetime.combine(day, datetime.time.min),
+        )
+    if parsed is None:
+        raise ValueError(f"Invalid usage filter date: {value!r}")
+    return parsed if timezone.is_aware(parsed) else timezone.make_aware(parsed)
+
+
+def _usage_window(
+    filter: dict,
+) -> typing.Tuple[datetime.datetime, datetime.datetime]:
+    """Round the usage window outwards to 5-minute marks.
+
+    The dashboard sends `moment().toISOString()` bounds that differ on every
+    call, which would defeat any cache. Every series is aggregated per day,
+    so a window widened by at most five minutes at each end yields the same
+    chart; the rounded bounds are both the cache key and the bounds queried.
+    """
+
+    def _floor(value: datetime.datetime) -> datetime.datetime:
+        return value - datetime.timedelta(
+            minutes=value.minute % 5,
+            seconds=value.second,
+            microseconds=value.microsecond,
+        )
+
+    date_after = _floor(_parse_usage_bound(filter["date_after"]))
+    before = _parse_usage_bound(filter["date_before"])
+    date_before = _floor(before)
+    if date_before != before:
+        date_before += SYSTEM_USAGE_BUCKET
+
+    return date_after, date_before
+
+
+def _system_usage_cache_key(
+    request, date_after: datetime.datetime, date_before: datetime.datetime
+) -> str:
+    org = getattr(request, "org", None)
+    return ":".join(
+        str(part)
+        for part in (
+            "system_usage",
+            getattr(org, "pk", None) or "-",
+            bool(getattr(request, "test_mode", False)),
+            date_after.isoformat(),
+            date_before.isoformat(),
+        )
+    )
+
+
+def _compute_system_usage(_filter: dict, test_mode: bool) -> dict:
+    """Aggregate every usage series for one window.
+
+    Returns plain dicts and lists (no strawberry types) so the result can be
+    cached as-is; `SystemUsageType.resolve` turns the series into types.
+    """
+    _test_filter = dict(test_mode=test_mode)
+
+    api_requests = list(
+        filters.LogFilter(
+            _filter,
+            core.APILogIndex.objects.filter(**_test_filter),
+        )
+        .qs.annotate(date=functions.TruncDay("requested_at"))
+        .values("date")
+        .annotate(count=models.Count("id"))
+        .order_by("-date")
+    )
+    api_errors = list(
+        filters.LogFilter(
+            {**_filter, "status": "failed"},
+            core.APILogIndex.objects.filter(**_test_filter),
+        )
+        .qs.annotate(date=functions.TruncDay("requested_at"))
+        .values("date")
+        .annotate(count=models.Count("id"))
+        .order_by("-date")
+    )
+    # Calculate order volumes from JSONField (line_items is embedded JSON)
+    _compute_total = lambda items: sum(
+        float(i.get("value_amount") or 0) * float(i.get("quantity") or 1)
+        for i in (items or [])
+    )
+    orders_with_totals = [
+        (o["date"], _compute_total(o.get("line_items")))
+        for o in order_filters.OrderFilters(
+            dict(
+                created_before=_filter["date_before"],
+                created_after=_filter["date_after"],
+            ),
+            orders.Order.objects.filter(**_test_filter).exclude(
+                status__in=["cancelled", "unfulfilled"]
+            ),
+        )
+        .qs.annotate(date=functions.TruncDay("created_at"))
+        .values("date", "line_items")
+        .order_by("-date")
+    ]
+    order_volumes = [
+        {"date": date, "count": sum(t for _, t in items)}
+        for date, items in groupby(orders_with_totals, key=itemgetter(0))
+    ]
+    shipment_count = list(
+        filters.ShipmentFilters(
+            dict(
+                created_before=_filter["date_before"],
+                created_after=_filter["date_after"],
+            ),
+            manager.Shipment.objects.filter(**_test_filter),
+        )
+        .qs.annotate(date=functions.TruncDay("created_at"))
+        .values("date")
+        .annotate(count=models.Count("id"))
+        .order_by("-date")
+    )
+    shipping_spend = list(
+        filters.ShipmentFilters(
+            dict(
+                created_before=_filter["date_before"],
+                created_after=_filter["date_after"],
+            ),
+            manager.Shipment.objects.filter(**_test_filter).exclude(
+                status__in=["cancelled", "draft"]
+            ),
+        )
+        .qs.annotate(date=functions.TruncDay("created_at"))
+        .values("date")
+        .annotate(
+            count=models.Count("id"),
+            amount=models.Sum(
+                functions.Cast("selected_rate__total_charge", models.FloatField())
+            ),
+        )
+        .order_by("-date")
+    )
+    tracker_count = list(
+        filters.TrackerFilters(
+            dict(
+                created_before=_filter["date_before"],
+                created_after=_filter["date_after"],
+            ),
+            manager.Tracking.objects.filter(**_test_filter),
+        )
+        .qs.annotate(date=functions.TruncDay("created_at"))
+        .values("date")
+        .annotate(count=models.Count("id"))
+        .order_by("-date")
+    )
+
+    organization_count = 1
+
+    if conf.settings.MULTI_ORGANIZATIONS:
+        import karrio.server.orgs.models as orgs
+
+        organization_count = orgs.Organization.objects.count()
+
+    return dict(
+        user_count=User.objects.count(),
+        organization_count=organization_count,
+        total_errors=sum([item["count"] for item in api_errors], 0),
+        total_requests=sum([item["count"] for item in api_requests], 0),
+        total_trackers=sum([item["count"] for item in tracker_count], 0),
+        total_shipments=sum([item["count"] for item in shipment_count], 0),
+        order_volume=lib.to_decimal(
+            sum(
+                [item["count"] for item in order_volumes if item["count"] is not None],
+                0.0,
+            )
+        ),
+        total_shipping_spend=lib.to_decimal(
+            sum(
+                [
+                    item["amount"]
+                    for item in shipping_spend
+                    if item["amount"] is not None
+                ],
+                0.0,
+            )
+        ),
+        api_errors=api_errors,
+        api_requests=api_requests,
+        order_volumes=order_volumes,
+        shipment_count=shipment_count,
+        shipping_spend=shipping_spend,
+        tracker_count=tracker_count,
+    )
+
+
 @strawberry.type
 class SystemUsageType:
     total_errors: typing.Optional[int] = None
@@ -400,166 +610,44 @@ class SystemUsageType:
         info: Info,
         filter: typing.Optional[utils.UsageFilter] = strawberry.UNSET,
     ) -> "SystemUsageType":
-        _test_mode = info.context.request.test_mode
-        _test_filter = dict(test_mode=_test_mode)
+        request = info.context.request
         _filter = {
             "date_before": timezone.now(),
             "date_after": (timezone.now() - datetime.timedelta(days=30)),
-            **(filter if not utils.is_unset(filter) else utils.UsageFilter()).to_dict(),
+            **{
+                key: value
+                for key, value in (
+                    filter if not utils.is_unset(filter) else utils.UsageFilter()
+                )
+                .to_dict()
+                .items()
+                if value is not None
+            },
         }
+        date_after, date_before = _usage_window(_filter)
+        cache_key = _system_usage_cache_key(request, date_after, date_before)
+        usage = cache.get(cache_key)
 
-        api_requests = (
-            filters.LogFilter(
-                _filter,
-                core.APILogIndex.objects.filter(**_test_filter),
+        if usage is None:
+            # The dashboard home asks for this on every visit while the series
+            # only move when shipments, trackers, orders or API calls land:
+            # one aggregation per five-minute window per org and mode.
+            usage = _compute_system_usage(
+                {**_filter, "date_after": date_after, "date_before": date_before},
+                test_mode=bool(getattr(request, "test_mode", False)),
             )
-            .qs.annotate(date=functions.TruncDay("requested_at"))
-            .values("date")
-            .annotate(count=models.Count("id"))
-            .order_by("-date")
-        )
-        api_errors = (
-            filters.LogFilter(
-                {**_filter, "status": "failed"},
-                core.APILogIndex.objects.filter(**_test_filter),
-            )
-            .qs.annotate(date=functions.TruncDay("requested_at"))
-            .values("date")
-            .annotate(count=models.Count("id"))
-            .order_by("-date")
-        )
-        # Calculate order volumes from JSONField (line_items is embedded JSON)
-        _compute_total = lambda items: sum(
-            float(i.get("value_amount") or 0) * float(i.get("quantity") or 1)
-            for i in (items or [])
-        )
-        orders_with_totals = [
-            (o["date"], _compute_total(o.get("line_items")))
-            for o in order_filters.OrderFilters(
-                dict(
-                    created_before=_filter["date_before"],
-                    created_after=_filter["date_after"],
-                ),
-                orders.Order.objects.filter(**_test_filter).exclude(
-                    status__in=["cancelled", "unfulfilled"]
-                ),
-            )
-            .qs.annotate(date=functions.TruncDay("created_at"))
-            .values("date", "line_items")
-            .order_by("-date")
-        ]
-        order_volumes = [
-            {"date": date, "count": sum(t for _, t in items)}
-            for date, items in groupby(orders_with_totals, key=itemgetter(0))
-        ]
-        shipment_count = (
-            filters.ShipmentFilters(
-                dict(
-                    created_before=_filter["date_before"],
-                    created_after=_filter["date_after"],
-                ),
-                manager.Shipment.objects.filter(**_test_filter),
-            )
-            .qs.annotate(date=functions.TruncDay("created_at"))
-            .values("date")
-            .annotate(count=models.Count("id"))
-            .order_by("-date")
-        )
-        shipping_spend = (
-            filters.ShipmentFilters(
-                dict(
-                    created_before=_filter["date_before"],
-                    created_after=_filter["date_after"],
-                ),
-                manager.Shipment.objects.filter(**_test_filter).exclude(
-                    status__in=["cancelled", "draft"]
-                ),
-            )
-            .qs.annotate(date=functions.TruncDay("created_at"))
-            .values("date")
-            .annotate(
-                count=models.Count("id"),
-                amount=models.Sum(
-                    functions.Cast("selected_rate__total_charge", models.FloatField())
-                ),
-            )
-            .order_by("-date")
-        )
-        tracker_count = (
-            filters.TrackerFilters(
-                dict(
-                    created_before=_filter["date_before"],
-                    created_after=_filter["date_after"],
-                ),
-                manager.Tracking.objects.filter(**_test_filter),
-            )
-            .qs.annotate(date=functions.TruncDay("created_at"))
-            .values("date")
-            .annotate(count=models.Count("id"))
-            .order_by("-date")
-        )
-
-        total_errors = sum([item["count"] for item in api_errors], 0)
-        total_requests = sum([item["count"] for item in api_requests], 0)
-        total_trackers = sum([item["count"] for item in tracker_count], 0)
-        total_shipments = sum([item["count"] for item in shipment_count], 0)
-        order_volume = lib.to_decimal(
-            sum(
-                [item["count"] for item in order_volumes if item["count"] is not None],
-                0.0,
-            )
-        )
-        total_shipping_spend = lib.to_decimal(
-            sum(
-                [
-                    item["amount"]
-                    for item in shipping_spend
-                    if item["amount"] is not None
-                ],
-                0.0,
-            )
-        )
-        user_count = User.objects.count()
-        organization_count = 1
-
-        if conf.settings.MULTI_ORGANIZATIONS:
-            import karrio.server.orgs.models as orgs
-
-            organization_count = orgs.Organization.objects.count()
+            cache.set(cache_key, usage, SYSTEM_USAGE_CACHE_TTL)
 
         return SystemUsageType(
-            user_count=user_count,
-            order_volume=order_volume,
-            total_errors=total_errors,
-            total_requests=total_requests,
-            total_trackers=total_trackers,
-            total_shipments=total_shipments,
-            organization_count=organization_count,
-            total_shipping_spend=total_shipping_spend,
-            api_errors=[
-                utils.UsageStatType.parse(item, label="api_errors")
-                for item in api_errors
-            ],
-            api_requests=[
-                utils.UsageStatType.parse(item, label="api_requests")
-                for item in api_requests
-            ],
-            order_volumes=[
-                utils.UsageStatType.parse(item, label="order_volumes")
-                for item in order_volumes
-            ],
-            shipment_count=[
-                utils.UsageStatType.parse(item, label="shipment_count")
-                for item in shipment_count
-            ],
-            shipping_spend=[
-                utils.UsageStatType.parse(item, label="shipping_spend")
-                for item in shipping_spend
-            ],
-            tracker_count=[
-                utils.UsageStatType.parse(item, label="tracker_count")
-                for item in tracker_count
-            ],
+            **{
+                key: value
+                for key, value in usage.items()
+                if key not in SYSTEM_USAGE_SERIES
+            },
+            **{
+                key: [utils.UsageStatType.parse(item, label=key) for item in usage[key]]
+                for key in SYSTEM_USAGE_SERIES
+            },
         )
 
 

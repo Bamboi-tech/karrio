@@ -14,7 +14,7 @@ import {
   CommandItem,
   CommandList,
 } from "@karrio/ui/components/ui/command";
-import { Check, ChevronsUpDown } from "lucide-react";
+import { Check, ChevronsUpDown, Asterisk, Unlink } from "lucide-react";
 import { cn } from "@karrio/ui/lib/utils";
 import { formatOrderLineItem, isNone } from "@karrio/lib";
 import { useOrders } from "@karrio/hooks/order";
@@ -96,7 +96,7 @@ export const LineItemInput = React.forwardRef<
             {label}
             {required && (
               <span className="ml-1 text-red-500 text-xs">
-                <i className="fas fa-asterisk" style={{ fontSize: ".7em" }}></i>
+                <Asterisk className="h-2.5 w-2.5" />
               </span>
             )}
           </Label>
@@ -179,7 +179,7 @@ export const LineItemInput = React.forwardRef<
               onClick={handleUnlink}
               className="h-8 w-10 px-0 py-0 flex-shrink-0"
             >
-              <i className="fas fa-unlink text-sm"></i>
+              <Unlink className="h-4 w-4" />
             </Button>
           )}
         </div>

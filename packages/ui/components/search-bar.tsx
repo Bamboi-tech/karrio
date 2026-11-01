@@ -186,11 +186,11 @@ export const SearchBar = React.forwardRef<HTMLInputElement, SearchBarProps>(
     const getResultIcon = (type: SearchResult["type"]) => {
       switch (type) {
         case "shipment":
-          return <Truck className="h-4 w-4" />; // fas fa-truck
+          return <Truck className="h-4 w-4" />;
         case "order":
-          return <Inbox className="h-4 w-4" />; // fas fa-inbox
+          return <Inbox className="h-4 w-4" />;
         case "tracker":
-          return <Navigation className="h-4 w-4" />; // fas fa-location-arrow
+          return <Navigation className="h-4 w-4" />;
         default:
           return <Package className="h-4 w-4" />;
       }

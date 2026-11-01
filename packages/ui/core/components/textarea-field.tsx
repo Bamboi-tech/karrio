@@ -1,3 +1,4 @@
+import { Asterisk } from "lucide-react";
 import React from "react";
 
 interface TextAreaFieldComponent extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
@@ -33,7 +34,7 @@ export const TextAreaField = React.forwardRef(
             {label}
             {required && (
               <span className="icon is-small has-text-danger small-icon">
-                <i className="fas fa-asterisk" style={{ fontSize: ".7em" }}></i>
+                <Asterisk className="h-2.5 w-2.5" />
               </span>
             )}
           </label>

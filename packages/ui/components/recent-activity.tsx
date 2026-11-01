@@ -1,4 +1,5 @@
 "use client";
+import { Circle } from "lucide-react";
 
 import * as React from "react";
 import { cn } from "@karrio/ui/lib/utils";
@@ -31,11 +32,11 @@ const getActivityIcon = (
 ) => {
   // Green for delivered, gray for everything else
   if (delivered) {
-    return <i className="fas fa-circle text-green-600 text-xs" />;
+    return <Circle className="h-3 w-3 text-green-600" />;
   }
 
   // Gray for all other cases
-  return <i className="fas fa-circle text-gray-400 text-xs" />;
+  return <Circle className="h-3 w-3 text-gray-400" />;
 };
 
 export const RecentActivity: React.FC<RecentActivityProps> = ({

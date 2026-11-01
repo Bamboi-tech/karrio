@@ -1,3 +1,4 @@
+import { X } from "lucide-react";
 import {
   CreateRateSheetMutationInput,
   CurrencyCodeEnum,
@@ -175,7 +176,7 @@ export const RateSheetModalEditor = ({
                   onClick={close}
                 >
                   <span className="icon is-large">
-                    <i className="fas fa-lg fa-times"></i>
+                    <X className="h-5 w-5" />
                   </span>
                 </button>
                 <span className="title is-6 has-text-weight-semibold px-2 py-3">

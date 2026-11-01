@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Check, X } from "lucide-react";
+import { Check, X, Asterisk } from "lucide-react";
 import { formatAddress } from "@karrio/lib";
 import { cn } from "@karrio/ui/lib/utils";
 import {
@@ -200,7 +200,7 @@ export const AddressCombobox = React.forwardRef<
               {label}
               {required && (
                 <span className="ml-1 text-red-500 text-xs">
-                  <i className="fas fa-asterisk text-[0.7em]"></i>
+                  <Asterisk className="h-2.5 w-2.5" />
                 </span>
               )}
             </Label>
@@ -248,7 +248,7 @@ export const AddressCombobox = React.forwardRef<
             {label}
             {required && (
               <span className="ml-1 text-red-500 text-xs">
-                <i className="fas fa-asterisk text-[0.7em]"></i>
+                <Asterisk className="h-2.5 w-2.5" />
               </span>
             )}
           </Label>

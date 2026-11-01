@@ -1,3 +1,4 @@
+import { Check, CircleAlert, TriangleAlert } from "lucide-react";
 import {
   AutomationAuthType,
   PartialWorkflowConnectionMutationInput,
@@ -157,12 +158,12 @@ export const ConnectionModalEditor = ({
             <div className="mt-2">
               {defaultValue.is_credentials_complete ? (
                 <span className="tag is-success is-small">
-                  <i className="fas fa-check mr-1"></i>
+                  <Check className="mr-1 h-4 w-4" />
                   Credentials Complete
                 </span>
               ) : (
                 <span className="tag is-danger is-small">
-                  <i className="fas fa-exclamation-triangle mr-1"></i>
+                  <TriangleAlert className="mr-1 h-4 w-4" />
                   Credentials Incomplete
                 </span>
               )}
@@ -282,7 +283,7 @@ export const ConnectionModalEditor = ({
                 {isCredentialsIncomplete() && (
                   <div className="notification is-danger is-light p-3 mb-3">
                     <div className="is-flex is-align-items-center mb-2">
-                      <i className="fas fa-exclamation-triangle mr-2"></i>
+                      <TriangleAlert className="mr-2 h-4 w-4" />
                       <strong>Credentials Required</strong>
                     </div>
 
@@ -338,7 +339,7 @@ export const ConnectionModalEditor = ({
                                 className="icon has-text-danger ml-2"
                                 title="Credentials incomplete"
                               >
-                                <i className="fas fa-exclamation-circle"></i>
+                                <CircleAlert className="h-4 w-4" />
                               </span>
                             )}
                           </div>

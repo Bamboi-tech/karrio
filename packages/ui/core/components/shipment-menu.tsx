@@ -1,4 +1,5 @@
 "use client";
+import { Ellipsis } from "lucide-react";
 import {
   ManualShipmentStatusEnum,
   ShipmentStatusEnum,
@@ -94,7 +95,7 @@ export const ShipmentMenu = ({
     >
       <div className="dropdown-trigger" onClick={handleOnClick} ref={trigger}>
         <a className="button is-white is-small p-3">
-          <i className={`fas fa-ellipsis-h`} aria-hidden="true"></i>
+          <Ellipsis className="h-4 w-4" aria-hidden="true" />
         </a>
       </div>
 

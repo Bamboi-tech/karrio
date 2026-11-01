@@ -1,3 +1,4 @@
+import { Inbox, Link, Navigation, Plus, Receipt } from "lucide-react";
 import { Dropdown, closeDropdown } from "./dropdown";
 import { AppLink } from "./app-link";
 
@@ -10,7 +11,7 @@ export const ShortcutDropdown = ({ ...props }): JSX.Element => {
         style={{ borderRadius: "50%" }}
       >
         <span className="icon">
-          <i className="is-size-6 fas fa-plus"></i>
+          <Plus className="h-4 w-4" />
         </span>
       </button>
 
@@ -29,7 +30,7 @@ export const ShortcutDropdown = ({ ...props }): JSX.Element => {
               href="/connections?modal=new"
               className="options-item px-2 py-2 has-text-info has-text-weight-bold is-size-7"
             >
-              <i className="fas fa-link pr-2"></i>
+              <Link className="h-4 w-4 pr-2" />
               <span>Carrier account</span>
             </AppLink>
 
@@ -37,7 +38,7 @@ export const ShortcutDropdown = ({ ...props }): JSX.Element => {
               href="/draft_orders/new"
               className="options-item px-2 py-2 has-text-info has-text-weight-bold is-size-7"
             >
-              <i className="fas fa-inbox pr-2"></i>
+              <Inbox className="h-4 w-4 pr-2" />
               <span>Create order</span>
             </AppLink>
 
@@ -45,7 +46,7 @@ export const ShortcutDropdown = ({ ...props }): JSX.Element => {
               href="/create_label?shipment_id=new"
               className="options-item px-2 py-2 has-text-info has-text-weight-bold is-size-7"
             >
-              <i className="fas fa-file-invoice pr-2"></i>
+              <Receipt className="h-4 w-4 pr-2" />
               <span>Shipping label</span>
             </AppLink>
 
@@ -53,7 +54,7 @@ export const ShortcutDropdown = ({ ...props }): JSX.Element => {
               href="/trackers?modal=new"
               className="options-item px-2 py-2 has-text-info has-text-weight-bold is-size-7"
             >
-              <i className="fas fa-location-arrow pr-2"></i>
+              <Navigation className="h-4 w-4 pr-2" />
               <span>Package tracker</span>
             </AppLink>
           </div>

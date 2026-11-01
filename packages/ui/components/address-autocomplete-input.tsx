@@ -1,3 +1,4 @@
+import { Asterisk } from "lucide-react";
 import {
   useAddressAutocomplete,
   useAddressPredictionFormat,
@@ -121,7 +122,7 @@ export const AddressAutocompleteInput = ({
           {label}
           {required && (
             <span className="ml-1 text-red-500 text-xs">
-              <i className="fas fa-asterisk text-[0.7em]"></i>
+              <Asterisk className="h-2.5 w-2.5" />
             </span>
           )}
         </Label>

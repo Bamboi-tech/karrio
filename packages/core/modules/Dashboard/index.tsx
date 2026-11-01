@@ -1,15 +1,16 @@
 "use client";
 
 import React from "react";
-import dynamic from "next/dynamic";
 import { Card, CardContent } from "@karrio/ui/components/ui/card";
+import { UsageSparkline } from "@karrio/ui/components/usage-sparkline";
+import { GetSystemUsage_system_usage } from "@karrio/types";
 import { AppLink } from "@karrio/ui/core/components/app-link";
 import { Button } from "@karrio/ui/components/ui/button";
 import { useAppMode } from "@karrio/hooks/app-mode";
 import { useAPIUsage } from "@karrio/hooks/usage";
 import { useUser } from "@karrio/hooks/user";
 import { useRouter } from "next/navigation";
-import { p } from "@karrio/lib";
+import { DEFAULT_USAGE_RANGE, p } from "@karrio/lib";
 import moment from "moment";
 import {
   Package,
@@ -31,13 +32,11 @@ import {
   SelectValue,
 } from "@karrio/ui/components/ui/select";
 
-// recharts is only fetched when a chart is rendered (see ./charts.tsx).
-const DashboardBarChart = dynamic(
-  () => import("./charts").then((m) => m.DashboardBarChart),
-  { ssr: false, loading: () => null },
-);
-
-export default function DashboardPage() {
+export default function DashboardPage({
+  initialUsage,
+}: {
+  initialUsage?: GetSystemUsage_system_usage | null;
+}) {
   const router = useRouter();
   const { basePath } = useAppMode();
   const {
@@ -50,7 +49,7 @@ export default function DashboardPage() {
     USAGE_FILTERS,
     DAYS_LIST,
     currentFilter,
-  } = useAPIUsage();
+  } = useAPIUsage({ initialUsage });
 
   // Don't render until user is loaded
   if (userLoading) {
@@ -170,18 +169,17 @@ export default function DashboardPage() {
   const renderChart = (data: any[] | null | undefined, dataKey: string = "count") => {
     if (!data || data.length === 0) return null;
 
-    const chartData = DAYS_LIST[currentFilter() || "15 days"].map(
+    const chartData = DAYS_LIST[currentFilter() || DEFAULT_USAGE_RANGE].map(
       (day) => ({
-        name: day,
-        [dataKey]: data.find(
-          ({ date }) => moment(date).format("MMM D") === day,
-        )?.[dataKey] || 0,
+        label: day,
+        value:
+          data.find(({ date }) => moment(date).format("MMM D") === day)?.[
+            dataKey
+          ] || 0,
       }),
     );
 
-    return (
-      <DashboardBarChart data={chartData} dataKey={dataKey} />
-    );
+    return <UsageSparkline data={chartData} />;
   };
 
   return (

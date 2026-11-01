@@ -1,4 +1,5 @@
 "use client";
+import { ChevronDown, Pencil } from "lucide-react";
 import {
   Collection,
   NoneEnum,
@@ -425,7 +426,7 @@ export const ConnectProviderModal = ({
                         <div className="is-flex is-justify-content-space-between is-clickable px-0 mb-2">
                           <h2 className="title is-6 my-3">Connection Config</h2>
                           <span className="icon is-small m-2 mt-3">
-                            <i className="fas fa-chevron-down"></i>
+                            <ChevronDown className="h-4 w-4" />
                           </span>
                         </div>
                       </CollapsibleTrigger>
@@ -595,7 +596,7 @@ export const ConnectProviderModal = ({
                             onClick={() => editMetadata()}
                           >
                             <span className="icon is-small">
-                              <i className="fas fa-pen"></i>
+                              <Pencil className="h-4 w-4" />
                             </span>
                             <span>Edit metadata</span>
                           </button>

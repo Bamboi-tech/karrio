@@ -1,3 +1,4 @@
+import { Plus, Store } from "lucide-react";
 import {
   OrganizationType,
   useOrganizationMutation,
@@ -96,7 +97,7 @@ export const OrganizationDropdown = (): JSX.Element => {
               ref={trigger}
             >
               <span className="icon">
-                <i className="fas fa-store"></i>
+                <Store className="h-4 w-4" />
               </span>
               <span className="mr-4">{selected?.name || ""}</span>
             </button>
@@ -116,7 +117,7 @@ export const OrganizationDropdown = (): JSX.Element => {
                   onClick={select(org)}
                   className={`dropdown-item ${org?.id === selected?.id ? "is-active" : ""}`}
                 >
-                  <i className="fas fa-store"></i>
+                  <Store className="h-4 w-4" />
                   <span className="px-2">{org?.name}</span>
                 </a>
               ))}
@@ -124,7 +125,7 @@ export const OrganizationDropdown = (): JSX.Element => {
               {/* Create organization action */}
               {ALLOW_MULTI_ACCOUNT && (
                 <a onClick={() => create()} className="dropdown-item">
-                  <i className="fas fa-plus"></i>
+                  <Plus className="h-4 w-4" />
                   <span className="px-2">New organization</span>
                 </a>
               )}

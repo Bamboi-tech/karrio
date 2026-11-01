@@ -1,3 +1,4 @@
+import { Asterisk, Search } from "lucide-react";
 import React, {
   useState,
   useRef,
@@ -100,7 +101,7 @@ export const DropdownInput = ({
           {label}
           {required && (
             <span className="icon is-small has-text-danger small-icon">
-              <i className="fas fa-asterisk" style={{ fontSize: ".7em" }}></i>
+              <Asterisk className="h-2.5 w-2.5" />
             </span>
           )}
         </label>
@@ -143,7 +144,7 @@ export const DropdownInput = ({
                       ref={control}
                     />
                     <span className="icon is-left is-small">
-                      <i className="fas fa-search" aria-hidden="true"></i>
+                      <Search className="h-4 w-4" aria-hidden="true" />
                     </span>
                   </p>
                 </div>

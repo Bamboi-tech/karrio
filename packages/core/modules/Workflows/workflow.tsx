@@ -1,5 +1,17 @@
 "use client";
 import {
+  ArrowDown,
+  Check,
+  CircleCheck,
+  Copy,
+  Pencil,
+  Play,
+  Plus,
+  Trash2,
+  TriangleAlert,
+  X,
+} from "lucide-react";
+import {
   ActionNodeInput,
   AutomationActionType,
   AutomationAuthType,
@@ -90,7 +102,7 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
   const NextIndicator = () => (
     <div className="is-flex is-justify-content-space-around p-2 my-3">
       <span className="icon is-size-6">
-        <i className="fas fa-lg fa-arrow-down"></i>
+        <ArrowDown className="h-5 w-5" />
       </span>
     </div>
   );
@@ -117,7 +129,7 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
                 style={{ borderRadius: "50%" }}
               >
                 <span className="icon is-large">
-                  <i className="fas fa-lg fa-times"></i>
+                  <X className="h-5 w-5" />
                 </span>
               </AppLink>
               <span className="title is-6 has-text-weight-semibold px-2 py-3">
@@ -329,7 +341,7 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
                               }
                               iconRight={
                                 <span className="icon is-small is-right">
-                                  <i className="fas fa-copy"></i>
+                                  <Copy className="h-4 w-4" />
                                 </span>
                               }
                               readOnly
@@ -375,7 +387,7 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
                                           className="button is-white"
                                         >
                                           <span className="icon">
-                                            <i className="fas fa-pen"></i>
+                                            <Pencil className="h-4 w-4" />
                                           </span>
                                         </button>
                                       }
@@ -392,7 +404,7 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
                                           disabled={index == 0}
                                         >
                                           <span className="icon">
-                                            <i className="fas fa-trash"></i>
+                                            <Trash2 className="h-4 w-4" />
                                           </span>
                                         </button>
                                       }
@@ -845,7 +857,7 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
                                                       className="icon has-text-danger ml-2"
                                                       title="Credentials incomplete"
                                                     >
-                                                      <i className="fas fa-exclamation-triangle"></i>
+                                                      <TriangleAlert className="h-4 w-4" />
                                                     </span>
                                                   )}
                                                 {action.connection &&
@@ -856,7 +868,7 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
                                                       className="icon has-text-success ml-2"
                                                       title="Credentials complete"
                                                     >
-                                                      <i className="fas fa-check-circle"></i>
+                                                      <CircleCheck className="h-4 w-4" />
                                                     </span>
                                                   )}
                                               </div>
@@ -891,9 +903,11 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
                                                     className="button is-white"
                                                   >
                                                     <span className="icon">
-                                                      <i
-                                                        className={`fas fa-${!!action.connection ? "pen" : "plus"}`}
-                                                      ></i>
+                                                      {!!action.connection ? (
+                                                        <Pencil className="h-4 w-4" />
+                                                      ) : (
+                                                        <Plus className="h-4 w-4" />
+                                                      )}
                                                     </span>
                                                   </button>
                                                 }
@@ -913,7 +927,7 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
                                                     }
                                                   >
                                                     <span className="icon">
-                                                      <i className="fas fa-trash"></i>
+                                                      <Trash2 className="h-4 w-4" />
                                                     </span>
                                                   </button>
                                                 }
@@ -987,12 +1001,12 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
                                                   {(action.connection as any)
                                                     .is_credentials_complete ? (
                                                     <span className="tag is-success is-small">
-                                                      <i className="fas fa-check mr-1"></i>
+                                                      <Check className="h-4 w-4 mr-1" />
                                                       Complete
                                                     </span>
                                                   ) : (
                                                     <span className="tag is-danger is-small">
-                                                      <i className="fas fa-exclamation-triangle mr-1"></i>
+                                                      <TriangleAlert className="h-4 w-4 mr-1" />
                                                       Incomplete
                                                     </span>
                                                   )}
@@ -1209,7 +1223,7 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
                           onClick={() => mutation.runWorkflow()}
                         >
                           <span className="icon">
-                            <i className="fas fa-play"></i>
+                            <Play className="h-4 w-4" />
                           </span>
                           <span>Exexute workflow</span>
                         </button>

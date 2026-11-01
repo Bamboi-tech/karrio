@@ -27,7 +27,14 @@ import {
 import { ShipmentPreviewSheetContext } from "@karrio/ui/components/shipment-preview-context";
 import { useAppMode } from "@karrio/hooks/app-mode";
 import { useRouter } from "next/navigation";
-import { Loader2 } from "lucide-react";
+import {
+  ArrowRight,
+  Check,
+  ChevronRight,
+  ExternalLink,
+  Loader2,
+  Pencil,
+} from "lucide-react";
 import { ParcelDescription } from "@karrio/ui/components/parcel-description";
 import { ActivityTimeline } from "@karrio/ui/components/activity-timeline";
 import { useShipment, useShipmentMutation } from "@karrio/hooks/shipment";
@@ -392,7 +399,7 @@ export const ShipmentComponent = ({
                 href="/shipments"
                 className="text-sm font-semibold text-blue-600 tracking-wide hover:text-blue-800 transition-colors duration-150 flex items-center gap-1"
               >
-                Shipments <i className="fas fa-chevron-right text-xs"></i>
+                Shipments <ChevronRight className="h-3 w-3" />
               </AppLink>
               <div className="flex items-center gap-2">
                 <div className="flex items-baseline gap-1">
@@ -422,7 +429,7 @@ export const ShipmentComponent = ({
                 {isPreview && isSheet && (
                   <Button variant="ghost" size="sm" asChild className="h-8">
                     <AppLink href={`/shipments/${shipmentId}`} target="_blank">
-                      <i className="fas fa-external-link-alt text-xs"></i>
+                      <ExternalLink className="h-3 w-3" />
                     </AppLink>
                   </Button>
                 )}
@@ -441,7 +448,7 @@ export const ShipmentComponent = ({
               {isPreview && (
                 <Button variant="ghost" size="sm" asChild className="h-8">
                   <AppLink href={`/shipments/${shipmentId}`} target="_blank">
-                    <i className="fas fa-external-link-alt text-xs"></i>
+                    <ExternalLink className="h-3 w-3" />
                   </AppLink>
                 </Button>
               )}
@@ -636,7 +643,7 @@ export const ShipmentComponent = ({
                       rel="noreferrer"
                     >
                       Tracking details
-                      <i className="fas fa-external-link-alt text-xs"></i>
+                      <ExternalLink className="h-3 w-3" />
                     </a>
                   </div>
                   <hr className="mt-1 mb-2" style={{ height: "1px" }} />
@@ -893,7 +900,7 @@ export const ShipmentComponent = ({
                             {erpActions.confirmAddress.isLoading ? (
                               <Loader2 className="mr-2 h-3 w-3 animate-spin" />
                             ) : (
-                              <i className="fas fa-check mr-2 text-xs"></i>
+                              <Check className="h-3 w-3 mr-2" />
                             )}
                             {erpActions.confirmAddress.isLoading
                               ? "Confirming…"
@@ -911,7 +918,7 @@ export const ShipmentComponent = ({
                             onSubmit={correctRecipientAddress}
                             trigger={
                               <Button variant="outline" size="sm">
-                                <i className="fas fa-pen mr-2 text-xs"></i>
+                                <Pencil className="h-3 w-3 mr-2" />
                                 Correct address
                               </Button>
                             }
@@ -978,7 +985,7 @@ export const ShipmentComponent = ({
                           onClick={() => openShipment(replacement)}
                         >
                           Open the current shipment
-                          <i className="fas fa-arrow-right ml-2 text-xs"></i>
+                          <ArrowRight className="h-3 w-3 ml-2" />
                         </Button>
                       </div>
                     )}

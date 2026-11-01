@@ -1,5 +1,7 @@
 "use server";
 import {
+  DEFAULT_USAGE_RANGE,
+  gqlstr,
   isNone,
   KARRIO_ADMIN_API_KEY,
   KARRIO_ADMIN_URL,
@@ -9,8 +11,16 @@ import {
   ServerErrorCode,
   TENANT_ENV_KEY,
   url$,
+  usageFilterFor,
 } from "@karrio/lib";
-import { AccountContextDataType, Metadata, TenantType } from "@karrio/types";
+import {
+  AccountContextDataType,
+  GET_SYSTEM_USAGE,
+  GetSystemUsage,
+  GetSystemUsage_system_usage,
+  Metadata,
+  TenantType,
+} from "@karrio/types";
 import { revalidateTag, unstable_cache } from "next/cache";
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
@@ -22,6 +32,7 @@ const METADATA_REVALIDATE = 60;
 const ACCOUNT_DATA_REVALIDATE = 60;
 const ACCOUNT_DATA_TAG = "account-data";
 const ORG_DATA_TAG = "org-data";
+const USAGE_DATA_TAG = "usage-data";
 
 /**
  * Helper function to extract the current domain from headers
@@ -309,6 +320,73 @@ async function fetchUserData(
     });
 
   return { ...data, error };
+}
+
+/**
+ * Usage for the dashboard home's default range, fetched during SSR so the
+ * stat cards render in the HTML instead of after hydration. Only the
+ * single-tenant `system_usage` query is prefetched: with MULTI_ORGANIZATIONS
+ * the home reads organization usage through the ee schema on the client.
+ * The API caches the aggregation per 5-minute window; the 60s Next cache on
+ * top saves the round trip for repeat visits.
+ */
+export async function loadSystemUsage(
+  session: any,
+  metadata?: Metadata,
+  domain?: string,
+): Promise<{ usage: GetSystemUsage_system_usage | null; error?: any }> {
+  if (!session || !metadata || metadata.MULTI_ORGANIZATIONS) {
+    return { usage: null };
+  }
+
+  const {
+    userId,
+    orgId,
+    testMode,
+    domain: scopeDomain,
+  } = sessionCacheScope(session, domain);
+  const loader = withResultCache(
+    () => fetchSystemUsage(session, metadata, domain),
+    [`${USAGE_DATA_TAG}-${userId}-${orgId}-${testMode}-${scopeDomain}`],
+    [USAGE_DATA_TAG],
+  );
+
+  return await loader();
+}
+
+async function fetchSystemUsage(
+  session: any,
+  metadata: Metadata,
+  domain?: string,
+) {
+  const API_URL = await getAPIURL(metadata, domain);
+  const { accessToken, orgId, testMode } = session;
+
+  return await axios
+    .post<{ data?: GetSystemUsage; errors?: unknown[] }>(
+      url$`${API_URL}/graphql`,
+      {
+        query: gqlstr(GET_SYSTEM_USAGE),
+        variables: { filter: usageFilterFor(DEFAULT_USAGE_RANGE) },
+      },
+      {
+        headers: {
+          ...(orgId ? { "x-org-id": orgId } : {}),
+          ...(testMode ? { "x-test-mode": testMode } : {}),
+          authorization: `Bearer ${accessToken}`,
+        } as any,
+      },
+    )
+    .then((res) => ({
+      usage: res.data?.data?.system_usage ?? null,
+      error: res.data?.errors
+        ? { code: "usage", errors: res.data.errors }
+        : null,
+    }))
+    .catch((e) => {
+      logger.warn("system usage prefetch failed", { message: e?.message });
+      return { usage: null, error: { code: "usage", message: e?.message } };
+    });
 }
 
 export async function loadOrgData(

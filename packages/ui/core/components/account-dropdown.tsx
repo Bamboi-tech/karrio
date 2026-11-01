@@ -1,3 +1,4 @@
+import { ExternalLink, Power, Settings, Wrench } from "lucide-react";
 import { useAPIMetadata } from "@karrio/hooks/api-metadata";
 import { useUser } from "@karrio/hooks/user";
 import { signOut } from "next-auth/react";
@@ -24,7 +25,7 @@ export const AccountDropdown = ({
           style={{ borderRadius: "50%" }}
         >
           <span className="icon">
-            <i className="is-size-6 fas fa-cog"></i>
+            <Settings className="h-4 w-4" />
           </span>
         </button>
 
@@ -50,7 +51,7 @@ export const AccountDropdown = ({
 
             <div className="options-items">
               <AppLink href="/settings/account" className="options-item px-0">
-                <i className="fas fa-cog"></i>
+                <Settings className="h-4 w-4" />
                 <div className="option-content">
                   <span>My Account</span>
                 </div>
@@ -63,12 +64,12 @@ export const AccountDropdown = ({
                   rel="noreferrer"
                   className="options-item px-0"
                 >
-                  <i className="fas fa-tools"></i>
+                  <Wrench className="h-4 w-4" />
                   <div className="option-content">
                     <span>Admin Console</span>
                   </div>
                   <span className="icon is-small is-size-7 ml-2">
-                    <i className="fas fa-external-link-alt"></i>
+                    <ExternalLink className="h-4 w-4" />
                   </span>
                 </a>
               )}
@@ -79,7 +80,7 @@ export const AccountDropdown = ({
                   signOut();
                 }}
               >
-                <i className="fas fa-power-off"></i>
+                <Power className="h-4 w-4" />
                 <div className="option-content">
                   <span>Logout</span>
                 </div>

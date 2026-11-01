@@ -5,6 +5,7 @@ import { useSearch } from '@karrio/hooks/search';
 import { AppLink } from '../components/app-link';
 import React, { useEffect } from 'react';
 import moment from 'moment';
+import { Inbox, LoaderCircle, Navigation, Search, Truck, X } from "lucide-react";
 
 
 export const SearchBar= (): JSX.Element =>  {
@@ -40,12 +41,12 @@ export const SearchBar= (): JSX.Element =>  {
           />
           <span className="icon is-small is-left">
             {query.isFetching
-              ? <i className="fas fa-spinner fa-pulse"></i>
-              : <i className="fas fa-search"></i>
+              ? <LoaderCircle className="h-4 w-4 animate-spin" />
+              : <Search className="h-4 w-4" />
             }
           </span>
           {!!searchValue && <span className="icon is-small is-right is-clickable" onClick={clear}>
-            <i className="fas fa-times"></i>
+            <X className="h-4 w-4" />
           </span>}
         </p>
       </div>
@@ -61,7 +62,7 @@ export const SearchBar= (): JSX.Element =>  {
               {(result as any).recipient && <AppLink
                 href={`/shipments/${result.id}`}
                 className="options-item px-2 py-1 has-text-weight-semibold is-size-7">
-                <i className="fas fa-truck pr-2"></i>
+                <Truck className="h-4 w-4 pr-2" />
                 <span className="text-ellipsis">
                   {formatAddressShort((result as any).recipient)}
                 </span>
@@ -74,7 +75,7 @@ export const SearchBar= (): JSX.Element =>  {
               {(result as any).shipping_to && <AppLink
                 href={`/orders/${result.id}`}
                 className="options-item px-2 py-1 has-text-weight-semibold is-size-7">
-                <i className="fas fa-inbox pr-2"></i>
+                <Inbox className="h-4 w-4 pr-2" />
                 <span className="text-ellipsis">
                   {formatAddressShort((result as any).shipping_to)}
                 </span>
@@ -87,7 +88,7 @@ export const SearchBar= (): JSX.Element =>  {
               {(!(result as any).shipping_to && !(result as any).recipient) && <a
                 href={`/tracking/${result.id}`}
                 className="options-item px-2 py-1 has-text-weight-semibold is-size-7">
-                <i className="fas fa-location-arrow pr-2"></i>
+                <Navigation className="h-4 w-4 pr-2" />
                 <span className="text-ellipsis">
                   {(result as any).tracking_number}
                 </span>

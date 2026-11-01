@@ -380,7 +380,7 @@ class WorkspaceConfigType:
 
 
 SYSTEM_USAGE_CACHE_TTL = 300  # seconds
-SYSTEM_USAGE_BUCKET = datetime.timedelta(minutes=5)
+SYSTEM_USAGE_ALIGNMENT = datetime.timedelta(minutes=5)
 SYSTEM_USAGE_SERIES = (
     "api_errors",
     "api_requests",
@@ -406,31 +406,31 @@ def _parse_usage_bound(
     return parsed if timezone.is_aware(parsed) else timezone.make_aware(parsed)
 
 
-def _usage_window(
+def _usage_bounds(
     filter: dict,
 ) -> typing.Tuple[datetime.datetime, datetime.datetime]:
-    """Round the usage window outwards to 5-minute marks.
+    return (
+        _parse_usage_bound(filter["date_after"]),
+        _parse_usage_bound(filter["date_before"]),
+    )
 
-    The dashboard sends `moment().toISOString()` bounds that differ on every
-    call, which would defeat any cache. Every series is aggregated per day,
-    so a window widened by at most five minutes at each end yields the same
-    chart; the rounded bounds are both the cache key and the bounds queried.
+
+def _is_aligned(value: datetime.datetime) -> bool:
+    return value.minute % 5 == 0 and value.second == 0 and value.microsecond == 0
+
+
+def _is_cacheable_window(
+    date_after: datetime.datetime, date_before: datetime.datetime
+) -> bool:
+    """Only windows on 5-minute marks are cached.
+
+    The bounds requested are always the bounds queried, so explicit API
+    callers get exact results. The dashboard aligns its own bounds to the
+    5-minute mark (`usageFilterFor` in @karrio/lib), so every visitor in the
+    same window shares one aggregation, while ad-hoc bounds never fill the
+    cache with one-off keys.
     """
-
-    def _floor(value: datetime.datetime) -> datetime.datetime:
-        return value - datetime.timedelta(
-            minutes=value.minute % 5,
-            seconds=value.second,
-            microseconds=value.microsecond,
-        )
-
-    date_after = _floor(_parse_usage_bound(filter["date_after"]))
-    before = _parse_usage_bound(filter["date_before"])
-    date_before = _floor(before)
-    if date_before != before:
-        date_before += SYSTEM_USAGE_BUCKET
-
-    return date_after, date_before
+    return _is_aligned(date_after) and _is_aligned(date_before)
 
 
 def _system_usage_cache_key(
@@ -624,9 +624,10 @@ class SystemUsageType:
                 if value is not None
             },
         }
-        date_after, date_before = _usage_window(_filter)
+        date_after, date_before = _usage_bounds(_filter)
+        cacheable = _is_cacheable_window(date_after, date_before)
         cache_key = _system_usage_cache_key(request, date_after, date_before)
-        usage = cache.get(cache_key)
+        usage = cache.get(cache_key) if cacheable else None
 
         if usage is None:
             # The dashboard home asks for this on every visit while the series
@@ -636,7 +637,8 @@ class SystemUsageType:
                 {**_filter, "date_after": date_after, "date_before": date_before},
                 test_mode=bool(getattr(request, "test_mode", False)),
             )
-            cache.set(cache_key, usage, SYSTEM_USAGE_CACHE_TTL)
+            if cacheable:
+                cache.set(cache_key, usage, SYSTEM_USAGE_CACHE_TTL)
 
         return SystemUsageType(
             **{

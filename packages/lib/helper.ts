@@ -696,14 +696,57 @@ export const USAGE_RANGE_DAYS: Record<string, number> = {
   "Last 6 months": 180,
   "Last year": 360,
 };
+const USAGE_ALIGNMENT_MS = 5 * 60_000;
+const DAY_MS = 86_400_000;
 
+/**
+ * Bounds for a usage range, aligned to the 5-minute mark. The API caches
+ * aggregations only for aligned windows, so every visitor in the same five
+ * minutes shares one computation; the last few minutes are left out of the
+ * window instead of widening it (the API honours the bounds exactly).
+ */
 export function usageFilterFor(
   range: string,
   now: Date = new Date(),
 ): { date_after: string; date_before: string } {
   const days = USAGE_RANGE_DAYS[range] ?? USAGE_RANGE_DAYS[DEFAULT_USAGE_RANGE];
+  const before = Math.floor(now.getTime() / USAGE_ALIGNMENT_MS) * USAGE_ALIGNMENT_MS;
   return {
-    date_before: now.toISOString(),
-    date_after: new Date(now.getTime() - days * 86_400_000).toISOString(),
+    date_before: new Date(before).toISOString(),
+    date_after: new Date(before - days * DAY_MS).toISOString(),
   };
+}
+
+/** The range name a filter spans, by whole days between its bounds. */
+export function usageRangeOf(filter: {
+  date_after?: string | null;
+  date_before?: string | null;
+}): string | undefined {
+  if (!filter.date_after || !filter.date_before) return undefined;
+  const days = Math.round(
+    (new Date(filter.date_before).getTime() - new Date(filter.date_after).getTime()) /
+      DAY_MS,
+  );
+  return Object.keys(USAGE_RANGE_DAYS).find((range) => USAGE_RANGE_DAYS[range] === days);
+}
+
+/**
+ * Day label of a usage bucket. The API truncates to UTC days (TIME_ZONE is
+ * UTC), so labels are formatted in UTC on server and client alike: the
+ * server-rendered chart and its hydration agree whatever the browser's zone.
+ */
+export function usageDayLabel(date: string | Date): string {
+  return moment.utc(date).format("MMM D");
+}
+
+/** One label per day of the window, oldest first, ending at `date_before`. */
+export function usageDayLabels(filter: {
+  date_after?: string | null;
+  date_before?: string | null;
+}): string[] {
+  const range = usageRangeOf(filter) ?? DEFAULT_USAGE_RANGE;
+  const end = moment.utc(filter.date_before ?? undefined);
+  return Array.from({ length: USAGE_RANGE_DAYS[range] }, (_, index) =>
+    end.clone().subtract(USAGE_RANGE_DAYS[range] - 1 - index, "days").format("MMM D"),
+  );
 }

@@ -8,6 +8,7 @@ import {
   GetSystemUsage,
   GetSystemUsage_system_usage,
   UsageFilter,
+  UsagePrefetch,
 } from "@karrio/types";
 import {
   DEFAULT_USAGE_RANGE,
@@ -15,7 +16,9 @@ import {
   gqlstr,
   insertUrlParam,
   isNoneOrEmpty,
+  usageDayLabels,
   usageFilterFor,
+  usageRangeOf,
 } from "@karrio/lib";
 import { useKarrio, useAuthenticatedQuery } from "./karrio";
 import { useAPIMetadata } from "./api-metadata";
@@ -27,39 +30,31 @@ type UsageType = GetSystemUsage_system_usage &
   get_organization_organization_usage;
 type FilterType = UsageFilter & {
   setVariablesToURL?: boolean;
-  /** Usage for the default range, fetched by the server page so the stat
-   *  cards are in the HTML; the client only fetches on a range change. */
-  initialUsage?: GetSystemUsage_system_usage | null;
+  /** Usage for the default range fetched by the server page, with the exact
+   *  window it was fetched for: the cards are in the HTML and the hydrated
+   *  client renders that same window instead of fetching again. */
+  initialUsage?: UsagePrefetch | null;
 };
-const USAGE_FILTERS: Record<string, UsageFilter> = Object.fromEntries(
-  Object.keys(USAGE_RANGE_DAYS).map((range) => [range, usageFilterFor(range)]),
-);
-const DAYS_LIST: Record<string, string[]> = {
-  "7 days": Array.from(Array(7))
-    .map((_, i) => i)
-    .reverse()
-    .map((i) => moment().subtract(i, "days").format("MMM D")),
-  "15 days": Array.from(Array(15))
-    .map((_, i) => i)
-    .reverse()
-    .map((i) => moment().subtract(i, "days").format("MMM D")),
-  "Last 30 days": Array.from(Array(30))
-    .map((_, i) => i)
-    .reverse()
-    .map((i) => moment().subtract(i, "days").format("MMM D")),
-  "Last 3 months": Array.from(Array(90))
-    .map((_, i) => i)
-    .reverse()
-    .map((i) => moment().subtract(i, "days").format("MMM D")),
-  "Last 6 months": Array.from(Array(180))
-    .map((_, i) => i)
-    .reverse()
-    .map((i) => moment().subtract(i, "days").format("MMM D")),
-  "Last year": Array.from(Array(360))
-    .map((_, i) => i)
-    .reverse()
-    .map((i) => moment().subtract(i, "days").format("MMM D")),
-};
+
+// Built per mount, not at module load: the dashboard's Node process lives for
+// days, and module-level dates would freeze on the server (stale labels and
+// a hydration mismatch after midnight).
+function buildUsageFilters(): Record<string, UsageFilter> {
+  return Object.fromEntries(
+    Object.keys(USAGE_RANGE_DAYS).map((range) => [range, usageFilterFor(range)]),
+  );
+}
+
+function buildDaysList(): Record<string, string[]> {
+  return Object.fromEntries(
+    Object.entries(USAGE_RANGE_DAYS).map(([range, days]) => [
+      range,
+      Array.from({ length: days }, (_, index) =>
+        moment().subtract(days - 1 - index, "days").format("MMM D"),
+      ),
+    ]),
+  );
+}
 
 export function useAPIUsage({
   setVariablesToURL = false,
@@ -70,13 +65,21 @@ export function useAPIUsage({
   const { metadata } = useAPIMetadata();
   const { query: sessionQuery } = useSyncedSession();
   const session = sessionQuery.data;
-  const [filter, _setFilter] = React.useState<UsageFilter>({
-    ...USAGE_FILTERS[DEFAULT_USAGE_RANGE],
-    ...initialData,
-  });
-  const isDefaultRange =
-    filter.date_after === USAGE_FILTERS[DEFAULT_USAGE_RANGE].date_after &&
-    filter.date_before === USAGE_FILTERS[DEFAULT_USAGE_RANGE].date_before;
+  const USAGE_FILTERS = React.useMemo(buildUsageFilters, []);
+  const DAYS_LIST = React.useMemo(buildDaysList, []);
+  const [filter, _setFilter] = React.useState<UsageFilter>(
+    () =>
+      initialUsage?.filter ?? {
+        ...USAGE_FILTERS[DEFAULT_USAGE_RANGE],
+        ...initialData,
+      },
+  );
+  const currentRange = usageRangeOf(filter);
+  // UTC day labels for the window actually queried; see usageDayLabel.
+  const dayLabels = React.useMemo(
+    () => usageDayLabels(filter),
+    [filter.date_after, filter.date_before],
+  );
 
   const systemUsage = () =>
     karrio.graphql
@@ -103,11 +106,14 @@ export function useAPIUsage({
   const query = useAuthenticatedQuery({
     queryKey: ["usage", filter],
     queryFn: metadata.MULTI_ORGANIZATIONS == true ? orgUsage : systemUsage,
-    // Only the default range is prefetched; any other key must fetch.
+    // The prefetched window is the initial filter, so the seed lands on that
+    // key only; a range change creates a new key and fetches. The fetch time
+    // travels with the seed so a stale server response refetches on mount.
     initialData:
-      isDefaultRange && !!initialUsage
-        ? { usage: initialUsage as UsageType }
+      !!initialUsage && filter === initialUsage.filter
+        ? { usage: initialUsage.usage as UsageType }
         : undefined,
+    initialDataUpdatedAt: initialUsage?.fetchedAt,
     staleTime: 1500000,
     enabled: metadata.MULTI_ORGANIZATIONS ? !!session?.orgId : true,
     retry: (failureCount, error) => {
@@ -142,11 +148,7 @@ export function useAPIUsage({
     setFilter,
     DAYS_LIST,
     USAGE_FILTERS,
-    currentFilter: () =>
-      Object.keys(USAGE_FILTERS).find(
-        (range) =>
-          USAGE_FILTERS[range].date_before == filter.date_before &&
-          USAGE_FILTERS[range].date_after == filter.date_after,
-      ),
+    dayLabels,
+    currentFilter: () => currentRange,
   };
 }

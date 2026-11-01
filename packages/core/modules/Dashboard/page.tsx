@@ -13,11 +13,11 @@ export default async function Page() {
   const session = await auth();
   const domain = await getCurrentDomain();
   const { metadata } = await loadRequestMetadata(domain!);
-  const { usage } = await loadSystemUsage(
+  const { prefetch } = await loadSystemUsage(
     session,
     metadata as Metadata,
     domain!,
   );
 
-  return <DashboardPage initialUsage={usage} />;
+  return <DashboardPage initialUsage={prefetch} />;
 }

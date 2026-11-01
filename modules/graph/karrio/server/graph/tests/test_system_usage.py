@@ -6,38 +6,44 @@ from django.core.cache import cache
 from karrio.server.graph.tests import GraphTestCase
 import karrio.server.graph.schemas.base.types as types
 
+ALIGNED_FILTER = {
+    "date_after": "2026-10-16T10:00:00.000Z",
+    "date_before": "2026-10-31T10:05:00.000Z",
+}
+UNALIGNED_FILTER = {
+    "date_after": "2026-10-16T10:02:30.000Z",
+    "date_before": "2026-10-31T10:04:59.000Z",
+}
+
 
 class TestSystemUsage(GraphTestCase):
     def setUp(self) -> None:
         super().setUp()
         cache.clear()
 
-    def test_usage_window_rounds_outwards_to_five_minutes(self):
-        date_after, date_before = types._usage_window(
-            {
-                "date_after": "2026-10-16T10:02:30.123Z",
-                "date_before": "2026-10-31T10:04:59.000Z",
-            }
-        )
+    def test_bounds_are_parsed_exactly(self):
+        date_after, date_before = types._usage_bounds(UNALIGNED_FILTER)
 
-        self.assertEqual(date_after.isoformat(), "2026-10-16T10:00:00+00:00")
-        self.assertEqual(date_before.isoformat(), "2026-10-31T10:05:00+00:00")
+        self.assertEqual(date_after.isoformat(), "2026-10-16T10:02:30+00:00")
+        self.assertEqual(date_before.isoformat(), "2026-10-31T10:04:59+00:00")
 
-    def test_usage_window_keeps_aligned_bounds(self):
-        date_after, date_before = types._usage_window(
+    def test_date_only_bound_is_midnight_utc(self):
+        date_after, _ = types._usage_bounds(
             {"date_after": "2026-10-16", "date_before": "2026-10-31T10:05:00Z"}
         )
 
         self.assertEqual(date_after.isoformat(), "2026-10-16T00:00:00+00:00")
-        self.assertEqual(date_before.isoformat(), "2026-10-31T10:05:00+00:00")
+
+    def test_only_five_minute_windows_are_cacheable(self):
+        self.assertTrue(
+            types._is_cacheable_window(*types._usage_bounds(ALIGNED_FILTER))
+        )
+        self.assertFalse(
+            types._is_cacheable_window(*types._usage_bounds(UNALIGNED_FILTER))
+        )
 
     def test_cache_key_separates_org_and_mode(self):
-        date_after, date_before = types._usage_window(
-            {
-                "date_after": "2026-10-16T10:00:00Z",
-                "date_before": "2026-10-31T10:00:00Z",
-            }
-        )
+        date_after, date_before = types._usage_bounds(ALIGNED_FILTER)
         live = pytypes.SimpleNamespace(org=None, test_mode=False)
         test = pytypes.SimpleNamespace(org=None, test_mode=True)
         org = pytypes.SimpleNamespace(
@@ -51,16 +57,11 @@ class TestSystemUsage(GraphTestCase):
 
         self.assertEqual(len(keys), 3)
 
-    def test_system_usage_is_served_from_cache_within_the_window(self):
+    def test_aligned_window_is_served_from_cache(self):
         first = self.query(
             USAGE_QUERY,
             operation_name="GetSystemUsage",
-            variables={
-                "filter": {
-                    "date_after": "2026-10-16T10:00:00.000Z",
-                    "date_before": "2026-10-31T10:00:01.000Z",
-                }
-            },
+            variables={"filter": ALIGNED_FILTER},
         )
         self.assertResponseNoErrors(first)
 
@@ -70,28 +71,18 @@ class TestSystemUsage(GraphTestCase):
             second = self.query(
                 USAGE_QUERY,
                 operation_name="GetSystemUsage",
-                variables={
-                    "filter": {
-                        "date_after": "2026-10-16T10:02:30.000Z",
-                        "date_before": "2026-10-31T10:04:59.000Z",
-                    }
-                },
+                variables={"filter": ALIGNED_FILTER},
             )
 
         self.assertResponseNoErrors(second)
         compute.assert_not_called()
         self.assertDictEqual(first.data, second.data)
 
-    def test_system_usage_recomputes_for_another_window(self):
+    def test_another_window_recomputes(self):
         first = self.query(
             USAGE_QUERY,
             operation_name="GetSystemUsage",
-            variables={
-                "filter": {
-                    "date_after": "2026-10-16T10:00:00.000Z",
-                    "date_before": "2026-10-31T10:00:00.000Z",
-                }
-            },
+            variables={"filter": ALIGNED_FILTER},
         )
         self.assertResponseNoErrors(first)
 
@@ -104,13 +95,30 @@ class TestSystemUsage(GraphTestCase):
                 variables={
                     "filter": {
                         "date_after": "2026-10-24T10:00:00.000Z",
-                        "date_before": "2026-10-31T10:00:00.000Z",
+                        "date_before": "2026-10-31T10:05:00.000Z",
                     }
                 },
             )
 
         self.assertResponseNoErrors(second)
         compute.assert_called_once()
+
+    def test_unaligned_window_is_computed_every_time_with_exact_bounds(self):
+        with mock.patch.object(
+            types, "_compute_system_usage", wraps=types._compute_system_usage
+        ) as compute:
+            for _ in range(2):
+                result = self.query(
+                    USAGE_QUERY,
+                    operation_name="GetSystemUsage",
+                    variables={"filter": UNALIGNED_FILTER},
+                )
+                self.assertResponseNoErrors(result)
+
+        self.assertEqual(compute.call_count, 2)
+        bounds = compute.call_args.args[0]
+        self.assertEqual(bounds["date_after"].isoformat(), "2026-10-16T10:02:30+00:00")
+        self.assertEqual(bounds["date_before"].isoformat(), "2026-10-31T10:04:59+00:00")
 
 
 USAGE_QUERY = """

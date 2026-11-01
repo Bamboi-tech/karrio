@@ -1,6 +1,6 @@
 # Dashboard Home Performance
 
-**Status:** Implemented (Bamboi fork) · **Scope:** `apps/dashboard`, `packages/core`, `packages/hooks`, `packages/ui`, `packages/lib`, `modules/graph` · **Date:** 2026-10-31
+**Status:** Implemented (Bamboi fork), reviewed by Codex 2026-10-31 (reviews/codex-review-2026-10-31-2225-dashboard-home-perf.md, not committed) · **Scope:** `apps/dashboard`, `packages/core`, `packages/hooks`, `packages/ui`, `packages/lib`, `modules/graph` · **Date:** 2026-10-31
 
 ---
 
@@ -10,10 +10,10 @@ The dashboard home (`/`) felt slow for signed-in operators although every API ca
 
 ### Key Architecture Decisions
 
-1. **Cache `system_usage` server-side per 5-minute window.** The hook sends `moment().toISOString()` bounds that differ per call; the resolver rounds the window outwards to 5-minute marks, uses the rounded bounds as cache key and as query bounds, and caches the plain aggregation result for 300 s in the Django cache (Redis in production). Every series is aggregated per day, so a window widened by at most five minutes per side yields the same chart.
-2. **Prefetch the default range during SSR.** A server component wraps the client module and loads the default (15-day) usage with the user's token, in parallel with the dashboard layout's own loaders. The client hook receives it as react-query `initialData` for the default range only; any other range fetches as before. `MULTI_ORGANIZATIONS` deployments skip the prefetch (their usage comes from the ee schema) and keep the client path.
+1. **Cache `system_usage` server-side per aligned 5-minute window.** The dashboard aligns its own bounds to the 5-minute mark (`usageFilterFor` in `@karrio/lib`), so every visitor in the same five minutes asks for the same window. The resolver honours the requested bounds exactly for every caller and caches the plain aggregation result for 300 s in the Django cache (Redis in production) only when both bounds sit on a 5-minute mark, so ad-hoc API queries never fill the cache with one-off keys.
+2. **Prefetch the default range during SSR.** A server component wraps the client module and loads the default (15-day) usage with the user's token, in parallel with the dashboard layout's own loaders, with a 3 s deadline after which the client fetches as before. The prefetch carries the exact window and its fetch time: the client hook uses that window as its initial filter (so server HTML and hydration render the same thing) and seeds react-query with `initialData` plus `initialDataUpdatedAt` for that key only. Day labels are formatted in UTC on both sides, matching the API's UTC day buckets. `MULTI_ORGANIZATIONS` deployments skip the prefetch (their usage comes from the ee schema) and keep the client path.
 3. **Plain SVG sparklines.** The four 120 px bar charts are rendered with an SVG component in `@karrio/ui`; the recharts chunk no longer loads on the home page.
-4. **One font, one file.** `packages/ui/fonts/font.ts` instantiated seven Google fonts; only Open Sans was applied, yet next/font preloaded every file. Open Sans is now loaded as the variable font, latin subset.
+4. **One font, one file.** `packages/ui/fonts/font.ts` instantiated seven Google fonts; the dashboard applied only Open Sans, yet next/font preloaded every file instantiated in the import graph. Open Sans moves to `packages/ui/fonts/open-sans.ts` as the variable latin font; `font.ts` keeps the fonts `apps/web` and the console use.
 5. **Font Awesome removed.** All icons in reachable code are lucide components; the CSS import and the dependency are gone from `packages/core`.
 
 ### Scope
@@ -80,7 +80,7 @@ page.tsx (server)            layout.tsx (server)             API
 
 ### Cache key
 
-`system_usage:<org pk or ->:<test_mode>:<date_after floor 5 min>:<date_before ceil 5 min>`
+`system_usage:<org pk or ->:<test_mode>:<date_after>:<date_before>` — set only when both bounds are on a 5-minute mark.
 
 ---
 
@@ -88,15 +88,16 @@ page.tsx (server)            layout.tsx (server)             API
 
 | File | Change |
 |---|---|
-| `modules/graph/karrio/server/graph/schemas/base/types.py` | `_usage_window`, `_system_usage_cache_key`, `_compute_system_usage`; `SystemUsageType.resolve` reads the cache |
-| `modules/graph/karrio/server/graph/tests/test_system_usage.py` | window rounding, key separation, cache hit, recompute on another window |
-| `packages/lib/helper.ts` | `DEFAULT_USAGE_RANGE`, `USAGE_RANGE_DAYS`, `usageFilterFor` |
-| `packages/hooks/usage.ts` | filters built from the shared table; `initialUsage` option → `initialData` for the default range |
-| `packages/core/context/main.ts` | `loadSystemUsage` (60 s Next cache, never caches an error) |
+| `modules/graph/karrio/server/graph/schemas/base/types.py` | `_usage_bounds`, `_is_cacheable_window`, `_system_usage_cache_key`, `_compute_system_usage`; `SystemUsageType.resolve` reads the cache for aligned windows |
+| `modules/graph/karrio/server/graph/tests/test_system_usage.py` | exact bound parsing, alignment rule, key separation, cache hit, recompute on another window, unaligned windows computed every time with exact bounds |
+| `packages/lib/helper.ts` | `DEFAULT_USAGE_RANGE`, `USAGE_RANGE_DAYS`, `usageFilterFor` (5-minute aligned), `usageRangeOf`, `usageDayLabel`, `usageDayLabels` (UTC) |
+| `packages/hooks/usage.ts` | filter table and labels built per mount; `initialUsage` (window + fetch time) is the initial filter and seeds `initialData` for that key |
+| `packages/hooks/api-metadata.tsx` | reduced references on `/` and `/test` as well as `/shipments` |
+| `packages/core/context/main.ts` | `loadSystemUsage` (no Next cache, 3 s deadline, returns `UsagePrefetch`) |
 | `packages/core/modules/Dashboard/page.tsx` | server entry; `index.tsx` takes `initialUsage`; `charts.tsx` removed |
 | `apps/dashboard/src/app/(base)/**/(dashboard)/page.tsx` (4 routes) | export the server entry |
 | `packages/ui/components/usage-sparkline.tsx` | SVG bars with native tooltips and first/last labels |
-| `packages/ui/fonts/font.ts`, `packages/ui/layouts/root-layout.tsx` | Open Sans variable only |
+| `packages/ui/fonts/open-sans.ts`, `packages/ui/fonts/font.ts`, `packages/{core,ui}/layouts/root-layout.tsx` | dashboard imports only Open Sans; web fonts stay in `font.ts` |
 | `apps/dashboard/src/app/(base)/layout.tsx`, `packages/core/layouts/{public,embedable}-layout.tsx`, `packages/core/package.json` | Font Awesome import and dependency removed; `lucide-react` declared |
 | 50 files under `packages/core/modules`, `packages/ui/core`, `packages/ui/components` | `<i class="fas fa-…">` → lucide components |
 
@@ -114,8 +115,8 @@ Unreferenced files that still contain `fa-` classes (nothing imports them; candi
 
 | Risk | Mitigation |
 |---|---|
-| Stale usage for up to 5 min (API) + 60 s (Next) | Acceptable for a dashboard overview; the range selector still fetches live for other ranges after the API bucket |
-| Rounded bounds differ from the client's exact bounds | Day-level series; the extra ≤5 min lies on a day edge the chart already shows as partial |
+| Usage up to 5 min old (aligned window + API cache) | Acceptable for a dashboard overview; the seed carries its fetch time so a stale server response refetches on mount |
+| Server-rendered chart differs from the hydrated one | Window travels with the prefetch; labels are UTC on both sides (verified in UTC, Chicago, Amsterdam, Auckland) |
 | Lucide icon sizing differs from Font Awesome glyphs | Sizes mapped per class (`fa-lg` → `h-5 w-5`, `text-xs` → `h-3 w-3`); visual check on staging |
 | Variable font rendering | Same family and weights; `display: swap` unchanged |
 

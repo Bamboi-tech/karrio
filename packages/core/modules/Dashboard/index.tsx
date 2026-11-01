@@ -3,15 +3,14 @@
 import React from "react";
 import { Card, CardContent } from "@karrio/ui/components/ui/card";
 import { UsageSparkline } from "@karrio/ui/components/usage-sparkline";
-import { GetSystemUsage_system_usage } from "@karrio/types";
+import { UsagePrefetch } from "@karrio/types";
 import { AppLink } from "@karrio/ui/core/components/app-link";
 import { Button } from "@karrio/ui/components/ui/button";
 import { useAppMode } from "@karrio/hooks/app-mode";
 import { useAPIUsage } from "@karrio/hooks/usage";
 import { useUser } from "@karrio/hooks/user";
 import { useRouter } from "next/navigation";
-import { DEFAULT_USAGE_RANGE, p } from "@karrio/lib";
-import moment from "moment";
+import { p, usageDayLabel } from "@karrio/lib";
 import {
   Package,
   MapPin,
@@ -35,7 +34,7 @@ import {
 export default function DashboardPage({
   initialUsage,
 }: {
-  initialUsage?: GetSystemUsage_system_usage | null;
+  initialUsage?: UsagePrefetch | null;
 }) {
   const router = useRouter();
   const { basePath } = useAppMode();
@@ -45,9 +44,8 @@ export default function DashboardPage({
   const {
     query: { data: { usage } = {}, isLoading: usageLoading, error: usageError },
     setFilter,
-    filter,
     USAGE_FILTERS,
-    DAYS_LIST,
+    dayLabels,
     currentFilter,
   } = useAPIUsage({ initialUsage });
 
@@ -169,15 +167,11 @@ export default function DashboardPage({
   const renderChart = (data: any[] | null | undefined, dataKey: string = "count") => {
     if (!data || data.length === 0) return null;
 
-    const chartData = DAYS_LIST[currentFilter() || DEFAULT_USAGE_RANGE].map(
-      (day) => ({
-        label: day,
-        value:
-          data.find(({ date }) => moment(date).format("MMM D") === day)?.[
-            dataKey
-          ] || 0,
-      }),
-    );
+    const chartData = dayLabels.map((day) => ({
+      label: day,
+      value:
+        data.find(({ date }) => usageDayLabel(date) === day)?.[dataKey] || 0,
+    }));
 
     return <UsageSparkline data={chartData} />;
   };
@@ -202,16 +196,16 @@ export default function DashboardPage({
           </div>
           <div className="w-full sm:w-48 sm:ml-auto">
             <Select
-              value={JSON.stringify(filter)}
-              onValueChange={(value) => setFilter(JSON.parse(value))}
+              value={currentFilter()}
+              onValueChange={(range) => setFilter(USAGE_FILTERS[range])}
               disabled={usageLoading}
             >
               <SelectTrigger className="w-full text-right border-gray-300 focus:border-blue-500">
                 <SelectValue placeholder="Select time range" />
               </SelectTrigger>
               <SelectContent align="end">
-                {Object.entries(USAGE_FILTERS).map(([key, value]) => (
-                  <SelectItem key={key} value={JSON.stringify(value)}>
+                {Object.keys(USAGE_FILTERS).map((key) => (
+                  <SelectItem key={key} value={key}>
                     {key}
                   </SelectItem>
                 ))}

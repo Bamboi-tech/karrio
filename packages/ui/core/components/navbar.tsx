@@ -8,10 +8,12 @@ import React, { Suspense } from "react";
 
 // Lazy load the AppLauncher component
 const AppLauncher = React.lazy(() =>
-  import("@karrio/app-store").then(module => ({ default: module.AppLauncher }))
+  import("@karrio/app-store").then((module) => ({
+    default: module.AppLauncher,
+  })),
 );
 
-export const Navbar = ({ }): JSX.Element => {
+export const Navbar = ({}): JSX.Element => {
   const { metadata } = useAPIMetadata();
   const openSidebar = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -42,15 +44,17 @@ export const Navbar = ({ }): JSX.Element => {
           </div>
 
           {metadata?.APPS_MANAGEMENT && (
-            <Suspense fallback={
-              <div className="nav-item is-flex">
-                <button className="button is-white is-small" disabled>
-                  <span className="icon is-small">
-                    <i className="fas fa-spinner fa-spin"></i>
-                  </span>
-                </button>
-              </div>
-            }>
+            <Suspense
+              fallback={
+                <div className="nav-item is-flex">
+                  <button className="button is-white is-small" disabled>
+                    <span className="icon is-small">
+                      <i className="fas fa-spinner fa-spin"></i>
+                    </span>
+                  </button>
+                </div>
+              }
+            >
               <AppLauncher />
             </Suspense>
           )}

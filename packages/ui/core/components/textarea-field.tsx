@@ -1,7 +1,6 @@
 import React from "react";
 
-interface TextAreaFieldComponent
-  extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
+interface TextAreaFieldComponent extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
   label?: string;
   fieldClass?: string;
   controlClass?: string;

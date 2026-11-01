@@ -4,13 +4,11 @@ import {
   QueryAutocompletePrediction,
   AutocompleteConfig,
 } from "@karrio/hooks/address-autocomplete";
-import React, {
-  ChangeEvent,
-  useCallback,
-  useEffect,
-  useState,
-} from "react";
-import { ADDRESS_AUTO_COMPLETE_SERVICE, ADDRESS_AUTO_COMPLETE_SERVICE_KEY } from "@karrio/lib";
+import React, { ChangeEvent, useCallback, useEffect, useState } from "react";
+import {
+  ADDRESS_AUTO_COMPLETE_SERVICE,
+  ADDRESS_AUTO_COMPLETE_SERVICE_KEY,
+} from "@karrio/lib";
 import { InputFieldComponent } from "../components/input-field";
 import { Address } from "@karrio/types/rest/api";
 
@@ -45,7 +43,9 @@ export const AddressAutocompleteInput = ({
       : {}),
   };
 
-  const [inputValue, setInputValue] = useState<string>(String(props.value || ""));
+  const [inputValue, setInputValue] = useState<string>(
+    String(props.value || ""),
+  );
   const datalistId = `address-predictions-${React.useId()}`;
 
   // Autocomplete configuration
@@ -59,7 +59,7 @@ export const AddressAutocompleteInput = ({
   const { data: predictions = [], isLoading } = useAddressAutocomplete(
     inputValue,
     country_code,
-    config
+    config,
   );
 
   const { formatPrediction } = useAddressPredictionFormat(config);
@@ -75,8 +75,8 @@ export const AddressAutocompleteInput = ({
     const selectedValue = (e.target as HTMLInputElement).value;
 
     // Check if the selected value matches a prediction
-    const selectedPrediction = predictions.find(prediction =>
-      prediction.description === selectedValue
+    const selectedPrediction = predictions.find(
+      (prediction) => prediction.description === selectedValue,
     );
 
     if (selectedPrediction) {
@@ -85,7 +85,7 @@ export const AddressAutocompleteInput = ({
         onValueChange(address);
         setInputValue(address.address_line1 || selectedValue);
       } catch (error) {
-        console.error('Error formatting prediction:', error);
+        console.error("Error formatting prediction:", error);
         onValueChange({ address_line1: selectedValue });
         setInputValue(selectedValue);
       }
@@ -120,17 +120,18 @@ export const AddressAutocompleteInput = ({
             onChange={handleInputChange}
             onInput={handleInputSelect}
             className={`input is-fullwidth ${className || ""}`}
-            list={config.is_enabled && predictions.length > 0 ? datalistId : undefined}
+            list={
+              config.is_enabled && predictions.length > 0
+                ? datalistId
+                : undefined
+            }
             autoComplete="street-address"
             {...Props}
           />
           {config.is_enabled && predictions.length > 0 && (
             <datalist id={datalistId}>
               {predictions.map((prediction) => (
-                <option
-                  key={prediction.id}
-                  value={prediction.description}
-                >
+                <option key={prediction.id} value={prediction.description}>
                   {prediction.description}
                 </option>
               ))}

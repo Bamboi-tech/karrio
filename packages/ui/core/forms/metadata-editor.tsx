@@ -81,7 +81,8 @@ export const MetadataEditor = ({
                             {!isEditing && (
                               <>
                                 {typeof value === "string" &&
-                                (value.includes("http://") || value.includes("https://")) ? (
+                                (value.includes("http://") ||
+                                  value.includes("https://")) ? (
                                   <a
                                     href={value}
                                     target="_blank"

@@ -1,5 +1,8 @@
 import React from "react";
-import { RadioGroup, RadioGroupItem } from "@karrio/ui/components/ui/radio-group";
+import {
+  RadioGroup,
+  RadioGroupItem,
+} from "@karrio/ui/components/ui/radio-group";
 import { Label } from "@karrio/ui/components/ui/label";
 import { cn } from "@karrio/ui/lib/utils";
 
@@ -21,24 +24,29 @@ export interface RadioGroupFieldComponent {
   orientation?: "horizontal" | "vertical";
 }
 
-export const RadioGroupField = React.forwardRef<HTMLDivElement, RadioGroupFieldComponent>(
-  ({
-    label,
-    required,
-    value,
-    onValueChange,
-    options,
-    className,
-    disabled,
-    name,
-    orientation = "horizontal",
-    ...props
-  }, ref) => {
-
+export const RadioGroupField = React.forwardRef<
+  HTMLDivElement,
+  RadioGroupFieldComponent
+>(
+  (
+    {
+      label,
+      required,
+      value,
+      onValueChange,
+      options,
+      className,
+      disabled,
+      name,
+      orientation = "horizontal",
+      ...props
+    },
+    ref,
+  ) => {
     return (
       <div className={cn("px-1 py-2", className)} {...props}>
         {label !== undefined && (
-          <Label 
+          <Label
             className="capitalize text-xs mb-2 block font-bold"
             style={{ fontSize: ".8em" }}
           >
@@ -58,19 +66,19 @@ export const RadioGroupField = React.forwardRef<HTMLDivElement, RadioGroupFieldC
           disabled={disabled}
           className={cn(
             "flex items-center",
-            orientation === "horizontal" ? "flex-row gap-4" : "flex-col gap-4"
+            orientation === "horizontal" ? "flex-row gap-4" : "flex-col gap-4",
           )}
           name={name}
         >
           {options.map((option) => (
             <div key={option.value} className="flex items-center space-x-2">
-              <RadioGroupItem 
-                value={option.value} 
+              <RadioGroupItem
+                value={option.value}
                 id={`${name}-${option.value}`}
                 disabled={disabled || option.disabled}
                 className="h-4 w-4"
               />
-              <Label 
+              <Label
                 htmlFor={`${name}-${option.value}`}
                 className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
                 style={{ fontSize: ".8em" }}
@@ -82,7 +90,7 @@ export const RadioGroupField = React.forwardRef<HTMLDivElement, RadioGroupFieldC
         </RadioGroup>
       </div>
     );
-  }
+  },
 );
 
 RadioGroupField.displayName = "RadioGroupField";

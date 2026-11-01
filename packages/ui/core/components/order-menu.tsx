@@ -92,8 +92,15 @@ export const OrderMenu = ({
               <a
                 className={`dropdown-item ${documentPrinter.isLoading ? "is-loading" : ""}`}
                 onClick={() => {
-                  const format = order.shipments.filter((s) => !["cancelled", "draft"].includes(s.status))[0].label_type?.toLowerCase() || "pdf";
-                  documentPrinter.openOrderLabels([order.id], { format: format as any });
+                  const format =
+                    order.shipments
+                      .filter(
+                        (s) => !["cancelled", "draft"].includes(s.status),
+                      )[0]
+                      .label_type?.toLowerCase() || "pdf";
+                  documentPrinter.openOrderLabels([order.id], {
+                    format: format as any,
+                  });
                 }}
               >
                 <span>{`Print Label${order.shipments.filter((s) => !["cancelled", "draft"].includes(s.status)).length > 1 ? "s" : ""}`}</span>
@@ -162,7 +169,9 @@ export const OrderMenu = ({
           {(document_templates?.edges || []).map(({ node: template }) => (
             <a
               className={`dropdown-item ${documentPrinter.isLoading ? "is-loading" : ""}`}
-              onClick={() => documentPrinter.openTemplate(template.id, { orders: order.id })}
+              onClick={() =>
+                documentPrinter.openTemplate(template.id, { orders: order.id })
+              }
               key={template.id}
             >
               <span>Download {template.name}</span>

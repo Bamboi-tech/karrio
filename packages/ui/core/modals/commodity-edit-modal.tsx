@@ -10,7 +10,12 @@ import {
   MetadataEditorContext,
 } from "../forms/metadata-editor";
 import { isEqual, isNone, validationMessage, validityCheck } from "@karrio/lib";
-import { CommodityType, CustomsCommodityType, CURRENCY_OPTIONS, WEIGHT_UNITS } from "@karrio/types";
+import {
+  CommodityType,
+  CustomsCommodityType,
+  CURRENCY_OPTIONS,
+  WEIGHT_UNITS,
+} from "@karrio/types";
 import React, { useContext, useReducer, useState } from "react";
 import { TextAreaField } from "../components/textarea-field";
 import { useAPIMetadata } from "@karrio/hooks/api-metadata";

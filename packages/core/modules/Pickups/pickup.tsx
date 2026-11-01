@@ -14,7 +14,12 @@ import { useSystemConnections } from "@karrio/hooks/system-connection";
 import { useCarrierConnections } from "@karrio/hooks/user-connection";
 import { useToast } from "@karrio/ui/hooks/use-toast";
 import { Button } from "@karrio/ui/components/ui/button";
-import { formatDateTime, formatRef, isNone, errorToMessages } from "@karrio/lib";
+import {
+  formatDateTime,
+  formatRef,
+  isNone,
+  errorToMessages,
+} from "@karrio/lib";
 import { ParcelType } from "@karrio/types";
 import { useEvents } from "@karrio/hooks/event";
 import { useLogs } from "@karrio/hooks/log";
@@ -74,7 +79,9 @@ export const PickupComponent = ({
         variant: "destructive",
         title: "Failed to cancel pickup",
         description: messages
-          .map((m: any) => (typeof m === "string" ? m : m.message || JSON.stringify(m)))
+          .map((m: any) =>
+            typeof m === "string" ? m : m.message || JSON.stringify(m),
+          )
           .join("; "),
       });
     }
@@ -109,16 +116,8 @@ export const PickupComponent = ({
               {/* Mobile actions */}
               <div className="flex justify-start items-center gap-1 md:hidden">
                 {isPreview && isSheet && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    asChild
-                    className="h-8"
-                  >
-                    <AppLink
-                      href={`/pickups`}
-                      target="_blank"
-                    >
+                  <Button variant="ghost" size="sm" asChild className="h-8">
+                    <AppLink href={`/pickups`} target="_blank">
                       <i className="fas fa-external-link-alt text-xs"></i>
                     </AppLink>
                   </Button>
@@ -137,18 +136,12 @@ export const PickupComponent = ({
             </div>
 
             {/* Desktop actions */}
-            <div className={`${isSheet ? 'hidden md:flex' : 'hidden md:flex'} items-center gap-1`}>
+            <div
+              className={`${isSheet ? "hidden md:flex" : "hidden md:flex"} items-center gap-1`}
+            >
               {isPreview && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  asChild
-                  className="h-8"
-                >
-                  <AppLink
-                    href={`/pickups`}
-                    target="_blank"
-                  >
+                <Button variant="ghost" size="sm" asChild className="h-8">
+                  <AppLink href={`/pickups`} target="_blank">
                     <i className="fas fa-external-link-alt text-xs"></i>
                   </AppLink>
                 </Button>
@@ -167,17 +160,35 @@ export const PickupComponent = ({
           </div>
 
           {/* Main Content with Sidebar Layout */}
-          <div className={`flex flex-col ${isSheet ? '' : 'lg:grid lg:grid-cols-4'} gap-6`}>
+          <div
+            className={`flex flex-col ${isSheet ? "" : "lg:grid lg:grid-cols-4"} gap-6`}
+          >
             {/* Right Sidebar - Details Section */}
-            <div className={isSheet ? '' : 'lg:order-2 lg:col-span-1 lg:col-start-4'}>
-              <h3 className={`text-xl font-semibold my-4 ${isSheet ? '' : 'lg:mb-4 lg:mt-0'}`}>
+            <div
+              className={
+                isSheet ? "" : "lg:order-2 lg:col-span-1 lg:col-start-4"
+              }
+            >
+              <h3
+                className={`text-xl font-semibold my-4 ${isSheet ? "" : "lg:mb-4 lg:mt-0"}`}
+              >
                 Details
               </h3>
-              <div className={isSheet ? 'grid grid-cols-1 md:grid-cols-2 gap-4' : 'space-y-3'}>
+              <div
+                className={
+                  isSheet
+                    ? "grid grid-cols-1 md:grid-cols-2 gap-4"
+                    : "space-y-3"
+                }
+              >
                 <div className="space-y-3">
                   <div>
                     <div className="text-xs mb-1 font-bold">Pickup ID</div>
-                    <CopiableLink text={pickup.id as string} title="Copy ID" variant="outline" />
+                    <CopiableLink
+                      text={pickup.id as string}
+                      title="Copy ID"
+                      variant="outline"
+                    />
                   </div>
                   <div>
                     <div className="text-xs mb-1 font-bold">Carrier</div>
@@ -190,9 +201,14 @@ export const PickupComponent = ({
                         text_color={getCarrier()?.config?.text_color}
                         background={getCarrier()?.config?.brand_color}
                       />
-                      <div className="text-ellipsis text-xs" style={{ maxWidth: "190px", lineHeight: "16px" }}>
+                      <div
+                        className="text-ellipsis text-xs"
+                        style={{ maxWidth: "190px", lineHeight: "16px" }}
+                      >
                         <span className="text-blue-600 font-bold">
-                          {pickup.carrier_name ? formatRef(pickup.carrier_name) : "-"}
+                          {pickup.carrier_name
+                            ? formatRef(pickup.carrier_name)
+                            : "-"}
                         </span>
                         <br />
                         <span className="text-ellipsis">
@@ -203,7 +219,9 @@ export const PickupComponent = ({
                   </div>
                   {!isNone(pickup.confirmation_number) && (
                     <div>
-                      <div className="text-xs mb-1 font-bold">Confirmation #</div>
+                      <div className="text-xs mb-1 font-bold">
+                        Confirmation #
+                      </div>
                       <div className="text-sm font-medium">
                         {pickup.confirmation_number}
                       </div>
@@ -216,7 +234,11 @@ export const PickupComponent = ({
                   {(pickup as any).request_id && (
                     <div>
                       <div className="text-xs mb-1 font-bold">Request ID</div>
-                      <CopiableLink text={(pickup as any).request_id} title="Copy Request ID" variant="outline" />
+                      <CopiableLink
+                        text={(pickup as any).request_id}
+                        title="Copy Request ID"
+                        variant="outline"
+                      />
                     </div>
                   )}
                 </div>
@@ -237,7 +259,9 @@ export const PickupComponent = ({
                   </div>
                   {!isNone(pickup.package_location) && (
                     <div>
-                      <div className="text-xs mb-1 font-bold">Package Location</div>
+                      <div className="text-xs mb-1 font-bold">
+                        Package Location
+                      </div>
                       <div className="text-sm font-medium">
                         {pickup.package_location}
                       </div>
@@ -259,7 +283,9 @@ export const PickupComponent = ({
                   </div>
                   <div>
                     <div className="text-xs mb-1 font-bold">Last update</div>
-                    <div className="text-sm">{formatDateTime(pickup.updated_at)}</div>
+                    <div className="text-sm">
+                      {formatDateTime(pickup.updated_at)}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -279,29 +305,35 @@ export const PickupComponent = ({
             </div>
 
             {/* Left Column - Main Content */}
-            <div className={`space-y-6 order-1 mr-5 ${isSheet ? '' : 'lg:col-span-3 lg:col-start-1 lg:order-1'}`}>
-
+            <div
+              className={`space-y-6 order-1 mr-5 ${isSheet ? "" : "lg:col-span-3 lg:col-start-1 lg:order-1"}`}
+            >
               {/* Pickup Charge section */}
-              {!isNone(pickup.pickup_charge) && pickup.pickup_charge?.amount && (
-                <>
-                  <h2 className="text-xl font-semibold my-4">Pickup Charge</h2>
-                  <hr className="mt-1 mb-2" style={{ height: "1px" }} />
+              {!isNone(pickup.pickup_charge) &&
+                pickup.pickup_charge?.amount && (
+                  <>
+                    <h2 className="text-xl font-semibold my-4">
+                      Pickup Charge
+                    </h2>
+                    <hr className="mt-1 mb-2" style={{ height: "1px" }} />
 
-                  <div className="mt-3 mb-6">
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-gray-900">
-                        {pickup.pickup_charge?.name || "Pickup fee"}
-                      </span>
-                      <div className="text-sm text-gray-900 text-right">
-                        <span className="mr-1">{pickup.pickup_charge?.amount}</span>
-                        {!isNone(pickup.pickup_charge?.currency) && (
-                          <span>{pickup.pickup_charge?.currency}</span>
-                        )}
+                    <div className="mt-3 mb-6">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-gray-900">
+                          {pickup.pickup_charge?.name || "Pickup fee"}
+                        </span>
+                        <div className="text-sm text-gray-900 text-right">
+                          <span className="mr-1">
+                            {pickup.pickup_charge?.amount}
+                          </span>
+                          {!isNone(pickup.pickup_charge?.currency) && (
+                            <span>{pickup.pickup_charge?.currency}</span>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </>
-              )}
+                  </>
+                )}
 
               {/* Address section */}
               {!isNone(pickup.address) && (
@@ -329,7 +361,9 @@ export const PickupComponent = ({
                   <div className="mt-3 mb-6">
                     {pickup.parcels.map((parcel: ParcelType, index: number) => (
                       <React.Fragment key={index + "parcel-info"}>
-                        {index > 0 && <hr className="my-4" style={{ height: "1px" }} />}
+                        {index > 0 && (
+                          <hr className="my-4" style={{ height: "1px" }} />
+                        )}
                         <div className="text-base py-1">
                           <ParcelDescription parcel={parcel} />
                         </div>
@@ -368,22 +402,33 @@ export const PickupComponent = ({
                                   className="text-sm text-blue-600 hover:text-blue-800 font-medium"
                                   target="_blank"
                                 >
-                                  {shipment.tracking_number || shipment.id.substring(0, 12)}
+                                  {shipment.tracking_number ||
+                                    shipment.id.substring(0, 12)}
                                 </AppLink>
                               </TableCell>
                               <TableCell>
                                 <span className="text-sm">
-                                  {shipment.service ? formatRef(shipment.service) : "-"}
+                                  {shipment.service
+                                    ? formatRef(shipment.service)
+                                    : "-"}
                                 </span>
                               </TableCell>
                               <TableCell>
-                                <StatusBadge status={shipment.status || "unknown"} />
+                                <StatusBadge
+                                  status={shipment.status || "unknown"}
+                                />
                               </TableCell>
                               <TableCell>
                                 {shipment.tracker ? (
-                                  <StatusBadge status={shipment.tracker.status || "unknown"} />
+                                  <StatusBadge
+                                    status={
+                                      shipment.tracker.status || "unknown"
+                                    }
+                                  />
                                 ) : (
-                                  <span className="text-xs text-muted-foreground">No tracker</span>
+                                  <span className="text-xs text-muted-foreground">
+                                    No tracker
+                                  </span>
                                 )}
                               </TableCell>
                             </TableRow>
@@ -396,9 +441,13 @@ export const PickupComponent = ({
               )}
 
               {/* Tracking Events from Related Shipments */}
-              {(pickup.shipments || []).some((s) => s.tracker?.events?.length) && (
+              {(pickup.shipments || []).some(
+                (s) => s.tracker?.events?.length,
+              ) && (
                 <>
-                  <h2 className="text-xl font-semibold my-4">Tracking Records</h2>
+                  <h2 className="text-xl font-semibold my-4">
+                    Tracking Records
+                  </h2>
                   <hr className="mt-1 mb-2" style={{ height: "1px" }} />
 
                   <div className="mt-3 mb-6 space-y-4">
@@ -408,34 +457,49 @@ export const PickupComponent = ({
                         <div key={shipment.id} className="space-y-2">
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-semibold">
-                              {shipment.tracking_number || shipment.id.substring(0, 12)}
+                              {shipment.tracking_number ||
+                                shipment.id.substring(0, 12)}
                             </span>
                             {shipment.tracker && (
-                              <StatusBadge status={shipment.tracker.status || "unknown"} />
+                              <StatusBadge
+                                status={shipment.tracker.status || "unknown"}
+                              />
                             )}
                             {shipment.tracker?.delivered && (
-                              <span className="text-xs text-green-600 font-medium">Delivered</span>
-                            )}
-                            {shipment.tracker?.estimated_delivery && !shipment.tracker?.delivered && (
-                              <span className="text-xs text-muted-foreground">
-                                Est. {shipment.tracker.estimated_delivery}
+                              <span className="text-xs text-green-600 font-medium">
+                                Delivered
                               </span>
                             )}
+                            {shipment.tracker?.estimated_delivery &&
+                              !shipment.tracker?.delivered && (
+                                <span className="text-xs text-muted-foreground">
+                                  Est. {shipment.tracker.estimated_delivery}
+                                </span>
+                              )}
                           </div>
                           <div className="border rounded-md p-3 space-y-2">
-                            {(shipment.tracker?.events || []).map((event, idx) => (
-                              <div key={idx} className="flex items-start gap-3 text-sm">
-                                <div className="text-xs text-muted-foreground whitespace-nowrap min-w-[100px]">
-                                  {event.date} {event.time}
+                            {(shipment.tracker?.events || []).map(
+                              (event, idx) => (
+                                <div
+                                  key={idx}
+                                  className="flex items-start gap-3 text-sm"
+                                >
+                                  <div className="text-xs text-muted-foreground whitespace-nowrap min-w-[100px]">
+                                    {event.date} {event.time}
+                                  </div>
+                                  <div className="flex-1">
+                                    <p className="text-sm">
+                                      {event.description}
+                                    </p>
+                                    {event.location && (
+                                      <p className="text-xs text-muted-foreground">
+                                        {event.location}
+                                      </p>
+                                    )}
+                                  </div>
                                 </div>
-                                <div className="flex-1">
-                                  <p className="text-sm">{event.description}</p>
-                                  {event.location && (
-                                    <p className="text-xs text-muted-foreground">{event.location}</p>
-                                  )}
-                                </div>
-                              </div>
-                            ))}
+                              ),
+                            )}
                           </div>
                         </div>
                       ))}
@@ -464,10 +528,7 @@ export const PickupComponent = ({
 
           {/* Activity Timeline section */}
           <h2 className="text-xl font-semibold my-4">Activity</h2>
-          <ActivityTimeline
-            logs={logs}
-            events={events}
-          />
+          <ActivityTimeline logs={logs} events={events} />
         </div>
       )}
 

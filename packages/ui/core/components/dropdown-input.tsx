@@ -7,8 +7,7 @@ import React, {
 } from "react";
 import { isNone, isNoneOrEmpty } from "@karrio/lib";
 
-export interface DropdownInputComponent
-  extends React.AllHTMLAttributes<HTMLInputElement> {
+export interface DropdownInputComponent extends React.AllHTMLAttributes<HTMLInputElement> {
   label?: string;
   fieldClass?: string;
   controlClass?: string;
@@ -119,7 +118,7 @@ export const DropdownInput = ({
               value={selected || ""}
               className={
                 "dropdown-trigger input is-clickable is-fullwidth px-2" +
-                ` ${className}` || ""
+                  ` ${className}` || ""
               }
               aria-haspopup="true"
               readOnly

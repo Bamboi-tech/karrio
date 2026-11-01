@@ -200,8 +200,8 @@ export const Component = ({
                                     parseWorkflowEventRecordData(
                                       trace.record.output || trace.record,
                                     ) ||
-                                    trace.record.url ||
-                                    "",
+                                      trace.record.url ||
+                                      "",
                                     {
                                       language: trace.record?.format || "json",
                                     },
@@ -229,7 +229,7 @@ export default function Page({ params }: { params: Promise<{ id: string }> }) {
     const [id, setId] = React.useState<string>();
 
     React.useEffect(() => {
-      params.then(query => {
+      params.then((query) => {
         setId(query.id);
       });
     }, []);

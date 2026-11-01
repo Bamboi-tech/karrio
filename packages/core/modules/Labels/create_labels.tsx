@@ -43,8 +43,17 @@ import {
   MetadataEditorContext,
   MetadataEditor,
 } from "@karrio/ui/core/forms/metadata-editor";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@karrio/ui/components/ui/collapsible";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@karrio/ui/components/ui/dialog";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@karrio/ui/components/ui/collapsible";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@karrio/ui/components/ui/dialog";
 import { CustomsInfoDescription } from "@karrio/ui/core/components/customs-info-description";
 import { GoogleGeocodingScript } from "@karrio/ui/core/components/google-geocoding-script";
 import { CommodityDescription } from "@karrio/ui/core/components/commodity-description";
@@ -103,8 +112,12 @@ export default function Page() {
       shipment_ids.split(",").filter((_) => !isNoneOrEmpty(_)),
     );
 
-    const { query: carrierConnectionsQuery, user_connections: user_carrier_connections } = useCarrierConnections();
-    const { query: systemConnectionsQuery, system_connections } = useSystemConnections();
+    const {
+      query: carrierConnectionsQuery,
+      user_connections: user_carrier_connections,
+    } = useCarrierConnections();
+    const { query: systemConnectionsQuery, system_connections } =
+      useSystemConnections();
     const ordersQuery = useOrders({
       id: orderIds,
     });
@@ -122,7 +135,8 @@ export default function Page() {
       shipmentList:
         shipmentIds.length === 0
           ? collectShipments(orderList)
-          : (shipmentList?.edges?.map(({ node }) => node) as ShipmentType[]) || [],
+          : (shipmentList?.edges?.map(({ node }) => node) as ShipmentType[]) ||
+            [],
     });
 
     function collectShipments(current: typeof orderList) {
@@ -248,7 +262,10 @@ export default function Page() {
         shipment.recipient.country_code !== shipment.shipper.country_code
       );
     };
-    const isPackedItem = (cdt: CommodityType | CustomsCommodityType, shipment: ShipmentType) => {
+    const isPackedItem = (
+      cdt: CommodityType | CustomsCommodityType,
+      shipment: ShipmentType,
+    ) => {
       const parentId = "parent_id" in cdt ? cdt.parent_id : null;
       const item = getShipmentCommodities(shipment).find(
         (item) =>
@@ -411,32 +428,32 @@ export default function Page() {
             {/* Error & messages */}
             {(batch.shipments || []).map((_) => _.messages || []).flat()
               .length > 0 && (
-                <>
-                  <div className="notification is-warning is-light is-size-7 my-2 p-2">
-                    {(batch.shipments || [])
-                      .filter((_) => (_.messages || []).length > 0)
-                      .map((shipment, index) => (
-                        <React.Fragment key={`${index}-${new Date()}`}>
-                          <label
-                            className="label is-capitalized mt-2"
-                            style={{ fontSize: "0.8em" }}
-                          >
-                            {`#${shipment.meta?.order_id || shipment.metadata?.order_ids || " - "}`}
-                            {" - "}
-                            {formatAddressLocationShort(
-                              shipment.recipient as AddressType,
-                            )}
-                          </label>
-                          <hr className="my-1" style={{ height: "1px" }} />
-                          <MessagesDescription
-                            key={index}
-                            messages={shipment.messages}
-                          />
-                        </React.Fragment>
-                      ))}
-                  </div>
-                </>
-              )}
+              <>
+                <div className="notification is-warning is-light is-size-7 my-2 p-2">
+                  {(batch.shipments || [])
+                    .filter((_) => (_.messages || []).length > 0)
+                    .map((shipment, index) => (
+                      <React.Fragment key={`${index}-${new Date()}`}>
+                        <label
+                          className="label is-capitalized mt-2"
+                          style={{ fontSize: "0.8em" }}
+                        >
+                          {`#${shipment.meta?.order_id || shipment.metadata?.order_ids || " - "}`}
+                          {" - "}
+                          {formatAddressLocationShort(
+                            shipment.recipient as AddressType,
+                          )}
+                        </label>
+                        <hr className="my-1" style={{ height: "1px" }} />
+                        <MessagesDescription
+                          key={index}
+                          messages={shipment.messages}
+                        />
+                      </React.Fragment>
+                    ))}
+                </div>
+              </>
+            )}
 
             {/* Batch labels table */}
             <>
@@ -506,12 +523,12 @@ export default function Page() {
                               <p className="is-size-7 has-text-weight-bold has-text-grey">
                                 {((items: number): any =>
                                   `${items} item${items === 1 ? "" : "s"}`)(
-                                    (shipment.parcels[0]?.items || []).reduce(
-                                      (acc, item) =>
-                                        acc + (item.quantity as number) || 1,
-                                      0,
-                                    ),
-                                  )}
+                                  (shipment.parcels[0]?.items || []).reduce(
+                                    (acc, item) =>
+                                      acc + (item.quantity as number) || 1,
+                                    0,
+                                  ),
+                                )}
                               </p>
                               <p
                                 className="is-size-7 has-text-grey"
@@ -524,12 +541,12 @@ export default function Page() {
                                 {(shipment.parcels[0]?.items || []).length > 1
                                   ? "(Multiple)"
                                   : (shipment.parcels[0]?.items || [])[0]
-                                    ?.title ||
-                                  (shipment.parcels[0]?.items || [])[0]
-                                    ?.description ||
-                                  (shipment.parcels[0]?.items || [])[0]
-                                    ?.sku ||
-                                  " - "}
+                                      ?.title ||
+                                    (shipment.parcels[0]?.items || [])[0]
+                                      ?.description ||
+                                    (shipment.parcels[0]?.items || [])[0]
+                                      ?.sku ||
+                                    " - "}
                               </p>
                             </div>
                           </label>
@@ -668,7 +685,9 @@ export default function Page() {
               <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
                 <DialogContent className="modal-card side-modal-body">
                   <DialogHeader>
-                    <DialogTitle className="sr-only">Shipment Details</DialogTitle>
+                    <DialogTitle className="sr-only">
+                      Shipment Details
+                    </DialogTitle>
                   </DialogHeader>
                   <section className="modal-card-body has-background-white p-4 pb-8">
                     {retrieveShipment(
@@ -763,12 +782,12 @@ export default function Page() {
 
                                       {Object.values(shipment.recipient || {})
                                         .length === 0 && (
-                                          <>
-                                            <div className="notification is-warning is-light my-2 py-2 px-4 my-2">
-                                              Please add a customer address.
-                                            </div>
-                                          </>
-                                        )}
+                                        <>
+                                          <div className="notification is-warning is-light my-2 py-2 px-4 my-2">
+                                            Please add a customer address.
+                                          </div>
+                                        </>
+                                      )}
                                     </div>
 
                                     <hr
@@ -809,12 +828,12 @@ export default function Page() {
 
                                       {Object.values(shipment.shipper || {})
                                         .length === 0 && (
-                                          <>
-                                            <div className="notification is-warning is-light my-2 py-2 px-4 my-2">
-                                              Please specify an address.
-                                            </div>
-                                          </>
-                                        )}
+                                        <>
+                                          <div className="notification is-warning is-light my-2 py-2 px-4 my-2">
+                                            Please specify an address.
+                                          </div>
+                                        </>
+                                      )}
                                     </div>
 
                                     {/* Retrun address section */}
@@ -859,32 +878,32 @@ export default function Page() {
                                             !isNone(
                                               shipment.return_address,
                                             )) && (
-                                              <AddressModalEditor
-                                                shipment={shipment}
-                                                address={
-                                                  shipment.return_address ||
-                                                  ({
-                                                    country_code:
-                                                      shipment.shipper
-                                                        ?.country_code,
-                                                  } as AddressType)
-                                                }
-                                                onSubmit={(address) =>
-                                                  onChange(
-                                                    shipment_index,
-                                                    shipment,
-                                                    {
-                                                      return_address: address,
-                                                    },
-                                                  )
-                                                }
-                                                trigger={
-                                                  <button className="button is-small is-info is-text is-inverted p-1">
-                                                    Edit return address
-                                                  </button>
-                                                }
-                                              />
-                                            )}
+                                            <AddressModalEditor
+                                              shipment={shipment}
+                                              address={
+                                                shipment.return_address ||
+                                                ({
+                                                  country_code:
+                                                    shipment.shipper
+                                                      ?.country_code,
+                                                } as AddressType)
+                                              }
+                                              onSubmit={(address) =>
+                                                onChange(
+                                                  shipment_index,
+                                                  shipment,
+                                                  {
+                                                    return_address: address,
+                                                  },
+                                                )
+                                              }
+                                              trigger={
+                                                <button className="button is-small is-info is-text is-inverted p-1">
+                                                  Edit return address
+                                                </button>
+                                              }
+                                            />
+                                          )}
                                         </div>
                                       </header>
 
@@ -905,16 +924,16 @@ export default function Page() {
                                       {Object.values(
                                         shipment?.return_address || [],
                                       ).length === 0 && (
-                                          <div className="notification is-default p-2 is-size-7">
-                                            <span>
-                                              Use this to specify an origin
-                                              address different from the shipper
-                                              address above. <br />
-                                              This address will be used for pickup
-                                              and return.
-                                            </span>
-                                          </div>
-                                        )}
+                                        <div className="notification is-default p-2 is-size-7">
+                                          <span>
+                                            Use this to specify an origin
+                                            address different from the shipper
+                                            address above. <br />
+                                            This address will be used for pickup
+                                            and return.
+                                          </span>
+                                        </div>
+                                      )}
                                     </div>
 
                                     {/* Billing address section */}
@@ -1023,7 +1042,7 @@ export default function Page() {
 
                                       {shipment.payment?.paid_by &&
                                         shipment.payment?.paid_by !==
-                                        PaidByEnum.sender && (
+                                          PaidByEnum.sender && (
                                           <div
                                             className="columns m-1 px-2 py-0"
                                             style={{
@@ -1057,60 +1076,60 @@ export default function Page() {
 
                                     {(shipment?.billing_address ||
                                       shipment.payment?.paid_by ===
-                                      PaidByEnum.third_party) && (
-                                        <>
-                                          <div className="p-3">
-                                            <header className="is-flex is-justify-content-space-between">
-                                              <label
-                                                className="label is-capitalized"
-                                                style={{ fontSize: "0.8em" }}
-                                              >
-                                                Billing address
-                                              </label>
-                                              <div className="is-vcentered">
-                                                <AddressModalEditor
-                                                  shipment={shipment}
-                                                  address={
-                                                    shipment.billing_address ||
-                                                    ({} as AddressType)
-                                                  }
-                                                  onSubmit={(address) =>
-                                                    onChange(
-                                                      shipment_index,
-                                                      shipment,
-                                                      {
-                                                        billing_address: address,
-                                                      },
-                                                    )
-                                                  }
-                                                  trigger={
-                                                    <button className="button is-small is-info is-text is-inverted p-1">
-                                                      Edit address
-                                                    </button>
-                                                  }
-                                                />
-                                              </div>
-                                            </header>
-
-                                            {shipment?.billing_address && (
-                                              <AddressDescription
+                                        PaidByEnum.third_party) && (
+                                      <>
+                                        <div className="p-3">
+                                          <header className="is-flex is-justify-content-space-between">
+                                            <label
+                                              className="label is-capitalized"
+                                              style={{ fontSize: "0.8em" }}
+                                            >
+                                              Billing address
+                                            </label>
+                                            <div className="is-vcentered">
+                                              <AddressModalEditor
+                                                shipment={shipment}
                                                 address={
-                                                  shipment!.billing_address as any
+                                                  shipment.billing_address ||
+                                                  ({} as AddressType)
+                                                }
+                                                onSubmit={(address) =>
+                                                  onChange(
+                                                    shipment_index,
+                                                    shipment,
+                                                    {
+                                                      billing_address: address,
+                                                    },
+                                                  )
+                                                }
+                                                trigger={
+                                                  <button className="button is-small is-info is-text is-inverted p-1">
+                                                    Edit address
+                                                  </button>
                                                 }
                                               />
-                                            )}
+                                            </div>
+                                          </header>
 
-                                            {isNone(
-                                              shipment?.billing_address,
-                                            ) && (
-                                                <div className="notification is-default p-2 is-size-7 my-2">
-                                                  Add shipment billing address.
-                                                  (optional)
-                                                </div>
-                                              )}
-                                          </div>
-                                        </>
-                                      )}
+                                          {shipment?.billing_address && (
+                                            <AddressDescription
+                                              address={
+                                                shipment!.billing_address as any
+                                              }
+                                            />
+                                          )}
+
+                                          {isNone(
+                                            shipment?.billing_address,
+                                          ) && (
+                                            <div className="notification is-default p-2 is-size-7 my-2">
+                                              Add shipment billing address.
+                                              (optional)
+                                            </div>
+                                          )}
+                                        </div>
+                                      </>
+                                    )}
                                   </div>
 
                                   {/* Parcel & Items section */}
@@ -1171,7 +1190,10 @@ export default function Page() {
                                                 header="Edit package"
                                                 onSubmit={mutation.updateParcel(
                                                   shipment_index,
-                                                )(pkg_index, pkg.id ?? undefined)}
+                                                )(
+                                                  pkg_index,
+                                                  pkg.id ?? undefined,
+                                                )}
                                                 parcel={pkg}
                                                 shipment={shipment}
                                                 trigger={
@@ -1193,7 +1215,10 @@ export default function Page() {
                                                 }
                                                 onClick={mutation.removeParcel(
                                                   shipment_index,
-                                                )(pkg_index, pkg.id ?? undefined)}
+                                                )(
+                                                  pkg_index,
+                                                  pkg.id ?? undefined,
+                                                )}
                                               >
                                                 <span className="icon is-small">
                                                   <i className="fas fa-times"></i>
@@ -1236,10 +1261,10 @@ export default function Page() {
                                                         orders,
                                                         item.parent_id,
                                                       ) && (
-                                                          <span className="has-text-info">
-                                                            {` | ORDER: ${getOrder(orders, item.parent_id)?.order_id}`}
-                                                          </span>
-                                                        )}
+                                                        <span className="has-text-info">
+                                                          {` | ORDER: ${getOrder(orders, item.parent_id)?.order_id}`}
+                                                        </span>
+                                                      )}
                                                     </p>
                                                     <p className="is-subtitle is-size-7 my-1 has-text-weight-semibold has-text-grey"></p>
                                                   </div>
@@ -1267,7 +1292,8 @@ export default function Page() {
                                                               )(
                                                                 pkg_index,
                                                                 item_index,
-                                                                pkg.id ?? undefined,
+                                                                pkg.id ??
+                                                                  undefined,
                                                               )({
                                                                 quantity:
                                                                   parseInt(
@@ -1287,13 +1313,13 @@ export default function Page() {
                                                               item.parent_id,
                                                             )
                                                               ? {
-                                                                max: getAvailableQuantity(
-                                                                  shipment,
-                                                                  orders,
-                                                                  item,
-                                                                  item_index,
-                                                                ),
-                                                              }
+                                                                  max: getAvailableQuantity(
+                                                                    shipment,
+                                                                    orders,
+                                                                    item,
+                                                                    item_index,
+                                                                  ),
+                                                                }
                                                               : {})}
                                                           />
                                                         </p>
@@ -1301,18 +1327,18 @@ export default function Page() {
                                                           orders,
                                                           item.parent_id,
                                                         ) && (
-                                                            <p className="control">
-                                                              <a className="button is-static is-small">
-                                                                of{" "}
-                                                                {getParent(
-                                                                  orders,
-                                                                  item.parent_id,
-                                                                )
-                                                                  ?.unfulfilled_quantity ||
-                                                                  item.quantity}
-                                                              </a>
-                                                            </p>
-                                                          )}
+                                                          <p className="control">
+                                                            <a className="button is-static is-small">
+                                                              of{" "}
+                                                              {getParent(
+                                                                orders,
+                                                                item.parent_id,
+                                                              )
+                                                                ?.unfulfilled_quantity ||
+                                                                item.quantity}
+                                                            </a>
+                                                          </p>
+                                                        )}
                                                       </div>
                                                     </div>
                                                     {/* @ts-ignore */}
@@ -1335,8 +1361,11 @@ export default function Page() {
                                                                 )(
                                                                   pkg_index,
                                                                   item_index,
-                                                                  pkg.id ?? undefined,
-                                                                )(_ as CommodityType),
+                                                                  pkg.id ??
+                                                                    undefined,
+                                                                )(
+                                                                  _ as CommodityType,
+                                                                ),
                                                             })
                                                           }
                                                         >
@@ -1782,7 +1811,9 @@ export default function Page() {
                                           <CollapsibleTrigger
                                             asChild
                                             className="button is-fullwidth is-small is-ellipsis px-1"
-                                            style={{ justifyContent: "space-between" }}
+                                            style={{
+                                              justifyContent: "space-between",
+                                            }}
                                           >
                                             <div>
                                               <span className="icon mr-1">
@@ -1797,38 +1828,36 @@ export default function Page() {
                                             className="is-flat m-0 px-0"
                                             style={{ maxHeight: "40vh" }}
                                           >
-                                            {Object.entries(
-                                              carrierOptions,
-                                            ).map(([carrier, options]) => (
-                                              <React.Fragment key={carrier}>
-                                                <label
-                                                  className="label is-capitalized"
-                                                  style={{
-                                                    fontSize: "0.8em",
-                                                  }}
-                                                >
-                                                  {
-                                                    references!.carriers[
-                                                    carrier
-                                                    ]
-                                                  }
-                                                </label>
-                                                <hr
-                                                  className="my-1"
-                                                  style={{ height: "1px" }}
-                                                />
+                                            {Object.entries(carrierOptions).map(
+                                              ([carrier, options]) => (
+                                                <React.Fragment key={carrier}>
+                                                  <label
+                                                    className="label is-capitalized"
+                                                    style={{
+                                                      fontSize: "0.8em",
+                                                    }}
+                                                  >
+                                                    {
+                                                      references!.carriers[
+                                                        carrier
+                                                      ]
+                                                    }
+                                                  </label>
+                                                  <hr
+                                                    className="my-1"
+                                                    style={{ height: "1px" }}
+                                                  />
 
-                                                <div className="is-flex is-flex-wrap-wrap m-0 p-0">
-                                                  {options.map(
-                                                    (option, index) => (
-                                                      <React.Fragment
-                                                        key={option}
-                                                      >
-                                                        {references!
-                                                          .options[carrier][
-                                                          option
-                                                        ]?.type ===
-                                                          "boolean" && (
+                                                  <div className="is-flex is-flex-wrap-wrap m-0 p-0">
+                                                    {options.map(
+                                                      (option, index) => (
+                                                        <React.Fragment
+                                                          key={option}
+                                                        >
+                                                          {references!.options[
+                                                            carrier
+                                                          ][option]?.type ===
+                                                            "boolean" && (
                                                             <div
                                                               style={{
                                                                 minWidth:
@@ -1841,18 +1870,15 @@ export default function Page() {
                                                                 defaultChecked={
                                                                   shipment
                                                                     .options?.[
-                                                                  option
+                                                                    option
                                                                   ]
                                                                 }
-                                                                onChange={(
-                                                                  e,
-                                                                ) =>
+                                                                onChange={(e) =>
                                                                   onChange(
                                                                     shipment_index,
                                                                     shipment,
                                                                     {
-                                                                      options:
-                                                                      {
+                                                                      options: {
                                                                         ...shipment.options,
                                                                         [option]:
                                                                           e
@@ -1873,11 +1899,10 @@ export default function Page() {
                                                             </div>
                                                           )}
 
-                                                        {references!
-                                                          .options[carrier][
-                                                          option
-                                                        ]?.type ===
-                                                          "string" && (
+                                                          {references!.options[
+                                                            carrier
+                                                          ][option]?.type ===
+                                                            "string" && (
                                                             <>
                                                               <InputField
                                                                 name={option}
@@ -1897,18 +1922,15 @@ export default function Page() {
                                                                 defaultValue={
                                                                   shipment
                                                                     .options[
-                                                                  option
+                                                                    option
                                                                   ]
                                                                 }
-                                                                onChange={(
-                                                                  e,
-                                                                ) =>
+                                                                onChange={(e) =>
                                                                   onChange(
                                                                     shipment_index,
                                                                     shipment,
                                                                     {
-                                                                      options:
-                                                                      {
+                                                                      options: {
                                                                         ...shipment.options,
                                                                         [option]:
                                                                           e
@@ -1921,14 +1943,15 @@ export default function Page() {
                                                               />
                                                             </>
                                                           )}
-                                                      </React.Fragment>
-                                                    ),
-                                                  )}
-                                                </div>
+                                                        </React.Fragment>
+                                                      ),
+                                                    )}
+                                                  </div>
 
-                                                <div className="p-2"></div>
-                                              </React.Fragment>
-                                            ))}
+                                                  <div className="p-2"></div>
+                                                </React.Fragment>
+                                              ),
+                                            )}
                                           </CollapsibleContent>
                                         </Collapsible>
                                       </div>
@@ -1974,7 +1997,7 @@ export default function Page() {
                                                 ...DEFAULT_CUSTOMS_CONTENT,
                                                 incoterm:
                                                   shipment.payment?.paid_by ==
-                                                    PaidByEnum.sender
+                                                  PaidByEnum.sender
                                                     ? "DDP"
                                                     : "DDU",
                                                 duty: {
@@ -2070,7 +2093,9 @@ export default function Page() {
                                                                   shipment
                                                                     .customs
                                                                     ?.id,
-                                                                )(_ as CommodityType),
+                                                                )(
+                                                                  _ as CommodityType,
+                                                                ),
                                                             })
                                                           }
                                                         >
@@ -2094,7 +2119,10 @@ export default function Page() {
                                                         )(
                                                           index,
                                                           shipment.customs?.id,
-                                                        )(commodity.id ?? undefined)
+                                                        )(
+                                                          commodity.id ??
+                                                            undefined,
+                                                        )
                                                       }
                                                     >
                                                       <span className="icon is-small">
@@ -2110,11 +2138,11 @@ export default function Page() {
                                               shipment.customs!.commodities ||
                                               []
                                             ).length === 0 && (
-                                                <div className="notification is-warning is-light my-2 py-2 px-4 is-size-7">
-                                                  You need provide commodity items
-                                                  for customs purpose. (required)
-                                                </div>
-                                              )}
+                                              <div className="notification is-warning is-light my-2 py-2 px-4 is-size-7">
+                                                You need provide commodity items
+                                                for customs purpose. (required)
+                                              </div>
+                                            )}
 
                                             <div className="is-flex is-justify-content-space-between mt-4">
                                               {/* @ts-ignore */}
@@ -2157,74 +2185,74 @@ export default function Page() {
                                               .duty_billing_address ||
                                               shipment.customs!.duty
                                                 ?.paid_by ===
-                                              PaidByEnum.third_party) && (
-                                                <>
-                                                  <hr
-                                                    className="my-1"
-                                                    style={{ height: "1px" }}
-                                                  />
+                                                PaidByEnum.third_party) && (
+                                              <>
+                                                <hr
+                                                  className="my-1"
+                                                  style={{ height: "1px" }}
+                                                />
 
-                                                  <div className="py-3">
-                                                    <header className="is-flex is-justify-content-space-between">
-                                                      <label
-                                                        className="label is-capitalized"
-                                                        style={{
-                                                          fontSize: "0.8em",
-                                                        }}
-                                                      >
-                                                        Billing address
-                                                      </label>
-                                                      <div className="is-vcentered">
-                                                        <AddressModalEditor
-                                                          address={
-                                                            shipment.customs
-                                                              ?.duty_billing_address ||
-                                                            ({} as AddressType)
-                                                          }
-                                                          onSubmit={(address) =>
-                                                            mutation.updateShipment(
-                                                              shipment_index,
-                                                            )({
-                                                              customs: {
-                                                                ...shipment!
-                                                                  .customs,
-                                                                duty_billing_address:
-                                                                  address,
-                                                              } as any,
-                                                            })
-                                                          }
-                                                          trigger={
-                                                            <button className="button is-small is-info is-text is-inverted p-1">
-                                                              Edit duty billing
-                                                              address
-                                                            </button>
-                                                          }
-                                                        />
-                                                      </div>
-                                                    </header>
+                                                <div className="py-3">
+                                                  <header className="is-flex is-justify-content-space-between">
+                                                    <label
+                                                      className="label is-capitalized"
+                                                      style={{
+                                                        fontSize: "0.8em",
+                                                      }}
+                                                    >
+                                                      Billing address
+                                                    </label>
+                                                    <div className="is-vcentered">
+                                                      <AddressModalEditor
+                                                        address={
+                                                          shipment.customs
+                                                            ?.duty_billing_address ||
+                                                          ({} as AddressType)
+                                                        }
+                                                        onSubmit={(address) =>
+                                                          mutation.updateShipment(
+                                                            shipment_index,
+                                                          )({
+                                                            customs: {
+                                                              ...shipment!
+                                                                .customs,
+                                                              duty_billing_address:
+                                                                address,
+                                                            } as any,
+                                                          })
+                                                        }
+                                                        trigger={
+                                                          <button className="button is-small is-info is-text is-inverted p-1">
+                                                            Edit duty billing
+                                                            address
+                                                          </button>
+                                                        }
+                                                      />
+                                                    </div>
+                                                  </header>
 
-                                                    {shipment!.customs!
-                                                      .duty_billing_address && (
-                                                        <AddressDescription
-                                                          address={
-                                                            shipment!.customs!
-                                                              .duty_billing_address as any
-                                                          }
-                                                        />
-                                                      )}
+                                                  {shipment!.customs!
+                                                    .duty_billing_address && (
+                                                    <AddressDescription
+                                                      address={
+                                                        shipment!.customs!
+                                                          .duty_billing_address as any
+                                                      }
+                                                    />
+                                                  )}
 
-                                                    {isNone(
-                                                      shipment!.customs!
-                                                        .duty_billing_address,
-                                                    ) && (
-                                                        <div className="notification is-default p-2 is-size-7">
-                                                          Add customs duty billing
-                                                          address. (optional)
-                                                        </div>
-                                                      )}
-                                                  </div>
-                                                </>
-                                              )}
+                                                  {isNone(
+                                                    shipment!.customs!
+                                                      .duty_billing_address,
+                                                  ) && (
+                                                    <div className="notification is-default p-2 is-size-7">
+                                                      Add customs duty billing
+                                                      address. (optional)
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              </>
+                                            )}
                                           </>
                                         )}
 
@@ -2305,14 +2333,16 @@ export default function Page() {
                                         }
                                         required={
                                           !isNone(
-                                            shipment.options?.shipper_instructions,
+                                            shipment.options
+                                              ?.shipper_instructions,
                                           )
                                         }
                                         onChange={(e) =>
                                           onChange(shipment_index, shipment, {
                                             options: {
                                               ...shipment.options,
-                                              shipper_instructions: e.target.value,
+                                              shipper_instructions:
+                                                e.target.value,
                                             },
                                           })
                                         }

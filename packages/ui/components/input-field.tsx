@@ -4,8 +4,7 @@ import { Input } from "@karrio/ui/components/ui/input";
 import { Label } from "@karrio/ui/components/ui/label";
 import { cn } from "@karrio/ui/lib/utils";
 
-export interface InputFieldComponent
-  extends React.InputHTMLAttributes<HTMLInputElement> {
+export interface InputFieldComponent extends React.InputHTMLAttributes<HTMLInputElement> {
   label?: string;
   fieldClass?: string;
   controlClass?: string;
@@ -18,22 +17,28 @@ export interface InputFieldComponent
   ref?: RefObject<HTMLInputElement>;
 }
 
-export const InputField = React.forwardRef<HTMLInputElement, InputFieldComponent>(
-  ({
-    label,
-    required,
-    className,
-    fieldClass,
-    controlClass,
-    wrapperClass,
-    children,
-    addonLeft,
-    addonRight,
-    iconLeft,
-    iconRight,
-    labelBold = false,
-    ...props
-  }, ref) => {
+export const InputField = React.forwardRef<
+  HTMLInputElement,
+  InputFieldComponent
+>(
+  (
+    {
+      label,
+      required,
+      className,
+      fieldClass,
+      controlClass,
+      wrapperClass,
+      children,
+      addonLeft,
+      addonRight,
+      iconLeft,
+      iconRight,
+      labelBold = false,
+      ...props
+    },
+    ref,
+  ) => {
     const Props = {
       required,
       ...props,
@@ -45,8 +50,11 @@ export const InputField = React.forwardRef<HTMLInputElement, InputFieldComponent
     return (
       <div className={cn(wrapperClass || "px-1 py-2")}>
         {label !== undefined && (
-          <Label 
-            className={cn("capitalize text-xs mb-1 block", labelBold ? "font-bold" : "font-normal")}
+          <Label
+            className={cn(
+              "capitalize text-xs mb-1 block",
+              labelBold ? "font-bold" : "font-normal",
+            )}
             style={{ fontSize: ".8em" }}
           >
             {label}
@@ -72,7 +80,7 @@ export const InputField = React.forwardRef<HTMLInputElement, InputFieldComponent
                 "h-9", // Match Bulma small input height
                 addonLeft && "pl-10",
                 addonRight && "pr-10",
-                className
+                className,
               )}
               {...Props}
             />
@@ -98,7 +106,7 @@ export const InputField = React.forwardRef<HTMLInputElement, InputFieldComponent
         {children}
       </div>
     );
-  }
+  },
 );
 
 InputField.displayName = "InputField";

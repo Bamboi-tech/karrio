@@ -21,10 +21,14 @@ import { MetadataObjectTypeEnum, NotificationType } from "@karrio/types";
 import { useEvents } from "@karrio/hooks/event";
 import { useOrder } from "@karrio/hooks/order";
 import { useLogs } from "@karrio/hooks/log";
-import { Table, TableBody, TableRow, TableCell } from "@karrio/ui/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableRow,
+  TableCell,
+} from "@karrio/ui/components/ui/table";
 import { Button } from "@karrio/ui/components/ui/button";
 import React from "react";
-
 
 type OrderComponentProps = {
   orderId: string;
@@ -45,10 +49,7 @@ export const OrderComponent = ({
   const {
     query: { data: { order } = {}, ...query },
   } = useOrder(entity_id);
-  const { updateMetadata } = useMetadataMutation([
-    "orders",
-    entity_id,
-  ]);
+  const { updateMetadata } = useMetadataMutation(["orders", entity_id]);
 
   const handleMetadataChange = async (newMetadata: any) => {
     try {
@@ -59,7 +60,7 @@ export const OrderComponent = ({
 
       // Calculate discarded_keys (keys that were removed)
       const discarded_keys = Object.keys(currentMetadata).filter(
-        key => !(key in newMetadata)
+        (key) => !(key in newMetadata),
       );
 
       await updateMetadata.mutateAsync({
@@ -106,7 +107,9 @@ export const OrderComponent = ({
               </div>
 
               {/* Mobile OrderMenu - positioned after order_id line */}
-              <div className={`flex justify-start items-center gap-1 md:hidden`}>
+              <div
+                className={`flex justify-start items-center gap-1 md:hidden`}
+              >
                 {isPreview && isSheet && (
                   <Button variant="ghost" size="sm" asChild className="h-8">
                     <AppLink href={`/orders/${orderId}`} target="_blank">
@@ -119,7 +122,9 @@ export const OrderComponent = ({
             </div>
 
             {/* Desktop OrderMenu - positioned in top-right corner */}
-            <div className={`${isSheet ? 'hidden md:flex' : 'hidden md:flex'} items-center gap-1`}>
+            <div
+              className={`${isSheet ? "hidden md:flex" : "hidden md:flex"} items-center gap-1`}
+            >
               {isPreview && (
                 <Button variant="ghost" size="sm" asChild className="h-8">
                   <AppLink href={`/orders/${orderId}`} target="_blank">
@@ -132,17 +137,35 @@ export const OrderComponent = ({
           </div>
 
           {/* Main Content with Sidebar Layout */}
-          <div className={`flex flex-col ${isSheet ? '' : 'lg:grid lg:grid-cols-4'} gap-6`}>
+          <div
+            className={`flex flex-col ${isSheet ? "" : "lg:grid lg:grid-cols-4"} gap-6`}
+          >
             {/* Right Sidebar - Details Section */}
-            <div className={isSheet ? '' : 'lg:order-2 lg:col-span-1 lg:col-start-4'}>
-              <h3 className={`text-xl font-semibold my-4 ${isSheet ? '' : 'lg:mb-4 lg:mt-0'}`}>
+            <div
+              className={
+                isSheet ? "" : "lg:order-2 lg:col-span-1 lg:col-start-4"
+              }
+            >
+              <h3
+                className={`text-xl font-semibold my-4 ${isSheet ? "" : "lg:mb-4 lg:mt-0"}`}
+              >
                 Details
               </h3>
-              <div className={isSheet ? 'grid grid-cols-1 md:grid-cols-2 gap-4' : 'space-y-3'}>
+              <div
+                className={
+                  isSheet
+                    ? "grid grid-cols-1 md:grid-cols-2 gap-4"
+                    : "space-y-3"
+                }
+              >
                 <div className="space-y-3">
                   <div>
                     <div className="text-xs mb-1 font-bold">Order ID</div>
-                    <CopiableLink text={order?.id as string} title="Copy ID" variant="outline" />
+                    <CopiableLink
+                      text={order?.id as string}
+                      title="Copy ID"
+                      variant="outline"
+                    />
                   </div>
                   <div>
                     <div className="text-xs mb-1 font-bold">Order Number</div>
@@ -155,34 +178,50 @@ export const OrderComponent = ({
                   {!isNone(order?.source) && (
                     <div>
                       <div className="text-xs mb-1 font-bold">Source</div>
-                      <div className="text-sm font-medium text-blue-600">{order?.source}</div>
+                      <div className="text-sm font-medium text-blue-600">
+                        {order?.source}
+                      </div>
                     </div>
                   )}
                   {(order as any)?.request_id && (
                     <div>
                       <div className="text-xs mb-1 font-bold">Request ID</div>
-                      <CopiableLink text={(order as any).request_id} title="Copy Request ID" variant="outline" />
+                      <CopiableLink
+                        text={(order as any).request_id}
+                        title="Copy Request ID"
+                        variant="outline"
+                      />
                     </div>
                   )}
                 </div>
                 <div className="space-y-3">
                   <div>
                     <div className="text-xs mb-1 font-bold">Created At</div>
-                    <div className="text-sm font-medium">{formatDateTime(order?.created_at)}</div>
+                    <div className="text-sm font-medium">
+                      {formatDateTime(order?.created_at)}
+                    </div>
                   </div>
                   <div>
                     <div className="text-xs mb-1 font-bold">Last Update</div>
-                    <div className="text-sm font-medium">{formatDateTime(order?.updated_at)}</div>
+                    <div className="text-sm font-medium">
+                      {formatDateTime(order?.updated_at)}
+                    </div>
                   </div>
                   <div>
                     <div className="text-xs mb-1 font-bold">Line Items</div>
                     <div className="text-sm font-medium">
-                      {order?.line_items.reduce((acc, { quantity }) => acc + (quantity || 1), 0)} items
+                      {order?.line_items.reduce(
+                        (acc, { quantity }) => acc + (quantity || 1),
+                        0,
+                      )}{" "}
+                      items
                     </div>
                   </div>
                   <div>
                     <div className="text-xs mb-1 font-bold">Shipments</div>
-                    <div className="text-sm font-medium">{(order?.shipments || []).length} shipments</div>
+                    <div className="text-sm font-medium">
+                      {(order?.shipments || []).length} shipments
+                    </div>
                   </div>
                 </div>
               </div>
@@ -203,7 +242,9 @@ export const OrderComponent = ({
             </div>
 
             {/* Left Column - Main Content */}
-            <div className={`space-y-6 order-1 ${isSheet ? '' : 'lg:col-span-3 lg:col-start-1 lg:order-1 lg:mr-5'}`}>
+            <div
+              className={`space-y-6 order-1 ${isSheet ? "" : "lg:col-span-3 lg:col-start-1 lg:order-1 lg:mr-5"}`}
+            >
               {/* Order Details section */}
               <div>
                 <h2 className="text-xl font-semibold my-4">Order Details</h2>
@@ -211,29 +252,48 @@ export const OrderComponent = ({
 
                 <div className="mt-3 mb-6">
                   {/* address and line items section */}
-                  <div className={`grid grid-cols-1 ${isSheet ? '' : 'md:grid-cols-2'} gap-6 my-0`}>
+                  <div
+                    className={`grid grid-cols-1 ${isSheet ? "" : "md:grid-cols-2"} gap-6 my-0`}
+                  >
                     {/* Shipping Address section */}
                     <div className="text-xs py-1">
-                      <p className="text-base font-semibold tracking-wide my-2">SHIP TO</p>
+                      <p className="text-base font-semibold tracking-wide my-2">
+                        SHIP TO
+                      </p>
                       <div className="space-y-1">
-                        <p className="text-xs my-1 font-semibold">{order?.shipping_to.person_name}</p>
-                        <p className="text-xs my-1 font-semibold">{order?.shipping_to.company_name}</p>
-                        <p className="text-xs my-1 font-semibold text-blue-600">{order?.shipping_to.email}</p>
-                        <p className="text-xs my-1 font-semibold text-blue-600">{order?.shipping_to.phone_number}</p>
+                        <p className="text-xs my-1 font-semibold">
+                          {order?.shipping_to.person_name}
+                        </p>
+                        <p className="text-xs my-1 font-semibold">
+                          {order?.shipping_to.company_name}
+                        </p>
+                        <p className="text-xs my-1 font-semibold text-blue-600">
+                          {order?.shipping_to.email}
+                        </p>
+                        <p className="text-xs my-1 font-semibold text-blue-600">
+                          {order?.shipping_to.phone_number}
+                        </p>
                         <p className="text-xs my-1 font-semibold text-gray-600">
                           <span>{order?.shipping_to.address_line1}</span>
                           {!isNone(order?.shipping_to.address_line2) && (
                             <span> {order?.shipping_to.address_line2}</span>
                           )}
                         </p>
-                        <p className="text-xs my-1 font-semibold text-gray-600">{formatAddressLocation(order?.shipping_to)}</p>
+                        <p className="text-xs my-1 font-semibold text-gray-600">
+                          {formatAddressLocation(order?.shipping_to)}
+                        </p>
                       </div>
                     </div>
 
                     {/* Line Items section */}
                     <div className="text-base py-1">
                       <p className="text-base font-semibold tracking-wide my-2">
-                        LINE ITEMS ({order?.line_items.reduce((_, { quantity }) => _ + (quantity || 1), 0)})
+                        LINE ITEMS (
+                        {order?.line_items.reduce(
+                          (_, { quantity }) => _ + (quantity || 1),
+                          0,
+                        )}
+                        )
                       </p>
 
                       <div className="py-2 pr-1 max-h-[40rem] overflow-auto">
@@ -259,11 +319,16 @@ export const OrderComponent = ({
                     <div className="space-y-1">
                       {Object.entries(order?.options).map(
                         ([key, value]: any, index) => (
-                          <p key={index + "item-info"} className="text-sm text-gray-600">
+                          <p
+                            key={index + "item-info"}
+                            className="text-sm text-gray-600"
+                          >
                             <span className="font-semibold">
                               {formatRef(key).toLowerCase()}:
                             </span>{" "}
-                            <span className="font-bold text-gray-900">{String(value)}</span>
+                            <span className="font-bold text-gray-900">
+                              {String(value)}
+                            </span>
                           </p>
                         ),
                       )}
@@ -275,7 +340,9 @@ export const OrderComponent = ({
               {/* Billing address section */}
               {order?.billing_address && (
                 <div>
-                  <h2 className="text-xl font-semibold my-4">Billing Address</h2>
+                  <h2 className="text-xl font-semibold my-4">
+                    Billing Address
+                  </h2>
                   <hr className="mt-1 mb-2" style={{ height: "1px" }} />
 
                   <div className="mt-3 mb-6">
@@ -304,7 +371,9 @@ export const OrderComponent = ({
                           className="block p-3 border rounded-lg hover:bg-gray-50 cursor-pointer"
                         >
                           <div className="flex items-center justify-between mb-2">
-                            <ShipmentsStatusBadge status={shipment.status as string} />
+                            <ShipmentsStatusBadge
+                              status={shipment.status as string}
+                            />
                             <span className="text-xs text-gray-500">
                               {formatDateTime(shipment.created_at)}
                             </span>
@@ -355,7 +424,9 @@ export const OrderComponent = ({
                                   href={`/shipments/${shipment.id}`}
                                   className="text-xs font-semibold text-gray-600 flex justify-end py-2"
                                 >
-                                  <span>{formatDateTime(shipment.created_at)}</span>
+                                  <span>
+                                    {formatDateTime(shipment.created_at)}
+                                  </span>
                                 </AppLink>
                               </TableCell>
                             </TableRow>
@@ -389,10 +460,7 @@ export const OrderComponent = ({
 
           {/* Activity Timeline section - Full Width */}
           <h2 className="text-xl font-semibold my-4">Activity</h2>
-          <ActivityTimeline
-            logs={logs}
-            events={events}
-          />
+          <ActivityTimeline logs={logs} events={events} />
         </div>
       )}
 

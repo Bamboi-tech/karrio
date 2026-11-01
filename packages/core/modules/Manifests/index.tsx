@@ -172,7 +172,9 @@ export default function Page() {
                         <div className="buttons has-addons">
                           <button
                             className={`button is-small is-default px-3 ${documentPrinter.isLoading ? "is-loading" : ""}`}
-                            onClick={() => documentPrinter.openBatchManifests(selection)}
+                            onClick={() =>
+                              documentPrinter.openBatchManifests(selection)
+                            }
                             disabled={documentPrinter.isLoading}
                           >
                             <span className="has-text-weight-semibold">

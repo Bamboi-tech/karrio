@@ -1,7 +1,6 @@
 import React from "react";
 
-interface CopiableLinkComponent
-  extends React.InputHTMLAttributes<HTMLAnchorElement> {
+interface CopiableLinkComponent extends React.InputHTMLAttributes<HTMLAnchorElement> {
   text: string;
   value?: string;
 }

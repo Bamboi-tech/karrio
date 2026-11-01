@@ -106,7 +106,9 @@ export const RateSheetModalEditor = ({
       defaultValue: { services?: ServiceLevelType[] } | ServiceLevelType[],
     ): CurrencyCodeEnum => {
       // Handle both new format (object with services) and legacy format (array)
-      const services = Array.isArray(defaultValue) ? defaultValue : (defaultValue?.services || []);
+      const services = Array.isArray(defaultValue)
+        ? defaultValue
+        : defaultValue?.services || [];
       const svc = services.find((svc) => !isNone(svc.currency));
       return (svc?.currency || CurrencyCodeEnum.USD) as CurrencyCodeEnum;
     };

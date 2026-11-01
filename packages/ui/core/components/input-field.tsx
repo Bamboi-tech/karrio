@@ -1,8 +1,7 @@
 import { isNone } from "@karrio/lib";
 import React, { RefObject } from "react";
 
-export interface InputFieldComponent
-  extends React.InputHTMLAttributes<HTMLInputElement> {
+export interface InputFieldComponent extends React.InputHTMLAttributes<HTMLInputElement> {
   label?: string;
   fieldClass?: string;
   controlClass?: string;

@@ -26,7 +26,11 @@ import { MetadataObjectTypeEnum } from "@karrio/types";
 import { InputField } from "../components/input-field";
 import { CountryInput } from "../forms/country-input";
 import { useAppMode } from "@karrio/hooks/app-mode";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@karrio/ui/components/ui/collapsible";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@karrio/ui/components/ui/collapsible";
 import { Loading } from "../components/loader";
 import { CheckBoxField, IntegrationStatusBadge } from "../components";
 import { useLocation } from "@karrio/hooks/location";
@@ -93,9 +97,9 @@ export const ConnectProviderModal = ({
   const [key, setKey] = useState<string>(`connection-${Date.now()}`);
   const [isNew, setIsNew] = useState<boolean>(true);
   const [payload, dispatch] = useReducer(reducer, DEFAULT_STATE());
-  const [carrier_name, setCarrierName] = useState<CarrierNameType | keyof typeof carriers>(
-    NoneEnum.none,
-  );
+  const [carrier_name, setCarrierName] = useState<
+    CarrierNameType | keyof typeof carriers
+  >(NoneEnum.none);
   const [isActive, setIsActive] = useState<boolean>(false);
   const [isInvalid, setIsInvalid] = useState<boolean>(false);
   const [operation, setOperation] = useState<OperationType>(
@@ -106,7 +110,7 @@ export const ConnectProviderModal = ({
     const connection = operation.connection || DEFAULT_STATE();
     const connection_carrier: CarrierNameType =
       connection.carrier_name === NoneEnum.none ||
-        Object.values(CarrierNameEnum).includes(connection.carrier_name as any)
+      Object.values(CarrierNameEnum).includes(connection.carrier_name as any)
         ? (connection.carrier_name as CarrierNameEnum)
         : CarrierNameEnum.generic;
     setCarrierName(connection_carrier);
@@ -279,7 +283,14 @@ export const ConnectProviderModal = ({
                 {/* Integration status */}
                 <div className="mt-2 mb-0">
                   <p className="flex items-center gap-2 is-size-7 has-text-weight-bold has-text-grey">
-                    Integration status: <IntegrationStatusBadge status={integration_status?.[carrier_name as any] || 'in-development'} showPrefix={false} />
+                    Integration status:{" "}
+                    <IntegrationStatusBadge
+                      status={
+                        integration_status?.[carrier_name as any] ||
+                        "in-development"
+                      }
+                      showPrefix={false}
+                    />
                   </p>
                 </div>
 
@@ -410,13 +421,9 @@ export const ConnectProviderModal = ({
                 {carrier_name.toString() in (connection_configs || {}) && (
                   <div className="mt-4">
                     <Collapsible>
-                      <CollapsibleTrigger
-                        asChild
-                      >
+                      <CollapsibleTrigger asChild>
                         <div className="is-flex is-justify-content-space-between is-clickable px-0 mb-2">
-                          <h2 className="title is-6 my-3">
-                            Connection Config
-                          </h2>
+                          <h2 className="title is-6 my-3">Connection Config</h2>
                           <span className="icon is-small m-2 mt-3">
                             <i className="fas fa-chevron-down"></i>
                           </span>
@@ -441,9 +448,7 @@ export const ConnectProviderModal = ({
                                 <InputField
                                   value={payload.config?.[property] || ""}
                                   name={property}
-                                  label={formatRef(
-                                    field.name,
-                                  ).toLowerCase()}
+                                  label={formatRef(field.name).toLowerCase()}
                                   onChange={handleNestedChange("config")}
                                   wrapperClass="column is-6 pt-1"
                                   fieldClass="mb-0"
@@ -455,9 +460,7 @@ export const ConnectProviderModal = ({
                                 <SelectField
                                   value={payload.config?.[property]}
                                   name={property}
-                                  label={formatRef(
-                                    field.name,
-                                  ).toLowerCase()}
+                                  label={formatRef(field.name).toLowerCase()}
                                   onChange={handleNestedChange("config")}
                                   className="is-small is-fullwidth"
                                   wrapperClass="column is-6 pt-1"
@@ -493,77 +496,77 @@ export const ConnectProviderModal = ({
 
                         {"brand_color" in
                           connection_configs[carrier_name.toString()] && (
-                            <InputField
-                              value={payload.config?.brand_color || ""}
-                              type="color"
-                              name="brand_color"
-                              label="Brand color"
-                              onChange={handleNestedChange("config")}
-                              wrapperClass="column is-6 pt-1"
-                              fieldClass="mb-0"
-                              className="is-small is-fullwidth"
-                            />
-                          )}
+                          <InputField
+                            value={payload.config?.brand_color || ""}
+                            type="color"
+                            name="brand_color"
+                            label="Brand color"
+                            onChange={handleNestedChange("config")}
+                            wrapperClass="column is-6 pt-1"
+                            fieldClass="mb-0"
+                            className="is-small is-fullwidth"
+                          />
+                        )}
 
                         {"text_color" in
                           connection_configs[carrier_name.toString()] && (
-                            <InputField
-                              value={payload.config?.text_color || ""}
-                              type="color"
-                              name="text_color"
-                              label="Text color"
-                              onChange={handleNestedChange("config")}
-                              wrapperClass="column is-6 pt-1"
-                              fieldClass="mb-0"
-                              className="is-small is-fullwidth"
-                            />
-                          )}
+                          <InputField
+                            value={payload.config?.text_color || ""}
+                            type="color"
+                            name="text_color"
+                            label="Text color"
+                            onChange={handleNestedChange("config")}
+                            wrapperClass="column is-6 pt-1"
+                            fieldClass="mb-0"
+                            className="is-small is-fullwidth"
+                          />
+                        )}
 
                         {"shipping_services" in
                           connection_configs[carrier_name.toString()] && (
-                            <SelectField
-                              defaultValue={payload.config?.shipping_services}
-                              name="shipping_services"
-                              label="Preferred shipping services"
-                              className="is-small is-multiple is-fullwidth"
-                              wrapperClass="column is-12 pt-1"
-                              fieldClass="mb-0"
-                              onChange={handleNestedChange("config")}
-                              size={6}
-                              multiple
-                            >
-                              {Object.entries(
-                                service_names[carrier_name.toString()] || {},
-                              ).map(([_, __]) => (
-                                <option key={_} value={_}>
-                                  {__}
-                                </option>
-                              ))}
-                            </SelectField>
-                          )}
+                          <SelectField
+                            defaultValue={payload.config?.shipping_services}
+                            name="shipping_services"
+                            label="Preferred shipping services"
+                            className="is-small is-multiple is-fullwidth"
+                            wrapperClass="column is-12 pt-1"
+                            fieldClass="mb-0"
+                            onChange={handleNestedChange("config")}
+                            size={6}
+                            multiple
+                          >
+                            {Object.entries(
+                              service_names[carrier_name.toString()] || {},
+                            ).map(([_, __]) => (
+                              <option key={_} value={_}>
+                                {__}
+                              </option>
+                            ))}
+                          </SelectField>
+                        )}
 
                         {"shipping_options" in
                           connection_configs[carrier_name.toString()] && (
-                            <SelectField
-                              defaultValue={payload.config?.shipping_options}
-                              name="shipping_options"
-                              label={`Enable carrier specific shipping options`}
-                              className="is-small is-multiple is-fullwidth"
-                              wrapperClass="column is-12 pt-1"
-                              fieldClass="mb-0"
-                              onChange={handleNestedChange("config")}
-                              size={6}
-                              multiple
-                            >
-                              {Object.entries(
-                                option_names[carrier_name.toString()] || {},
-                              ).map(([_, __]) => (
-                                <option key={_} value={_}>
-                                  {__}
-                                </option>
-                              ))}
-                            </SelectField>
-                          )}
+                          <SelectField
+                            defaultValue={payload.config?.shipping_options}
+                            name="shipping_options"
+                            label={`Enable carrier specific shipping options`}
+                            className="is-small is-multiple is-fullwidth"
+                            wrapperClass="column is-12 pt-1"
+                            fieldClass="mb-0"
+                            onChange={handleNestedChange("config")}
+                            size={6}
+                            multiple
+                          >
+                            {Object.entries(
+                              option_names[carrier_name.toString()] || {},
+                            ).map(([_, __]) => (
+                              <option key={_} value={_}>
+                                {__}
+                              </option>
+                            ))}
+                          </SelectField>
+                        )}
                       </CollapsibleContent>
                     </Collapsible>
                   </div>

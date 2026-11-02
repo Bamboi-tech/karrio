@@ -1,6 +1,6 @@
 import { loadMetadata, getCurrentDomain, requireAuthentication } from "@karrio/core/context/main";
 import { Providers } from "@karrio/hooks/providers";
-import { auth } from "@karrio/core/context/auth";
+import { requestSession } from "@karrio/core/context/auth";
 import { redirect } from "next/navigation";
 import { Metadata } from "@karrio/types";
 
@@ -9,7 +9,7 @@ export default async function Layout({
 }: {
   children: React.ReactNode;
 }) {
-  const session = await auth();
+  const session = await requestSession();
   await requireAuthentication(session);
 
   // Redirect to home if user already has an orgId in session

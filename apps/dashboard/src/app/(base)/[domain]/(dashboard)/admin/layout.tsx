@@ -1,4 +1,4 @@
-import { auth } from "@karrio/core/context/auth";
+import { requestSession } from "@karrio/core/context/auth";
 import {
   loadMetadata,
   loadUserData,
@@ -13,7 +13,7 @@ interface AdminLayoutProps {
 }
 
 export default async function AdminLayout({ children }: AdminLayoutProps) {
-  const session = await auth();
+  const session = await requestSession();
   await requireAuthentication(session);
 
   const domain = await getCurrentDomain();

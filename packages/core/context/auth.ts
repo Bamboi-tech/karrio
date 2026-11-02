@@ -10,6 +10,7 @@ import { getCurrentDomain, loadMetadata } from "@karrio/core/context/main";
 import Credentials from "next-auth/providers/credentials";
 import NextAuth from "next-auth";
 import moment from "moment";
+import { cache } from "react";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   secret: process.env.NEXTAUTH_SECRET,
@@ -164,3 +165,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     },
   },
 });
+
+/**
+ * Request-scoped `auth()`. The dashboard layout, its page and nested layouts
+ * each read the session during one request; sharing the promise means one
+ * cookie decode and, when the token is about to expire, one refresh.
+ */
+export const requestSession = cache(async () => await auth());

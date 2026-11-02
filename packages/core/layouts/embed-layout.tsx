@@ -4,7 +4,7 @@ import { Notifier } from "@karrio/ui/core/components/notifier";
 import { KARRIO_PUBLIC_URL, MULTI_TENANT } from "@karrio/lib";
 import { AppSidebar } from "@karrio/ui/components/sidebar";
 import { Providers } from "@karrio/hooks/providers";
-import { auth } from "@karrio/core/context/auth";
+import { requestSession } from "@karrio/core/context/auth";
 import { Metadata } from "@karrio/types";
 import {
   SidebarInset,
@@ -24,7 +24,7 @@ export default async function Layout({
 }: {
   children: React.ReactNode;
 }) {
-  const session = await auth();
+  const session = await requestSession();
 
   await requireAuthentication(session);
 

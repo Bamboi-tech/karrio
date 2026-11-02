@@ -1,6 +1,6 @@
 import { loadRequestMetadata } from "@karrio/core/components/metadata";
 import { getCurrentDomain, loadSystemUsage } from "@karrio/core/context/main";
-import { auth } from "@karrio/core/context/auth";
+import { requestSession } from "@karrio/core/context/auth";
 import { Metadata } from "@karrio/types";
 import DashboardPage from "./index";
 
@@ -10,7 +10,7 @@ import DashboardPage from "./index";
  * hands it to the client module, so the stat cards are in the first HTML.
  */
 export default async function Page() {
-  const session = await auth();
+  const session = await requestSession();
   const domain = await getCurrentDomain();
   const { metadata } = await loadRequestMetadata(domain!);
   const { prefetch } = await loadSystemUsage(

@@ -15,8 +15,8 @@ import {
 } from "@karrio/lib";
 import {
   AccountContextDataType,
-  GET_SYSTEM_USAGE,
-  GetSystemUsage,
+  GET_DASHBOARD_USAGE,
+  GetDashboardUsage,
   Metadata,
   TenantType,
   UsagePrefetch,
@@ -354,9 +354,9 @@ async function fetchSystemUsage(
   const filter = usageFilterFor(DEFAULT_USAGE_RANGE);
 
   return await axios
-    .post<{ data?: GetSystemUsage; errors?: unknown[] }>(
+    .post<{ data?: GetDashboardUsage; errors?: unknown[] }>(
       url$`${API_URL}/graphql`,
-      { query: gqlstr(GET_SYSTEM_USAGE), variables: { filter } },
+      { query: gqlstr(GET_DASHBOARD_USAGE), variables: { filter } },
       {
         timeout: USAGE_PREFETCH_TIMEOUT_MS,
         headers: {

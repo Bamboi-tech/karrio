@@ -143,3 +143,86 @@ query GetSystemUsage($filter: UsageFilter) {
   }
 }
 """
+
+
+class TestSystemUsageSelection(GraphTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        cache.clear()
+
+    def test_only_selected_series_are_computed(self):
+        with mock.patch.object(
+            types, "_compute_system_usage", wraps=types._compute_system_usage
+        ) as compute:
+            result = self.query(
+                DASHBOARD_QUERY,
+                operation_name="GetDashboardUsage",
+                variables={"filter": ALIGNED_FILTER},
+            )
+
+        self.assertResponseNoErrors(result)
+        compute.assert_called_once()
+        self.assertEqual(
+            compute.call_args.kwargs["series"],
+            {"order_volumes", "shipment_count", "shipping_spend", "tracker_count"},
+        )
+        self.assertDictEqual(
+            result.data["data"]["system_usage"],
+            {
+                "order_volume": 0.0,
+                "total_trackers": 0,
+                "total_shipments": 0,
+                "total_shipping_spend": 0.0,
+                "order_volumes": [],
+                "shipment_count": [],
+                "tracker_count": [],
+                "shipping_spend": [],
+            },
+        )
+
+    def test_missing_series_are_added_to_the_cached_window(self):
+        first = self.query(
+            DASHBOARD_QUERY,
+            operation_name="GetDashboardUsage",
+            variables={"filter": ALIGNED_FILTER},
+        )
+        self.assertResponseNoErrors(first)
+
+        with mock.patch.object(
+            types, "_compute_system_usage", wraps=types._compute_system_usage
+        ) as compute:
+            second = self.query(
+                USAGE_QUERY,
+                operation_name="GetSystemUsage",
+                variables={"filter": ALIGNED_FILTER},
+            )
+
+        self.assertResponseNoErrors(second)
+        compute.assert_called_once()
+        self.assertEqual(
+            compute.call_args.kwargs["series"], {"api_requests", "api_errors"}
+        )
+
+    def test_totals_follow_their_series(self):
+        self.assertEqual(
+            types._usage_series_for(
+                {"total_shipments", "total_requests", "user_count"}
+            ),
+            {"shipment_count", "api_requests"},
+        )
+
+
+DASHBOARD_QUERY = """
+query GetDashboardUsage($filter: UsageFilter) {
+  system_usage(filter: $filter) {
+    order_volume
+    total_trackers
+    total_shipments
+    total_shipping_spend
+    order_volumes { label count date }
+    shipment_count { label count date }
+    tracker_count { label count date }
+    shipping_spend { label count date }
+  }
+}
+"""

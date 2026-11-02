@@ -47,7 +47,7 @@ export default function DashboardPage({
     USAGE_FILTERS,
     dayLabels,
     currentFilter,
-  } = useAPIUsage({ initialUsage });
+  } = useAPIUsage({ initialUsage, series: "dashboard" });
 
   // Don't render until user is loaded
   if (userLoading) {

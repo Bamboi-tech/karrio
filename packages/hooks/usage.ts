@@ -4,6 +4,7 @@ import {
   get_organization_organization_usage
 } from "@karrio/types/graphql/ee";
 import {
+  GET_DASHBOARD_USAGE,
   GET_SYSTEM_USAGE,
   GetSystemUsage,
   GetSystemUsage_system_usage,
@@ -34,6 +35,9 @@ type FilterType = UsageFilter & {
    *  window it was fetched for: the cards are in the HTML and the hydrated
    *  client renders that same window instead of fetching again. */
   initialUsage?: UsagePrefetch | null;
+  /** "dashboard" selects only the four home series; the API computes and
+   *  caches nothing else. Default: every series (developer activity view). */
+  series?: "dashboard" | "all";
 };
 
 // Built per mount, not at module load: the dashboard's Node process lives for
@@ -59,6 +63,7 @@ function buildDaysList(): Record<string, string[]> {
 export function useAPIUsage({
   setVariablesToURL = false,
   initialUsage,
+  series = "all",
   ...initialData
 }: FilterType = {}) {
   const karrio = useKarrio();
@@ -83,9 +88,10 @@ export function useAPIUsage({
 
   const systemUsage = () =>
     karrio.graphql
-      .request<GetSystemUsage>(gqlstr(GET_SYSTEM_USAGE), {
-        variables: { filter },
-      })
+      .request<GetSystemUsage>(
+        gqlstr(series === "dashboard" ? GET_DASHBOARD_USAGE : GET_SYSTEM_USAGE),
+        { variables: { filter } },
+      )
       .then(({ system_usage }) => ({ usage: system_usage as UsageType }));
 
   const orgUsage = () =>
@@ -104,7 +110,7 @@ export function useAPIUsage({
       });
 
   const query = useAuthenticatedQuery({
-    queryKey: ["usage", filter],
+    queryKey: ["usage", series, filter],
     queryFn: metadata.MULTI_ORGANIZATIONS == true ? orgUsage : systemUsage,
     // The prefetched window is the initial filter, so the seed lands on that
     // key only; a range change creates a new key and fetches. The fetch time

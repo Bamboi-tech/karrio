@@ -605,7 +605,7 @@ export type ShipmentListPreferences = {
 
 /** Usage prefetched by the dashboard home's server page for one exact window. */
 export type UsagePrefetch = {
-  usage: graph.GetSystemUsage_system_usage;
+  usage: graph.GetDashboardUsage_system_usage;
   filter: graph.UsageFilter;
   fetchedAt: number;
 };

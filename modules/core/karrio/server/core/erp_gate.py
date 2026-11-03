@@ -20,6 +20,7 @@ import re
 import json
 import logging
 import requests
+import uuid
 
 from decouple import config
 from django.conf import settings
@@ -30,7 +31,7 @@ from karrio.server.core.exceptions import APIException
 logger = logging.getLogger(__name__)
 
 ERP_LINK_KEYS = ("karrio_shipment", "sales_order")
-GATE_PATH = "/api/method/karrio_shipping.api.gates.assert_label_allowed"
+GATE_PATH = "/api/method/karrio_shipping.api.gates.reserve_label"
 
 
 class ERPRefusal(APIException):
@@ -59,12 +60,77 @@ def _erp_timeout():
     )
 
 
+def assert_erp_organization(context) -> None:
+    """The configured ERP belongs to one organization (or a single-tenant install)."""
+    org = getattr(context, "org", None)
+    expected = getattr(settings, "ERP_ORGANIZATION_ID", None)
+    if getattr(settings, "MULTI_ORGANIZATIONS", False):
+        if not expected or not org or str(org.id) != str(expected):
+            raise APIException(
+                "ERP is not available to this organization.",
+                code="erp_forbidden",
+                status_code=403,
+            )
+    elif org:
+        raise APIException(
+            "Unexpected ERP organization context.",
+            code="erp_forbidden",
+            status_code=403,
+        )
+
+
+def is_erp_integration(context) -> bool:
+    """Only the dedicated integration user's API token may maintain ERP links."""
+    expected = getattr(settings, "ERP_INTEGRATION_USER_ID", None)
+    token = getattr(context, "token", None)
+    if (
+        not expected
+        or token is None
+        or str(getattr(token, "user_id", "")) != str(expected)
+    ):
+        return False
+    assert_erp_organization(context)
+    return str(getattr(getattr(context, "user", None), "id", "")) == str(expected)
+
+
+def assert_erp_metadata_write(context, metadata, previous=None) -> None:
+    """ERP linkage is integration-owned; unrelated user metadata stays editable."""
+    before, after = previous or {}, metadata or {}
+    if any(before.get(key) != after.get(key) for key in ERP_LINK_KEYS):
+        if not is_erp_integration(context):
+            raise APIException(
+                "ERP shipment links can only be changed by the ERP integration.",
+                code="erp_link_protected",
+                status_code=403,
+            )
+
+
+def assert_erp_feature_manager(context) -> None:
+    assert_erp_organization(context)
+    user = getattr(context, "user", None)
+    org = getattr(context, "org", None)
+    manager = (
+        org.organization_users.filter(user_id=user.id, is_admin=True).exists()
+        if org and user
+        else bool(user and user.is_staff)
+    )
+    from karrio.server.user.models import Token
+
+    # JWTs represent dashboard users; API tokens represent service access.
+    if not manager or isinstance(getattr(context, "token", None), Token):
+        raise APIException(
+            "Only an ERP organization administrator may change features.",
+            code="erp_forbidden",
+            status_code=403,
+        )
+
+
 def is_erp_linked(shipment) -> bool:
     metadata = getattr(shipment, "metadata", None) or {}
     return any(key in metadata for key in ERP_LINK_KEYS)
 
 
-def assert_erp_label_allowed(shipment) -> None:
+def assert_erp_label_allowed(shipment, context=None) -> str | None:
     """Raise unless the ERP allows a label for this shipment right now.
 
     No-op for shipments without ERP metadata. For ERP-linked shipments a
@@ -74,6 +140,8 @@ def assert_erp_label_allowed(shipment) -> None:
     """
     if not is_erp_linked(shipment):
         return
+
+    assert_erp_organization(context)
 
     url = getattr(settings, "ERP_GATE_URL", None)
     token = getattr(settings, "ERP_GATE_TOKEN", None)
@@ -86,6 +154,17 @@ def assert_erp_label_allowed(shipment) -> None:
         )
 
     metadata = shipment.metadata or {}
+    integration = is_erp_integration(context)
+    headers = getattr(context, "headers", {}) or {}
+    parent_operation = (
+        (
+            getattr(context, "erp_label_operation_id", None)
+            or headers.get("X-Bamboi-Label-Operation")
+        )
+        if integration
+        else None
+    )
+    operation_id = parent_operation or str(uuid.uuid4())
     try:
         response = requests.post(
             url.rstrip("/") + GATE_PATH,
@@ -93,6 +172,9 @@ def assert_erp_label_allowed(shipment) -> None:
                 "karrio_shipment_id": shipment.id,
                 "karrio_shipment": metadata.get("karrio_shipment"),
                 "sales_order": metadata.get("sales_order"),
+                "allow_pending_binding": integration,
+                "operation_id": operation_id,
+                "join_reservation": bool(parent_operation),
             },
             headers={"Authorization": f"token {token}"},
             timeout=_erp_timeout(),
@@ -113,6 +195,50 @@ def assert_erp_label_allowed(shipment) -> None:
             result.get("reason") or "ERP refused the label purchase for this shipment.",
             code="erp_gate_blocked",
             status_code=409,
+        )
+
+    if result.get("reserved") is not True or result.get("operation_id") != operation_id:
+        raise APIException(
+            "ERP did not confirm the label reservation; purchase refused.",
+            code="erp_reservation_missing",
+            status_code=424,
+        )
+
+    return operation_id if not parent_operation else None
+
+
+def reject_unattempted_label(shipment, operation_id, error) -> None:
+    """Release only a dashboard reservation after proven pre-purchase refusal."""
+    from karrio.server.core.exceptions import message_handler
+
+    if (
+        not operation_id
+        or not isinstance(error, APIException)
+        or error.status_code != 424
+    ):
+        return
+    messages = (message_handler(error) or {}).get("messages") or []
+    if not messages or not all(
+        message.get("carrier_name") == "monta"
+        and str(message.get("code")) == "42"
+        and isinstance(message.get("details"), dict)
+        and message["details"].get("monta_purchase_not_attempted") is True
+        for message in messages
+    ):
+        return
+    try:
+        response = requests.post(
+            settings.ERP_GATE_URL.rstrip("/")
+            + "/api/method/karrio_shipping.api.gates.reject_unattempted_label",
+            json={"karrio_shipment_id": shipment.id, "operation_id": operation_id},
+            headers={"Authorization": f"token {settings.ERP_GATE_TOKEN}"},
+            timeout=_erp_timeout(),
+        )
+        response.raise_for_status()
+    except requests.RequestException:
+        # Keep the original refusal. An unconfirmed release stays reserved.
+        logger.warning(
+            "ERP could not confirm rejected label operation %s", operation_id
         )
 
 
@@ -148,7 +274,7 @@ ERP_SHIPMENT_ACTIONS = {
     "get_address_review": (),
     "undo_delivery_outcome": (),
 }
-RUN_DOC_METHOD_PATH = "/api/method/frappe.handler.run_doc_method"
+RUN_DOC_METHOD_PATH = "/api/method/karrio_shipping.api.gates.run_shipment_action"
 
 
 def _erp_error_message(response) -> str:
@@ -225,7 +351,7 @@ def run_erp_shipment_action(shipment, action: str, args: dict = None) -> dict:
             status_code=424,
         )
 
-    payload = {"dt": "Karrio Shipment", "dn": docname, "method": action}
+    payload = {"karrio_shipment_id": shipment.id, "action": action}
     if allowed_args:
         # frappe.handler.run_doc_method splats a dict ``args`` into keyword
         # arguments; sending it for every argument-taking action keeps the
@@ -431,7 +557,7 @@ def _remember_feature_toggle(key: str, enabled: bool) -> None:
     )
 
 
-def run_erp_features_set(key, enabled) -> dict:
+def run_erp_features_set(key, enabled, actor: str | None = None) -> dict:
     """Relay one feature toggle to the ERP; returns ``{"key", "enabled"}``.
 
     The ERP validates the key against its own registry — an unknown key is
@@ -452,7 +578,9 @@ def run_erp_features_set(key, enabled) -> dict:
         )
 
     message = _post_erp_method(
-        FEATURES_SET_PATH, {"key": key, "enabled": enabled}, "feature set"
+        FEATURES_SET_PATH,
+        {"key": key, "enabled": enabled, **({"actor": actor} if actor else {})},
+        "feature set",
     )
     result = message if isinstance(message, dict) else {}
     outcome = {"key": result.get("key", key), "enabled": result.get("enabled", enabled)}

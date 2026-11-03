@@ -5,6 +5,7 @@ shipments never touch the ERP. See karrio.server.core.erp_gate."""
 import json
 import requests
 from unittest import mock
+from types import SimpleNamespace
 
 from django.core.cache import cache
 from django.test import TestCase, override_settings
@@ -33,6 +34,18 @@ def _response(status_code=200, payload=None):
     return response
 
 
+def _reserved_response(_url, **kwargs):
+    return _response(
+        payload={
+            "message": {
+                "allowed": True,
+                "reserved": True,
+                "operation_id": kwargs["json"]["operation_id"],
+            }
+        }
+    )
+
+
 @override_settings(ERP_GATE_URL="https://erp.test", ERP_GATE_TOKEN="key:secret")
 class TestLabelGate(TestCase):
     def test_standalone_shipment_never_calls_erp(self):
@@ -44,7 +57,7 @@ class TestLabelGate(TestCase):
         with mock.patch.object(
             erp_gate.requests,
             "post",
-            return_value=_response(payload={"message": {"allowed": True}}),
+            side_effect=_reserved_response,
         ) as post:
             erp_gate.assert_erp_label_allowed(_shipment(ERP_META))
         _args, kwargs = post.call_args
@@ -103,7 +116,7 @@ class TestLabelGate(TestCase):
         with mock.patch.object(
             erp_gate.requests,
             "post",
-            return_value=_response(payload={"message": {"allowed": True}}),
+            side_effect=_reserved_response,
         ) as post:
             erp_gate.assert_erp_label_allowed(_shipment(ERP_META))
         self.assertEqual(post.call_args.kwargs["timeout"], (3, 45))
@@ -114,6 +127,59 @@ class TestLabelGate(TestCase):
             erp_gate.assert_erp_label_allowed(_shipment(ERP_META))
         self.assertEqual(caught.exception.status_code, 424)
 
+    def test_read_only_allow_without_reservation_fails_closed(self):
+        with mock.patch.object(
+            erp_gate.requests,
+            "post",
+            return_value=_response(payload={"message": {"allowed": True}}),
+        ):
+            with self.assertRaises(APIException) as caught:
+                erp_gate.assert_erp_label_allowed(_shipment(ERP_META))
+        self.assertEqual(caught.exception.status_code, 424)
+
+    def test_untrusted_caller_cannot_join_supplied_reservation(self):
+        context = SimpleNamespace(headers={"X-Bamboi-Label-Operation": "stolen-id"})
+        with mock.patch.object(
+            erp_gate.requests, "post", side_effect=_reserved_response
+        ) as post:
+            erp_gate.assert_erp_label_allowed(_shipment(ERP_META), context=context)
+        self.assertFalse(post.call_args.kwargs["json"]["join_reservation"])
+        self.assertNotEqual(post.call_args.kwargs["json"]["operation_id"], "stolen-id")
+
+    @override_settings(
+        ERP_INTEGRATION_USER_ID="integration-user", MULTI_ORGANIZATIONS=False
+    )
+    def test_integration_joins_existing_erp_purchase_reservation(self):
+        context = SimpleNamespace(
+            user=SimpleNamespace(id="integration-user"),
+            token=SimpleNamespace(user_id="integration-user"),
+            erp_label_operation_id="erp-operation",
+            org=None,
+        )
+        with mock.patch.object(
+            erp_gate.requests, "post", side_effect=_reserved_response
+        ) as post:
+            erp_gate.assert_erp_label_allowed(_shipment(ERP_META), context=context)
+        self.assertTrue(post.call_args.kwargs["json"]["join_reservation"])
+        self.assertEqual(post.call_args.kwargs["json"]["operation_id"], "erp-operation")
+
+    def test_mismatched_reservation_confirmation_fails_closed(self):
+        with mock.patch.object(
+            erp_gate.requests,
+            "post",
+            return_value=_response(
+                payload={
+                    "message": {
+                        "allowed": True,
+                        "reserved": True,
+                        "operation_id": "wrong",
+                    }
+                }
+            ),
+        ):
+            with self.assertRaises(APIException):
+                erp_gate.assert_erp_label_allowed(_shipment(ERP_META))
+
 
 @override_settings(ERP_GATE_URL="https://erp.test", ERP_GATE_TOKEN="key:secret")
 class TestShipmentActionRelay(TestCase):
@@ -123,17 +189,26 @@ class TestShipmentActionRelay(TestCase):
             "suggested_address": {"postal_code": "1000", "country_code": "BE"},
         }
         with mock.patch.object(
-            erp_gate.requests, "post", return_value=_response(payload={"message": review})
+            erp_gate.requests,
+            "post",
+            return_value=_response(payload={"message": review}),
         ) as post:
-            result = erp_gate.run_erp_shipment_action(_shipment(ERP_META), "get_address_review")
+            result = erp_gate.run_erp_shipment_action(
+                _shipment(ERP_META), "get_address_review"
+            )
         self.assertTrue(result["can_use_suggestion"])
         self.assertEqual(result["suggested_address"], review["suggested_address"])
-        self.assertEqual(post.call_args.kwargs["json"]["dn"], ERP_META["karrio_shipment"])
+        self.assertEqual(
+            post.call_args.kwargs["json"],
+            {"karrio_shipment_id": "shp_test123", "action": "get_address_review"},
+        )
 
     def test_address_review_cannot_select_another_orders_address(self):
         with self.assertRaises(APIException):
             erp_gate.run_erp_shipment_action(
-                _shipment(ERP_META), "get_address_review", args={"address_name": "other"}
+                _shipment(ERP_META),
+                "get_address_review",
+                args={"address_name": "other"},
             )
 
     def test_unknown_action_is_rejected(self):
@@ -161,9 +236,8 @@ class TestShipmentActionRelay(TestCase):
         self.assertEqual(
             kwargs["json"],
             {
-                "dt": "Karrio Shipment",
-                "dn": ERP_META["karrio_shipment"],
-                "method": "mark_picked",
+                "karrio_shipment_id": "shp_test123",
+                "action": "mark_picked",
             },
         )
 
@@ -206,9 +280,8 @@ class TestShipmentActionRelay(TestCase):
         self.assertEqual(
             kwargs["json"],
             {
-                "dt": "Karrio Shipment",
-                "dn": ERP_META["karrio_shipment"],
-                "method": "mark_shipped",
+                "karrio_shipment_id": "shp_test123",
+                "action": "mark_shipped",
             },
         )
 
@@ -282,9 +355,8 @@ class TestShipmentActionRelay(TestCase):
         self.assertEqual(
             kwargs["json"],
             {
-                "dt": "Karrio Shipment",
-                "dn": ERP_META["karrio_shipment"],
-                "method": "cancel_shipment",
+                "karrio_shipment_id": "shp_test123",
+                "action": "cancel_shipment",
             },
         )
 
@@ -303,9 +375,8 @@ class TestShipmentActionRelay(TestCase):
         self.assertEqual(
             kwargs["json"],
             {
-                "dt": "Karrio Shipment",
-                "dn": ERP_META["karrio_shipment"],
-                "method": "record_delivery_outcome",
+                "karrio_shipment_id": "shp_test123",
+                "action": "record_delivery_outcome",
                 # frappe.handler.run_doc_method splats this into kwargs.
                 "args": {"outcome": "delivered", "note": "left with neighbour"},
             },
@@ -366,9 +437,8 @@ class TestShipmentActionRelay(TestCase):
                 self.assertEqual(result, {"message": "Done."})
                 _args, kwargs = post.call_args
                 expected = {
-                    "dt": "Karrio Shipment",
-                    "dn": ERP_META["karrio_shipment"],
-                    "method": action,
+                    "karrio_shipment_id": "shp_test123",
+                    "action": action,
                 }
                 if erp_gate.ERP_SHIPMENT_ACTIONS[action]:
                     # Argument-taking actions always carry an args object so

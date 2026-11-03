@@ -29,7 +29,13 @@ def parse_shipment_response(
     response = _response.deserialize()
 
     messages = error.parse_error_response(
-        [response, *(response.get("errors") or [])], settings
+        [response, *(response.get("errors") or [])],
+        settings,
+        **(
+            {"monta_purchase_not_attempted": True}
+            if response.get("purchase_not_attempted") is True
+            else {}
+        ),
     )
     shipment = (
         _extract_details(response, settings)
@@ -61,7 +67,9 @@ def _extract_details(
     # purchase.
     if label_type == "PDF" and settings.connection_config.portrait_labels.state:
         label_files = [
-            lib.failsafe(lambda encoded=encoded: provider_utils.portraitize_pdf(encoded))
+            lib.failsafe(
+                lambda encoded=encoded: provider_utils.portraitize_pdf(encoded)
+            )
             or encoded
             for encoded in label_files
         ]

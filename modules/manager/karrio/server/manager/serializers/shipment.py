@@ -76,6 +76,9 @@ class ShipmentSerializer(ShipmentData):
     def create(
         self, validated_data: dict, context: Context, **kwargs
     ) -> models.Shipment:
+        from karrio.server.core.erp_gate import assert_erp_metadata_write
+
+        assert_erp_metadata_write(context, validated_data.get("metadata"))
         # fmt: off
         # Apply shipping method if specified (HIGHEST PRIORITY - supersedes service)
         apply_shipping_method_flag, validated_data = resolve_shipping_method(
@@ -223,6 +226,12 @@ class ShipmentSerializer(ShipmentData):
     def update(
         self, instance: models.Shipment, validated_data: dict, context: Context
     ) -> models.Shipment:
+        from karrio.server.core.erp_gate import assert_erp_metadata_write
+
+        if "metadata" in validated_data:
+            assert_erp_metadata_write(
+                context, validated_data["metadata"], instance.metadata
+            )
         changes = []
         data = validated_data.copy()
         carriers = validated_data.get("carriers") or []
@@ -683,9 +692,15 @@ def buy_shipment_label(
     # Bamboi fork: single choke point for every purchase path (REST purchase,
     # create-with-service, batch). An ERP-linked shipment must pass the same
     # gates the ERP's own label button runs; fail closed when ERP cannot answer.
-    from karrio.server.core.erp_gate import assert_erp_label_allowed
+    from karrio.server.core.erp_gate import (
+        assert_erp_label_allowed,
+        assert_erp_metadata_write,
+        reject_unattempted_label,
+    )
 
-    assert_erp_label_allowed(shipment)
+    if "metadata" in data:
+        assert_erp_metadata_write(context, data["metadata"], shipment.metadata)
+    dashboard_operation = assert_erp_label_allowed(shipment, context=context)
 
     extra: dict = {}
     invoice: dict = {}
@@ -733,14 +748,18 @@ def buy_shipment_label(
             )
 
     # Submit shipment to carriers
-    response: Shipment = lib.identity(
-        ShipmentPurchaseSerializer.map(
-            context=context,
-            data={**Shipment(shipment).data, **payload, **extra},
+    try:
+        response: Shipment = lib.identity(
+            ShipmentPurchaseSerializer.map(
+                context=context,
+                data={**Shipment(shipment).data, **payload, **extra},
+            )
+            .save(carrier=carrier, selected_rate=selected_rate, **kwargs)
+            .instance
         )
-        .save(carrier=carrier, selected_rate=selected_rate, **kwargs)
-        .instance
-    )
+    except exceptions.APIException as error:
+        reject_unattempted_label(shipment, dashboard_operation, error)
+        raise
 
     # Merge response parcel data with existing parcel data to preserve all fields (weight, etc.)
     existing_parcels = shipment.parcels or []

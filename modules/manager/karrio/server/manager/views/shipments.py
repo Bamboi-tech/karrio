@@ -329,8 +329,12 @@ class ShipmentERPAction(APIView):
 
     @openapi.extend_schema(exclude=True)
     def post(self, request: Request, pk: str, action: str):
-        from karrio.server.core.erp_gate import run_erp_shipment_action
+        from karrio.server.core.erp_gate import (
+            run_erp_shipment_action,
+            assert_erp_organization,
+        )
 
+        assert_erp_organization(request)
         shipment = models.Shipment.access_by(request).get(pk=pk)
         result = run_erp_shipment_action(
             shipment,
@@ -353,16 +357,28 @@ class ERPFeatures(APIView):
 
     @openapi.extend_schema(exclude=True)
     def get(self, request: Request):
-        from karrio.server.core.erp_gate import run_erp_features_list
+        from karrio.server.core.erp_gate import (
+            run_erp_features_list,
+            assert_erp_organization,
+        )
 
+        assert_erp_organization(request)
         return Response(run_erp_features_list())
 
     @openapi.extend_schema(exclude=True)
     def post(self, request: Request):
-        from karrio.server.core.erp_gate import run_erp_features_set
+        from karrio.server.core.erp_gate import (
+            run_erp_features_set,
+            assert_erp_feature_manager,
+        )
 
+        assert_erp_feature_manager(request)
         data = request.data if isinstance(request.data, dict) else {}
-        return Response(run_erp_features_set(data.get("key"), data.get("enabled")))
+        return Response(
+            run_erp_features_set(
+                data.get("key"), data.get("enabled"), actor=str(request.user.id)
+            )
+        )
 
 
 class ERPPrintBatches(APIView):

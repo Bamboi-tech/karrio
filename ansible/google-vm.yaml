@@ -184,6 +184,10 @@
       ansible.builtin.shell: |
         gcloud auth configure-docker europe-north2-docker.pkg.dev --quiet
       changed_when: false
+    - name: Provision staging ERP integration when explicitly requested
+      ansible.builtin.include_tasks: provision-stage-erp.yaml
+      when: provision_erp_integration | default(false) | bool
+
     - name: Run docker compose v2
       community.docker.docker_compose_v2:
         project_name: karrio

@@ -47,6 +47,10 @@ compose:
         # cannot answer. Token = ERPNext "Karrio Dashboard" user api_key:api_secret.
         ERP_GATE_URL: "{{ erp_gate_url | default('') }}"
         ERP_GATE_TOKEN: "{{ erp_gate_token | default('') }}"
+        # Dedicated ERP token owner; never use a shared dashboard account.
+        ERP_INTEGRATION_USER_ID: "{{ erp_integration_user_id | default('') }}"
+        # Empty for single-tenant installations, explicit for multi-org ERP.
+        ERP_ORGANIZATION_ID: "{{ erp_organization_id | default('') }}"
         # Reuse Postgres connections for 60 s instead of a fresh connect (+ TLS
         # -less handshake, auth, catalog load) per request; settings/base.py:351
         # defaults to 0. 2 gunicorn + 2 huey processes keep the count tiny.
@@ -141,6 +145,10 @@ compose:
         # cannot answer. Token = ERPNext "Karrio Dashboard" user api_key:api_secret.
         ERP_GATE_URL: "{{ erp_gate_url | default('') }}"
         ERP_GATE_TOKEN: "{{ erp_gate_token | default('') }}"
+        # Dedicated ERP token owner; never use a shared dashboard account.
+        ERP_INTEGRATION_USER_ID: "{{ erp_integration_user_id | default('') }}"
+        # Empty for single-tenant installations, explicit for multi-org ERP.
+        ERP_ORGANIZATION_ID: "{{ erp_organization_id | default('') }}"
         # Same rationale as on api (see there). The worker is where the
         # tracking pulse writes most tracing-record rows.
         DATABASE_CONN_MAX_AGE: "60"

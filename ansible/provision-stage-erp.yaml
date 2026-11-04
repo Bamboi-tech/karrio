@@ -1,0 +1,43 @@
+# Included only by the explicitly requested staging deployment operation.
+- name: Require explicit staging provisioning
+  ansible.builtin.assert:
+    that:
+      - env == 'staging'
+      - erp_integration_api_token is defined
+      - erp_gate_url == 'https://stage-erp.bamboi.eu'
+  no_log: true
+
+- name: Locate the current staging API container
+  ansible.builtin.command:
+    argv: [docker, ps, --filter, 'label=com.docker.compose.project=karrio', --filter, 'label=com.docker.compose.service=api', --quiet]
+  register: stage_api_container
+  changed_when: false
+
+- name: Require exactly one staging API container
+  ansible.builtin.assert:
+    that: stage_api_container.stdout_lines | length == 1
+
+- name: Provision dedicated staging ERP account without mail or signup changes
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - -i
+      - '{{ stage_api_container.stdout }}'
+      - python
+      - -c
+      - '{{ lookup("file", "scripts/provision_stage_erp.py") }}'
+    stdin: '{{ {"environment": "staging", "token": erp_integration_api_token} | to_json }}'
+  register: stage_erp_account
+  changed_when: (stage_erp_account.stdout | from_json).created
+  no_log: true
+
+- name: Set verified integration identity for this deployment
+  ansible.builtin.set_fact:
+    erp_integration_user_id: '{{ (stage_erp_account.stdout | from_json).user_id }}'
+    erp_organization_id: ''
+  no_log: true
+
+- name: Report non-secret dedicated integration ID
+  ansible.builtin.debug:
+    msg: 'Dedicated staging ERP integration user ID: {{ erp_integration_user_id }} (single tenant)'

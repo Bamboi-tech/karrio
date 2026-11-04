@@ -18,6 +18,11 @@ on:
         options:
           - staging
           - production
+      provision_erp_integration:
+        description: Provision the dedicated staging ERP account (staging only)
+        required: false
+        default: false
+        type: boolean
       karrio_tag:
         description: Karrio image tag (leave empty to use the tag pinned in ansible/vars/<env>.yaml)
         required: false
@@ -91,6 +96,13 @@ jobs:
       - name: Run google-vm playbook
         run: |
           EXTRA_ARGS=()
+          if [ "${{ inputs.provision_erp_integration }}" = "true" ]; then
+            if [ "${{ inputs.env }}" != "staging" ]; then
+              echo "ERP account provisioning is staging-only" >&2
+              exit 1
+            fi
+            EXTRA_ARGS+=(-e provision_erp_integration=true)
+          fi
           if [ -n "${{ inputs.karrio_tag }}" ]; then
             EXTRA_ARGS+=(-e "karrio_tag=${{ inputs.karrio_tag }}")
           fi

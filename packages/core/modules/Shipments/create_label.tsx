@@ -1,4 +1,5 @@
 "use client";
+import { ChevronDown, DollarSign, Pencil, Plus, X } from "lucide-react";
 import {
   AddressType,
   CommodityType,
@@ -36,7 +37,11 @@ import {
   MetadataEditor,
   MetadataEditorContext,
 } from "@karrio/ui/core/forms/metadata-editor";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@karrio/ui/components/ui/collapsible";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@karrio/ui/components/ui/collapsible";
 import {
   getShopifyHold,
   shopifyHoldTooltip,
@@ -92,7 +97,8 @@ export default function CreateLabelPage(pageProps: any) {
     const shipment_id = searchParams.get("shipment_id") || "new";
     const [key, setKey] = useState<string>(`${shipment_id}-${Date.now()}`);
     const [addReturn, setAddReturn] = useState<boolean>(false);
-    const { query: userConnQuery, user_connections: user_connections } = useCarrierConnections();
+    const { query: userConnQuery, user_connections: user_connections } =
+      useCarrierConnections();
     const { query: sysConnQuery, system_connections } = useSystemConnections();
     const {
       state: { shipment, query },
@@ -177,7 +183,10 @@ export default function CreateLabelPage(pageProps: any) {
 
       return [];
     };
-    const isPackedItem = (cdt: CommodityType | CustomsCommodityType, shipment: ShipmentType) => {
+    const isPackedItem = (
+      cdt: CommodityType | CustomsCommodityType,
+      shipment: ShipmentType,
+    ) => {
       const parentId = "parent_id" in cdt ? cdt.parent_id : null;
       const item = getShipmentCommodities(shipment).find(
         (item) =>
@@ -206,8 +215,7 @@ export default function CreateLabelPage(pageProps: any) {
     };
     const setInitialData = () => {
       const shipper =
-        templates.data?.default_templates.default_address ||
-        ({} as any);
+        templates.data?.default_templates.default_address || ({} as any);
       const parcel = {
         ...(templates.data?.default_templates.default_parcel ||
           DEFAULT_PARCEL_CONTENT),
@@ -288,7 +296,15 @@ export default function CreateLabelPage(pageProps: any) {
       ) {
         setReady(true);
       }
-    }, [ready, templates.isLoading, orders.isLoading, query.isLoading, query.isFetched, workspace_config.query.isLoading, shipment_id]);
+    }, [
+      ready,
+      templates.isLoading,
+      orders.isLoading,
+      query.isLoading,
+      query.isFetched,
+      workspace_config.query.isLoading,
+      shipment_id,
+    ]);
 
     return (
       <>
@@ -307,10 +323,11 @@ export default function CreateLabelPage(pageProps: any) {
             <div className="notification is-danger is-light is-size-7 my-2 p-2">
               <p>
                 <strong>Failed to load shipment data.</strong>
-                {query.error && typeof query.error === 'object' && 'message' in query.error ?
-                  ` ${query.error.message}` :
-                  ' Please check your connection and try refreshing the page.'
-                }
+                {query.error &&
+                typeof query.error === "object" &&
+                "message" in query.error
+                  ? ` ${query.error.message}`
+                  : " Please check your connection and try refreshing the page."}
               </p>
               <button
                 className="button is-small is-danger mt-2"
@@ -464,14 +481,14 @@ export default function CreateLabelPage(pageProps: any) {
 
                     {Object.values(shipment?.return_address || []).length ===
                       0 && (
-                        <div className="notification is-default p-2 is-size-7">
-                          <span>
-                            Use this to specify an origin address different from
-                            the shipper address above. <br />
-                            This address will be used for pickup and return.
-                          </span>
-                        </div>
-                      )}
+                      <div className="notification is-default p-2 is-size-7">
+                        <span>
+                          Use this to specify an origin address different from
+                          the shipper address above. <br />
+                          This address will be used for pickup and return.
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Billing address section */}
@@ -577,50 +594,50 @@ export default function CreateLabelPage(pageProps: any) {
 
                   {(shipment?.billing_address ||
                     shipment.payment?.paid_by === PaidByEnum.third_party) && (
-                      <>
-                        <div className="p-3">
-                          <header className="is-flex is-justify-content-space-between">
-                            <label
-                              className="label is-capitalized"
-                              style={{ fontSize: "0.8em" }}
-                            >
-                              Billing address
-                            </label>
-                            <div className="is-vcentered">
-                              <AddressModalEditor
-                                shipment={shipment}
-                                address={
-                                  shipment.billing_address || ({} as AddressType)
-                                }
-                                onSubmit={(address) =>
-                                  onChange({ billing_address: address })
-                                }
-                                trigger={
-                                  <button
-                                    className="button is-small is-info is-text is-inverted p-1"
-                                    disabled={query.isFetching}
-                                  >
-                                    Edit billing address
-                                  </button>
-                                }
-                              />
-                            </div>
-                          </header>
-
-                          {shipment?.billing_address && (
-                            <AddressDescription
-                              address={shipment!.billing_address as any}
+                    <>
+                      <div className="p-3">
+                        <header className="is-flex is-justify-content-space-between">
+                          <label
+                            className="label is-capitalized"
+                            style={{ fontSize: "0.8em" }}
+                          >
+                            Billing address
+                          </label>
+                          <div className="is-vcentered">
+                            <AddressModalEditor
+                              shipment={shipment}
+                              address={
+                                shipment.billing_address || ({} as AddressType)
+                              }
+                              onSubmit={(address) =>
+                                onChange({ billing_address: address })
+                              }
+                              trigger={
+                                <button
+                                  className="button is-small is-info is-text is-inverted p-1"
+                                  disabled={query.isFetching}
+                                >
+                                  Edit billing address
+                                </button>
+                              }
                             />
-                          )}
+                          </div>
+                        </header>
 
-                          {isNone(shipment?.billing_address) && (
-                            <div className="notification is-default p-2 is-size-7">
-                              Add shipment billing address. (optional)
-                            </div>
-                          )}
-                        </div>
-                      </>
-                    )}
+                        {shipment?.billing_address && (
+                          <AddressDescription
+                            address={shipment!.billing_address as any}
+                          />
+                        )}
+
+                        {isNone(shipment?.billing_address) && (
+                          <div className="notification is-default p-2 is-size-7">
+                            Add shipment billing address. (optional)
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 {/* Parcel & Items section */}
@@ -685,7 +702,7 @@ export default function CreateLabelPage(pageProps: any) {
                                   disabled={query.isFetching}
                                 >
                                   <span className="icon is-small">
-                                    <i className="fas fa-pen"></i>
+                                    <Pencil className="h-4 w-4" />
                                   </span>
                                 </button>
                               }
@@ -697,10 +714,13 @@ export default function CreateLabelPage(pageProps: any) {
                                 query.isFetching ||
                                 shipment.parcels.length === 1
                               }
-                              onClick={mutation.removeParcel(pkg_index, pkg.id ?? undefined)}
+                              onClick={mutation.removeParcel(
+                                pkg_index,
+                                pkg.id ?? undefined,
+                              )}
                             >
                               <span className="icon is-small">
-                                <i className="fas fa-times"></i>
+                                <X className="h-4 w-4" />
                               </span>
                             </button>
                           </div>
@@ -767,12 +787,12 @@ export default function CreateLabelPage(pageProps: any) {
                                         }}
                                         {...(getParent(item.parent_id)
                                           ? {
-                                            max: getAvailableQuantity(
-                                              shipment,
-                                              item,
-                                              item_index,
-                                            ),
-                                          }
+                                              max: getAvailableQuantity(
+                                                shipment,
+                                                item,
+                                                item_index,
+                                              ),
+                                            }
                                           : {})}
                                       />
                                     </p>
@@ -811,7 +831,7 @@ export default function CreateLabelPage(pageProps: any) {
                                       }
                                     >
                                       <span className="icon is-small">
-                                        <i className="fas fa-pen"></i>
+                                        <Pencil className="h-4 w-4" />
                                       </span>
                                     </button>
                                   )}
@@ -826,7 +846,7 @@ export default function CreateLabelPage(pageProps: any) {
                                   )}
                                 >
                                   <span className="icon is-small">
-                                    <i className="fas fa-times"></i>
+                                    <X className="h-4 w-4" />
                                   </span>
                                 </button>
                               </div>
@@ -859,7 +879,7 @@ export default function CreateLabelPage(pageProps: any) {
                                 }
                               >
                                 <span className="icon is-small">
-                                  <i className="fas fa-plus"></i>
+                                  <Plus className="h-4 w-4" />
                                 </span>
                                 <span>Add item</span>
                               </button>
@@ -870,7 +890,10 @@ export default function CreateLabelPage(pageProps: any) {
                               title="Add items"
                               shipment={shipment}
                               onChange={(_) =>
-                                mutation.addItems(pkg_index, pkg.id ?? undefined)(_ as any)
+                                mutation.addItems(
+                                  pkg_index,
+                                  pkg.id ?? undefined,
+                                )(_ as any)
                               }
                             />
                           )}
@@ -1013,7 +1036,7 @@ export default function CreateLabelPage(pageProps: any) {
                         }
                         iconLeft={
                           <span className="icon is-small is-left">
-                            <i className="fas fa-dollar-sign"></i>
+                            <DollarSign className="h-4 w-4" />
                           </span>
                         }
                         iconRight={
@@ -1073,7 +1096,7 @@ export default function CreateLabelPage(pageProps: any) {
                         }
                         iconLeft={
                           <span className="icon is-small is-left">
-                            <i className="fas fa-dollar-sign"></i>
+                            <DollarSign className="h-4 w-4" />
                           </span>
                         }
                         iconRight={
@@ -1133,7 +1156,7 @@ export default function CreateLabelPage(pageProps: any) {
                         }
                         iconLeft={
                           <span className="icon is-small is-left">
-                            <i className="fas fa-dollar-sign"></i>
+                            <DollarSign className="h-4 w-4" />
                           </span>
                         }
                         iconRight={
@@ -1200,15 +1223,16 @@ export default function CreateLabelPage(pageProps: any) {
                   {Object.keys(carrierOptions).length > 0 && (
                     <div className="card mb-4 px-3 mx-2">
                       <Collapsible>
-                        <CollapsibleTrigger
-                          asChild
-                        >
-                          <div className="is-flex is-justify-content-space-between is-clickable" style={{ boxShadow: "none" }}>
+                        <CollapsibleTrigger asChild>
+                          <div
+                            className="is-flex is-justify-content-space-between is-clickable"
+                            style={{ boxShadow: "none" }}
+                          >
                             <div className="has-text-grey has-text-weight-semibold is-size-7 pt-1">
                               CARRIER SPECIFIC OPTIONS
                             </div>
                             <span className="icon is-small m-1">
-                              <i className="fas fa-chevron-down"></i>
+                              <ChevronDown className="h-4 w-4" />
                             </span>
                           </div>
                         </CollapsibleTrigger>
@@ -1225,7 +1249,10 @@ export default function CreateLabelPage(pageProps: any) {
                                 >
                                   {references.carriers?.[carrier] || carrier}
                                 </label>
-                                <hr className="my-1" style={{ height: "1px" }} />
+                                <hr
+                                  className="my-1"
+                                  style={{ height: "1px" }}
+                                />
 
                                 {Object.entries(options).map(
                                   ([name, option]) => (
@@ -1235,9 +1262,9 @@ export default function CreateLabelPage(pageProps: any) {
                                       fieldClass="mb-0 px-1"
                                       labelClass="px-2"
                                       checked={
-                                        (shipment.options as any)?.[
-                                        carrier
-                                        ]?.[name] || false
+                                        (shipment.options as any)?.[carrier]?.[
+                                          name
+                                        ] || false
                                       }
                                       onChange={(e: any) =>
                                         onChange({
@@ -1245,7 +1272,7 @@ export default function CreateLabelPage(pageProps: any) {
                                             ...(shipment.options || {}),
                                             [carrier]: {
                                               ...(shipment.options as any)?.[
-                                              carrier
+                                                carrier
                                               ],
                                               [name]: e.target.checked,
                                             },
@@ -1381,7 +1408,7 @@ export default function CreateLabelPage(pageProps: any) {
                                           }
                                         >
                                           <span className="icon is-small">
-                                            <i className="fas fa-pen"></i>
+                                            <Pencil className="h-4 w-4" />
                                           </span>
                                         </button>
                                       )}
@@ -1392,7 +1419,7 @@ export default function CreateLabelPage(pageProps: any) {
                                       disabled={
                                         query.isFetching ||
                                         shipment.customs!.commodities.length ===
-                                        1
+                                          1
                                       }
                                       onClick={() =>
                                         mutation.removeCommodity(
@@ -1402,7 +1429,7 @@ export default function CreateLabelPage(pageProps: any) {
                                       }
                                     >
                                       <span className="icon is-small">
-                                        <i className="fas fa-times"></i>
+                                        <X className="h-4 w-4" />
                                       </span>
                                     </button>
                                   </div>
@@ -1413,11 +1440,11 @@ export default function CreateLabelPage(pageProps: any) {
 
                           {(shipment.customs!.commodities || []).length ===
                             0 && (
-                              <div className="notification is-warning is-light my-2 py-2 px-4 is-size-7">
-                                You need provide commodity items for customs
-                                purpose. (required)
-                              </div>
-                            )}
+                            <div className="notification is-warning is-light my-2 py-2 px-4 is-size-7">
+                              You need provide commodity items for customs
+                              purpose. (required)
+                            </div>
+                          )}
 
                           <div className="is-flex is-justify-content-space-between mt-4">
                             {/* @ts-ignore */}
@@ -1435,7 +1462,7 @@ export default function CreateLabelPage(pageProps: any) {
                                   }
                                 >
                                   <span className="icon is-small">
-                                    <i className="fas fa-plus"></i>
+                                    <Plus className="h-4 w-4" />
                                   </span>
                                   <span>add commodity</span>
                                 </button>
@@ -1455,64 +1482,64 @@ export default function CreateLabelPage(pageProps: any) {
                           {/* Duty Billing address section */}
                           {(shipment.customs!.duty_billing_address ||
                             shipment.customs!.duty?.paid_by ===
-                            PaidByEnum.third_party) && (
-                              <>
-                                <hr className="my-1" style={{ height: "1px" }} />
+                              PaidByEnum.third_party) && (
+                            <>
+                              <hr className="my-1" style={{ height: "1px" }} />
 
-                                <div className="py-3">
-                                  <header className="is-flex is-justify-content-space-between">
-                                    <label
-                                      className="label is-capitalized"
-                                      style={{ fontSize: "0.8em" }}
-                                    >
-                                      Billing address
-                                    </label>
-                                    <div className="is-vcentered">
-                                      <AddressModalEditor
-                                        address={
-                                          shipment.customs
-                                            ?.duty_billing_address ||
-                                          ({} as AddressType)
-                                        }
-                                        onSubmit={(address) =>
-                                          mutation.updateShipment({
-                                            customs: {
-                                              ...shipment!.customs,
-                                              duty_billing_address: address,
-                                            } as any,
-                                          })
-                                        }
-                                        trigger={
-                                          <button
-                                            className="button is-small is-info is-text is-inverted p-1"
-                                            disabled={query.isFetching}
-                                          >
-                                            Edit duty billing address
-                                          </button>
-                                        }
-                                      />
-                                    </div>
-                                  </header>
-
-                                  {shipment!.customs!.duty_billing_address && (
-                                    <AddressDescription
+                              <div className="py-3">
+                                <header className="is-flex is-justify-content-space-between">
+                                  <label
+                                    className="label is-capitalized"
+                                    style={{ fontSize: "0.8em" }}
+                                  >
+                                    Billing address
+                                  </label>
+                                  <div className="is-vcentered">
+                                    <AddressModalEditor
                                       address={
-                                        shipment!.customs!
-                                          .duty_billing_address as any
+                                        shipment.customs
+                                          ?.duty_billing_address ||
+                                        ({} as AddressType)
+                                      }
+                                      onSubmit={(address) =>
+                                        mutation.updateShipment({
+                                          customs: {
+                                            ...shipment!.customs,
+                                            duty_billing_address: address,
+                                          } as any,
+                                        })
+                                      }
+                                      trigger={
+                                        <button
+                                          className="button is-small is-info is-text is-inverted p-1"
+                                          disabled={query.isFetching}
+                                        >
+                                          Edit duty billing address
+                                        </button>
                                       }
                                     />
-                                  )}
+                                  </div>
+                                </header>
 
-                                  {isNone(
-                                    shipment!.customs!.duty_billing_address,
-                                  ) && (
-                                      <div className="notification is-default p-2 is-size-7">
-                                        Add customs duty billing address. (optional)
-                                      </div>
-                                    )}
-                                </div>
-                              </>
-                            )}
+                                {shipment!.customs!.duty_billing_address && (
+                                  <AddressDescription
+                                    address={
+                                      shipment!.customs!
+                                        .duty_billing_address as any
+                                    }
+                                  />
+                                )}
+
+                                {isNone(
+                                  shipment!.customs!.duty_billing_address,
+                                ) && (
+                                  <div className="notification is-default p-2 is-size-7">
+                                    Add customs duty billing address. (optional)
+                                  </div>
+                                )}
+                              </div>
+                            </>
+                          )}
                         </>
                       )}
 
@@ -1573,11 +1600,15 @@ export default function CreateLabelPage(pageProps: any) {
                     {/* Live rates section */}
                     <div className="p-0 py-1">
                       {/* Show spinner when fetching rates */}
-                      {(mutation.fetchRates.isLoading || (query.isFetching && (shipment.rates || []).length === 0)) && (
+                      {(mutation.fetchRates.isLoading ||
+                        (query.isFetching &&
+                          (shipment.rates || []).length === 0)) && (
                         <div className="has-text-centered p-4">
                           <Spinner className="my-1" />
                           <div className="is-size-7 has-text-grey mt-2">
-                            {(shipment.rates || []).length > 0 ? "Refreshing rates..." : "Fetching shipping rates..."}
+                            {(shipment.rates || []).length > 0
+                              ? "Refreshing rates..."
+                              : "Fetching shipping rates..."}
                           </div>
                         </div>
                       )}
@@ -1616,8 +1647,12 @@ export default function CreateLabelPage(pageProps: any) {
                                 }
                               }}
                               style={{
-                                pointerEvents: mutation.fetchRates.isLoading ? "none" : "auto",
-                                opacity: mutation.fetchRates.isLoading ? 0.6 : 1
+                                pointerEvents: mutation.fetchRates.isLoading
+                                  ? "none"
+                                  : "auto",
+                                opacity: mutation.fetchRates.isLoading
+                                  ? 0.6
+                                  : 1,
                               }}
                             >
                               <div className="icon-text">
@@ -1642,7 +1677,6 @@ export default function CreateLabelPage(pageProps: any) {
                         </div>
                       )}
                     </div>
-
 
                     {/* Purchase blocked while the Shopify order is on hold
                         (metadata.shopify_hold, mirrored by the ERP). UI
@@ -1759,7 +1793,9 @@ export default function CreateLabelPage(pageProps: any) {
                         className="is-small"
                         placeholder="shipper instructions"
                         defaultValue={shipment.options?.shipper_instructions}
-                        required={!isNone(shipment.options?.shipper_instructions)}
+                        required={
+                          !isNone(shipment.options?.shipper_instructions)
+                        }
                         onChange={(e) =>
                           onChange({
                             options: {

@@ -1,4 +1,5 @@
 "use client";
+import { Ellipsis } from "lucide-react";
 import {
   ManualShipmentStatusEnum,
   ShipmentStatusEnum,
@@ -18,8 +19,7 @@ import React, { useState, useRef, useContext } from "react";
 import { useRouter } from "next/navigation";
 import { useAppMode } from "@karrio/hooks/app-mode";
 
-interface ShipmentMenuComponent
-  extends React.InputHTMLAttributes<HTMLDivElement> {
+interface ShipmentMenuComponent extends React.InputHTMLAttributes<HTMLDivElement> {
   shipment: ShipmentType;
   templates?: DocumentTemplateType[];
   isViewing?: boolean;
@@ -75,9 +75,9 @@ export const ShipmentMenu = ({
   };
   const changeStatus =
     ({ id }: ShipmentType, status: ManualShipmentStatusEnum) =>
-      async () => {
-        await mutation.changeStatus.mutateAsync({ id, status });
-      };
+    async () => {
+      await mutation.changeStatus.mutateAsync({ id, status });
+    };
   const duplicateShipment = async (_: React.MouseEvent) => {
     console.log("> duplicating shipment...");
     const duplicatedShipment =
@@ -95,7 +95,7 @@ export const ShipmentMenu = ({
     >
       <div className="dropdown-trigger" onClick={handleOnClick} ref={trigger}>
         <a className="button is-white is-small p-3">
-          <i className={`fas fa-ellipsis-h`} aria-hidden="true"></i>
+          <Ellipsis className="h-4 w-4" aria-hidden="true" />
         </a>
       </div>
 
@@ -126,11 +126,15 @@ export const ShipmentMenu = ({
 
           {!isNone(shipment.label_url) && (
             <a
-              className={`dropdown-item ${documentPrinter.isLoading ? 'is-loading' : ''}`}
-              onClick={() => documentPrinter.openShipmentLabel(
-                shipment.id,
-                { format: (shipment.label_type || "pdf").toLowerCase() as FormatType, doc: "label" }
-              )}
+              className={`dropdown-item ${documentPrinter.isLoading ? "is-loading" : ""}`}
+              onClick={() =>
+                documentPrinter.openShipmentLabel(shipment.id, {
+                  format: (
+                    shipment.label_type || "pdf"
+                  ).toLowerCase() as FormatType,
+                  doc: "label",
+                })
+              }
             >
               <span>Print Label</span>
             </a>
@@ -138,11 +142,13 @@ export const ShipmentMenu = ({
 
           {!isNone(shipment.invoice_url) && (
             <a
-              className={`dropdown-item ${documentPrinter.isLoading ? 'is-loading' : ''}`}
-              onClick={() => documentPrinter.openShipmentLabel(
-                shipment.id,
-                { format: "pdf", doc: "invoice" }
-              )}
+              className={`dropdown-item ${documentPrinter.isLoading ? "is-loading" : ""}`}
+              onClick={() =>
+                documentPrinter.openShipmentLabel(shipment.id, {
+                  format: "pdf",
+                  doc: "invoice",
+                })
+              }
             >
               Print Invoice
             </a>
@@ -162,20 +168,20 @@ export const ShipmentMenu = ({
             ShipmentStatusEnum.cancelled,
             ShipmentStatusEnum.delivered,
           ].includes(shipment.status as any) && (
-              <a
-                className="dropdown-item"
-                onClick={() =>
-                  confirmCancellation({
-                    identifier: shipment.id as string,
-                    label: `Cancel Shipment`,
-                    action: "Submit",
-                    onConfirm: cancelShipment(shipment),
-                  })
-                }
-              >
-                Cancel Shipment
-              </a>
-            )}
+            <a
+              className="dropdown-item"
+              onClick={() =>
+                confirmCancellation({
+                  identifier: shipment.id as string,
+                  label: `Cancel Shipment`,
+                  action: "Submit",
+                  onConfirm: cancelShipment(shipment),
+                })
+              }
+            >
+              Cancel Shipment
+            </a>
+          )}
 
           {shipment.carrier_name &&
             isNoneOrEmpty(shipment.tracker_id) &&
@@ -211,76 +217,76 @@ export const ShipmentMenu = ({
                   ShipmentStatusEnum.created,
                   ShipmentStatusEnum.in_transit,
                 ].includes(shipment.status as any) && (
-                    <a
-                      className="dropdown-item"
-                      onClick={() =>
-                        confirmCancellation({
-                          identifier: shipment.id as string,
-                          label: `Mark shipment as ${formatRef(ManualShipmentStatusEnum.needs_attention.toString())}`,
-                          action: "Save",
-                          onConfirm: changeStatus(
-                            shipment,
-                            ManualShipmentStatusEnum.needs_attention,
-                          ),
-                        })
-                      }
-                    >
-                      Mark as{" "}
-                      {formatRef(
-                        ManualShipmentStatusEnum.needs_attention.toString(),
-                      )}
-                    </a>
-                  )}
+                  <a
+                    className="dropdown-item"
+                    onClick={() =>
+                      confirmCancellation({
+                        identifier: shipment.id as string,
+                        label: `Mark shipment as ${formatRef(ManualShipmentStatusEnum.needs_attention.toString())}`,
+                        action: "Save",
+                        onConfirm: changeStatus(
+                          shipment,
+                          ManualShipmentStatusEnum.needs_attention,
+                        ),
+                      })
+                    }
+                  >
+                    Mark as{" "}
+                    {formatRef(
+                      ManualShipmentStatusEnum.needs_attention.toString(),
+                    )}
+                  </a>
+                )}
 
                 {[
                   ShipmentStatusEnum.created,
                   ShipmentStatusEnum.in_transit,
                   ShipmentStatusEnum.needs_attention,
                 ].includes(shipment.status as any) && (
-                    <a
-                      className="dropdown-item"
-                      onClick={() =>
-                        confirmCancellation({
-                          identifier: shipment.id as string,
-                          label: `Mark shipment as ${formatRef(ManualShipmentStatusEnum.delivery_failed.toString())}`,
-                          action: "Save",
-                          onConfirm: changeStatus(
-                            shipment,
-                            ManualShipmentStatusEnum.delivery_failed,
-                          ),
-                        })
-                      }
-                    >
-                      Mark as{" "}
-                      {formatRef(
-                        ManualShipmentStatusEnum.delivery_failed.toString(),
-                      )}
-                    </a>
-                  )}
+                  <a
+                    className="dropdown-item"
+                    onClick={() =>
+                      confirmCancellation({
+                        identifier: shipment.id as string,
+                        label: `Mark shipment as ${formatRef(ManualShipmentStatusEnum.delivery_failed.toString())}`,
+                        action: "Save",
+                        onConfirm: changeStatus(
+                          shipment,
+                          ManualShipmentStatusEnum.delivery_failed,
+                        ),
+                      })
+                    }
+                  >
+                    Mark as{" "}
+                    {formatRef(
+                      ManualShipmentStatusEnum.delivery_failed.toString(),
+                    )}
+                  </a>
+                )}
 
                 {[
                   ShipmentStatusEnum.created,
                   ShipmentStatusEnum.in_transit,
                   ShipmentStatusEnum.needs_attention,
                 ].includes(shipment.status as any) && (
-                    <a
-                      className="dropdown-item"
-                      onClick={() =>
-                        confirmCancellation({
-                          identifier: shipment.id as string,
-                          label: `Mark shipment as ${formatRef(ManualShipmentStatusEnum.delivered.toString())}`,
-                          action: "Save",
-                          onConfirm: changeStatus(
-                            shipment,
-                            ManualShipmentStatusEnum.delivered,
-                          ),
-                        })
-                      }
-                    >
-                      Mark as{" "}
-                      {formatRef(ManualShipmentStatusEnum.delivered.toString())}
-                    </a>
-                  )}
+                  <a
+                    className="dropdown-item"
+                    onClick={() =>
+                      confirmCancellation({
+                        identifier: shipment.id as string,
+                        label: `Mark shipment as ${formatRef(ManualShipmentStatusEnum.delivered.toString())}`,
+                        action: "Save",
+                        onConfirm: changeStatus(
+                          shipment,
+                          ManualShipmentStatusEnum.delivered,
+                        ),
+                      })
+                    }
+                  >
+                    Mark as{" "}
+                    {formatRef(ManualShipmentStatusEnum.delivered.toString())}
+                  </a>
+                )}
               </>
             )}
 
@@ -290,11 +296,12 @@ export const ShipmentMenu = ({
 
           {(document_templates?.edges || []).map(({ node: template }) => (
             <a
-              className={`dropdown-item ${documentPrinter.isLoading ? 'is-loading' : ''}`}
-              onClick={() => documentPrinter.openTemplate(
-                template.id,
-                { shipments: shipment.id }
-              )}
+              className={`dropdown-item ${documentPrinter.isLoading ? "is-loading" : ""}`}
+              onClick={() =>
+                documentPrinter.openTemplate(template.id, {
+                  shipments: shipment.id,
+                })
+              }
               key={template.id}
             >
               Download {template.name}

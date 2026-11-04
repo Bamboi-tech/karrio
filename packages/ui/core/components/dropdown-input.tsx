@@ -1,3 +1,4 @@
+import { Asterisk, Search } from "lucide-react";
 import React, {
   useState,
   useRef,
@@ -7,8 +8,7 @@ import React, {
 } from "react";
 import { isNone, isNoneOrEmpty } from "@karrio/lib";
 
-export interface DropdownInputComponent
-  extends React.AllHTMLAttributes<HTMLInputElement> {
+export interface DropdownInputComponent extends React.AllHTMLAttributes<HTMLInputElement> {
   label?: string;
   fieldClass?: string;
   controlClass?: string;
@@ -101,7 +101,7 @@ export const DropdownInput = ({
           {label}
           {required && (
             <span className="icon is-small has-text-danger small-icon">
-              <i className="fas fa-asterisk" style={{ fontSize: ".7em" }}></i>
+              <Asterisk className="h-2.5 w-2.5" />
             </span>
           )}
         </label>
@@ -119,7 +119,7 @@ export const DropdownInput = ({
               value={selected || ""}
               className={
                 "dropdown-trigger input is-clickable is-fullwidth px-2" +
-                ` ${className}` || ""
+                  ` ${className}` || ""
               }
               aria-haspopup="true"
               readOnly
@@ -144,7 +144,7 @@ export const DropdownInput = ({
                       ref={control}
                     />
                     <span className="icon is-left is-small">
-                      <i className="fas fa-search" aria-hidden="true"></i>
+                      <Search className="h-4 w-4" aria-hidden="true" />
                     </span>
                   </p>
                 </div>

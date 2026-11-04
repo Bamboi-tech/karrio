@@ -67,6 +67,53 @@ export interface GetSystemUsageVariables {
   filter?: UsageFilter | null;
 }
 
+// ====================================================
+// GraphQL query operation: GetDashboardUsage
+// ====================================================
+
+export interface GetDashboardUsage_system_usage_order_volumes {
+  label: string | null;
+  count: number | null;
+  date: string | null;
+}
+
+export interface GetDashboardUsage_system_usage_shipment_count {
+  label: string | null;
+  count: number | null;
+  date: string | null;
+}
+
+export interface GetDashboardUsage_system_usage_shipping_spend {
+  label: string | null;
+  count: number | null;
+  date: string | null;
+}
+
+export interface GetDashboardUsage_system_usage_tracker_count {
+  label: string | null;
+  count: number | null;
+  date: string | null;
+}
+
+export interface GetDashboardUsage_system_usage {
+  order_volume: number | null;
+  total_trackers: number | null;
+  total_shipments: number | null;
+  total_shipping_spend: number | null;
+  order_volumes: GetDashboardUsage_system_usage_order_volumes[] | null;
+  shipment_count: GetDashboardUsage_system_usage_shipment_count[] | null;
+  tracker_count: GetDashboardUsage_system_usage_tracker_count[] | null;
+  shipping_spend: GetDashboardUsage_system_usage_shipping_spend[] | null;
+}
+
+export interface GetDashboardUsage {
+  system_usage: GetDashboardUsage_system_usage;
+}
+
+export interface GetDashboardUsageVariables {
+  filter?: UsageFilter | null;
+}
+
 
 /* tslint:disable */
 // This file was automatically generated and should not be edited.

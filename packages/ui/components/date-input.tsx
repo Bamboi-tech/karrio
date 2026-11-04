@@ -1,10 +1,13 @@
+import { Asterisk } from "lucide-react";
 import React from "react";
 import { Input } from "@karrio/ui/components/ui/input";
 import { Label } from "@karrio/ui/components/ui/label";
 import { cn } from "@karrio/ui/lib/utils";
 
-export interface DateInputComponent
-  extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'type'> {
+export interface DateInputComponent extends Omit<
+  React.InputHTMLAttributes<HTMLInputElement>,
+  "type"
+> {
   label?: string;
   fieldClass?: string;
   controlClass?: string;
@@ -13,17 +16,20 @@ export interface DateInputComponent
 }
 
 export const DateInput = React.forwardRef<HTMLInputElement, DateInputComponent>(
-  ({
-    label,
-    required,
-    className,
-    fieldClass,
-    controlClass,
-    wrapperClass,
-    labelBold = false,
-    children,
-    ...props
-  }, ref) => {
+  (
+    {
+      label,
+      required,
+      className,
+      fieldClass,
+      controlClass,
+      wrapperClass,
+      labelBold = false,
+      children,
+      ...props
+    },
+    ref,
+  ) => {
     const Props = {
       required,
       type: "date" as const,
@@ -36,14 +42,17 @@ export const DateInput = React.forwardRef<HTMLInputElement, DateInputComponent>(
     return (
       <div className={cn("px-1 py-2", wrapperClass)}>
         {label !== undefined && (
-          <Label 
-            className={cn("capitalize text-xs mb-1 block", labelBold ? "font-bold" : "font-normal")}
+          <Label
+            className={cn(
+              "capitalize text-xs mb-1 block",
+              labelBold ? "font-bold" : "font-normal",
+            )}
             style={{ fontSize: ".8em" }}
           >
             {label}
             {required && (
               <span className="ml-1 text-red-500 text-xs">
-                <i className="fas fa-asterisk" style={{ fontSize: ".7em" }}></i>
+                <Asterisk className="h-2.5 w-2.5" />
               </span>
             )}
           </Label>
@@ -64,7 +73,7 @@ export const DateInput = React.forwardRef<HTMLInputElement, DateInputComponent>(
                 "[&::-webkit-calendar-picker-indicator]:right-2", // Position from right
                 "[&::-webkit-calendar-picker-indicator]:top-1/2", // Center vertically
                 "[&::-webkit-calendar-picker-indicator]:-translate-y-1/2", // Center transform
-                className
+                className,
               )}
               {...Props}
             />
@@ -74,7 +83,7 @@ export const DateInput = React.forwardRef<HTMLInputElement, DateInputComponent>(
         {children}
       </div>
     );
-  }
+  },
 );
 
 DateInput.displayName = "DateInput";

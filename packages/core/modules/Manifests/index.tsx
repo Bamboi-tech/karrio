@@ -1,4 +1,5 @@
 "use client";
+import { Ellipsis } from "lucide-react";
 import {
   formatAddressLocationShort,
   formatAddressShort,
@@ -172,7 +173,9 @@ export default function Page() {
                         <div className="buttons has-addons">
                           <button
                             className={`button is-small is-default px-3 ${documentPrinter.isLoading ? "is-loading" : ""}`}
-                            onClick={() => documentPrinter.openBatchManifests(selection)}
+                            onClick={() =>
+                              documentPrinter.openBatchManifests(selection)
+                            }
                             disabled={documentPrinter.isLoading}
                           >
                             <span className="has-text-weight-semibold">
@@ -288,7 +291,7 @@ export default function Page() {
                             trigger={
                               <button className="button is-white">
                                 <span className="icon is-small">
-                                  <i className="fas fa-ellipsis-h"></i>
+                                  <Ellipsis className="h-4 w-4" />
                                 </span>
                               </button>
                             }

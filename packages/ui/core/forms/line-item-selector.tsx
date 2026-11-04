@@ -1,3 +1,4 @@
+import { ListChecks, Search } from "lucide-react";
 import { CommodityType, OrderType, ShipmentType } from "@karrio/types";
 import { getShipmentCommodities, isNone } from "@karrio/lib";
 import React, { useEffect, useState } from "react";
@@ -110,7 +111,7 @@ export const LineItemSelector = ({
         onClick={selectItems}
       >
         <span className="icon is-small">
-          <i className="fas fa-tasks"></i>
+          <ListChecks className="h-4 w-4" />
         </span>
         <span>{title || "Add line items"}</span>
       </button>
@@ -135,7 +136,7 @@ export const LineItemSelector = ({
                   onInput={onSearch}
                 />
                 <span className="icon is-left">
-                  <i className="fas fa-search" aria-hidden="true"></i>
+                  <Search className="h-4 w-4" aria-hidden="true" />
                 </span>
               </p>
             </div>
@@ -201,7 +202,9 @@ export const LineItemSelector = ({
                         checked={selection.includes(`ex-${item_index}`)}
                         onChange={handleChange([`ex-${item_index}`])}
                       />
-                      <span className="column p-0 is-5">{item.description}</span>
+                      <span className="column p-0 is-5">
+                        {item.description}
+                      </span>
                       <span className="column p-0 is-3">{item.sku}</span>
                       <span className="column p-0 is-2">{item.quantity}</span>
                       <span className="column p-0">{item.quantity}</span>
@@ -230,23 +233,27 @@ export const LineItemSelector = ({
                     </span>
                   </label>
 
-                  {order.line_items.filter((item) => item.id !== null).map((item) => (
-                    <label
-                      className="panel-block pl-5 is-size-7 has-text-weight-semibold columns m-0"
-                      key={item.id}
-                    >
-                      <input
-                        type="checkbox"
-                        name={item.id || undefined}
-                        checked={selection.includes(item.id as string)}
-                        onChange={handleChange([item.id as string])}
-                      />
-                      <span className="column p-0 is-5">{item.description}</span>
-                      <span className="column p-0 is-3">{item.sku}</span>
-                      <span className="column p-0 is-2">{item.quantity}</span>
-                      <span className="column p-0">{item.quantity}</span>
-                    </label>
-                  ))}
+                  {order.line_items
+                    .filter((item) => item.id !== null)
+                    .map((item) => (
+                      <label
+                        className="panel-block pl-5 is-size-7 has-text-weight-semibold columns m-0"
+                        key={item.id}
+                      >
+                        <input
+                          type="checkbox"
+                          name={item.id || undefined}
+                          checked={selection.includes(item.id as string)}
+                          onChange={handleChange([item.id as string])}
+                        />
+                        <span className="column p-0 is-5">
+                          {item.description}
+                        </span>
+                        <span className="column p-0 is-3">{item.sku}</span>
+                        <span className="column p-0 is-2">{item.quantity}</span>
+                        <span className="column p-0">{item.quantity}</span>
+                      </label>
+                    ))}
                 </React.Fragment>
               ))}
             </nav>

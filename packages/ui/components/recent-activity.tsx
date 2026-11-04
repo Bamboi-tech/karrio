@@ -1,4 +1,5 @@
 "use client";
+import { Circle } from "lucide-react";
 
 import * as React from "react";
 import { cn } from "@karrio/ui/lib/utils";
@@ -25,14 +26,17 @@ interface RecentActivityProps {
   className?: string;
 }
 
-const getActivityIcon = (status?: TrackerStatusEnum, delivered?: boolean | null) => {
+const getActivityIcon = (
+  status?: TrackerStatusEnum,
+  delivered?: boolean | null,
+) => {
   // Green for delivered, gray for everything else
   if (delivered) {
-    return <i className="fas fa-circle text-green-600 text-xs" />;
+    return <Circle className="h-3 w-3 text-green-600" />;
   }
 
   // Gray for all other cases
-  return <i className="fas fa-circle text-gray-400 text-xs" />;
+  return <Circle className="h-3 w-3 text-gray-400" />;
 };
 
 export const RecentActivity: React.FC<RecentActivityProps> = ({
@@ -54,10 +58,12 @@ export const RecentActivity: React.FC<RecentActivityProps> = ({
   // Add estimated delivery as first item if available
   if (!isNone(tracker?.estimated_delivery)) {
     activities.push({
-      id: 'estimated-delivery',
-      description: tracker?.delivered ? 'Package delivered' : 'Estimated delivery',
+      id: "estimated-delivery",
+      description: tracker?.delivered
+        ? "Package delivered"
+        : "Estimated delivery",
       date: tracker?.estimated_delivery || null,
-      isDelivered: tracker?.delivered
+      isDelivered: tracker?.delivered,
     });
   }
 
@@ -69,7 +75,7 @@ export const RecentActivity: React.FC<RecentActivityProps> = ({
         description: event.description,
         date: event.date,
         time: event.time,
-        location: event.location
+        location: event.location,
       });
     }
   });
@@ -99,7 +105,9 @@ export const RecentActivity: React.FC<RecentActivityProps> = ({
                     {activity.description}
                   </div>
                   <div className="text-xs text-gray-500 mt-1">
-                    {activity.date ? formatDayDate(activity.date) : 'Date not available'}
+                    {activity.date
+                      ? formatDayDate(activity.date)
+                      : "Date not available"}
                     {activity.time && `, ${activity.time}`}
                   </div>
                   {activity.location && (

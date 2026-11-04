@@ -1,4 +1,5 @@
 "use client";
+import { ChevronDown, DollarSign, Pencil, Plus, X } from "lucide-react";
 import {
   AddressType,
   CommodityType,
@@ -68,7 +69,11 @@ import { useAppMode } from "@karrio/hooks/app-mode";
 import React, { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useOrders } from "@karrio/hooks/order";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@karrio/ui/components/ui/collapsible";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@karrio/ui/components/ui/collapsible";
 import moment from "moment";
 
 const ContextProviders = bundleContexts([
@@ -179,7 +184,10 @@ export default function Page() {
 
       return parent_quantity - packed_quantity;
     };
-    const isPackedItem = (cdt: CommodityType | CustomsCommodityType, shipment: ShipmentType) => {
+    const isPackedItem = (
+      cdt: CommodityType | CustomsCommodityType,
+      shipment: ShipmentType,
+    ) => {
       const parentId = "parent_id" in cdt ? cdt.parent_id : null;
       const item = getShipmentCommodities(shipment).find(
         (item) =>
@@ -404,14 +412,14 @@ export default function Page() {
 
                     {Object.values(shipment?.return_address || []).length ===
                       0 && (
-                        <div className="notification is-default p-2 is-size-7">
-                          <span>
-                            Use this to specify an origin address different from
-                            the shipper address above. <br />
-                            This address will be used for pickup and return.
-                          </span>
-                        </div>
-                      )}
+                      <div className="notification is-default p-2 is-size-7">
+                        <span>
+                          Use this to specify an origin address different from
+                          the shipper address above. <br />
+                          This address will be used for pickup and return.
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Billing address section */}
@@ -515,53 +523,53 @@ export default function Page() {
 
                   {(shipment.billing_address ||
                     shipment.payment?.paid_by === PaidByEnum.third_party) && (
-                      <>
-                        <div className="p-3">
-                          <header className="is-flex is-justify-content-space-between">
-                            <label
-                              className="label is-capitalized"
-                              style={{ fontSize: "0.8em" }}
-                            >
-                              Billing address
-                            </label>
-                            <div className="is-vcentered">
-                              <AddressModalEditor
-                                shipment={shipment}
-                                address={
-                                  shipment.billing_address ||
-                                  (orders.data?.orders.edges || [{}])[0].node
-                                    ?.billing_address ||
-                                  ({} as AddressType)
-                                }
-                                onSubmit={(address) =>
-                                  onChange({ billing_address: address })
-                                }
-                                trigger={
-                                  <button
-                                    className="button is-small is-info is-text is-inverted p-1"
-                                    disabled={query.isFetching}
-                                  >
-                                    Edit billing address
-                                  </button>
-                                }
-                              />
-                            </div>
-                          </header>
-
-                          {shipment.billing_address && (
-                            <AddressDescription
-                              address={shipment!.billing_address as any}
+                    <>
+                      <div className="p-3">
+                        <header className="is-flex is-justify-content-space-between">
+                          <label
+                            className="label is-capitalized"
+                            style={{ fontSize: "0.8em" }}
+                          >
+                            Billing address
+                          </label>
+                          <div className="is-vcentered">
+                            <AddressModalEditor
+                              shipment={shipment}
+                              address={
+                                shipment.billing_address ||
+                                (orders.data?.orders.edges || [{}])[0].node
+                                  ?.billing_address ||
+                                ({} as AddressType)
+                              }
+                              onSubmit={(address) =>
+                                onChange({ billing_address: address })
+                              }
+                              trigger={
+                                <button
+                                  className="button is-small is-info is-text is-inverted p-1"
+                                  disabled={query.isFetching}
+                                >
+                                  Edit billing address
+                                </button>
+                              }
                             />
-                          )}
+                          </div>
+                        </header>
 
-                          {!shipment.billing_address && (
-                            <div className="notification is-default p-2 is-size-7">
-                              Add shipment billing address. (optional)
-                            </div>
-                          )}
-                        </div>
-                      </>
-                    )}
+                        {shipment.billing_address && (
+                          <AddressDescription
+                            address={shipment!.billing_address as any}
+                          />
+                        )}
+
+                        {!shipment.billing_address && (
+                          <div className="notification is-default p-2 is-size-7">
+                            Add shipment billing address. (optional)
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 {/* Parcel & Items section */}
@@ -626,7 +634,7 @@ export default function Page() {
                                   disabled={loading}
                                 >
                                   <span className="icon is-small">
-                                    <i className="fas fa-pen"></i>
+                                    <Pencil className="h-4 w-4" />
                                   </span>
                                 </button>
                               }
@@ -637,10 +645,13 @@ export default function Page() {
                               disabled={
                                 loading || shipment.parcels.length === 1
                               }
-                              onClick={mutation.removeParcel(pkg_index, pkg.id ?? undefined)}
+                              onClick={mutation.removeParcel(
+                                pkg_index,
+                                pkg.id ?? undefined,
+                              )}
                             >
                               <span className="icon is-small">
-                                <i className="fas fa-times"></i>
+                                <X className="h-4 w-4" />
                               </span>
                             </button>
                           </div>
@@ -729,7 +740,7 @@ export default function Page() {
                                   disabled={(pkg.items?.length ?? 0) === 1}
                                 >
                                   <span className="icon is-small">
-                                    <i className="fas fa-times"></i>
+                                    <X className="h-4 w-4" />
                                   </span>
                                 </button>
                               </div>
@@ -748,7 +759,10 @@ export default function Page() {
                             title="Edit items"
                             shipment={shipment}
                             onChange={(_) =>
-                              mutation.addItems(pkg_index, pkg.id ?? undefined)(_ as any)
+                              mutation.addItems(
+                                pkg_index,
+                                pkg.id ?? undefined,
+                              )(_ as any)
                             }
                             order_ids={order_id.split(",").map((s) => s.trim())}
                           />
@@ -890,7 +904,7 @@ export default function Page() {
                         }
                         iconLeft={
                           <span className="icon is-small is-left">
-                            <i className="fas fa-dollar-sign"></i>
+                            <DollarSign className="h-4 w-4" />
                           </span>
                         }
                         iconRight={
@@ -950,7 +964,7 @@ export default function Page() {
                         }
                         iconLeft={
                           <span className="icon is-small is-left">
-                            <i className="fas fa-dollar-sign"></i>
+                            <DollarSign className="h-4 w-4" />
                           </span>
                         }
                         iconRight={
@@ -1008,7 +1022,7 @@ export default function Page() {
                         }
                         iconLeft={
                           <span className="icon is-small is-left">
-                            <i className="fas fa-dollar-sign"></i>
+                            <DollarSign className="h-4 w-4" />
                           </span>
                         }
                         iconRight={
@@ -1075,15 +1089,16 @@ export default function Page() {
                   {Object.keys(carrierOptions).length > 0 && (
                     <div className="card mb-4 px-3 mx-2">
                       <Collapsible>
-                        <CollapsibleTrigger
-                          asChild
-                        >
-                          <div className="is-flex is-justify-content-space-between is-clickable" style={{ boxShadow: "none" }}>
+                        <CollapsibleTrigger asChild>
+                          <div
+                            className="is-flex is-justify-content-space-between is-clickable"
+                            style={{ boxShadow: "none" }}
+                          >
                             <div className="has-text-grey has-text-weight-semibold is-size-7 pt-1">
                               CARRIER SPECIFIC OPTIONS
                             </div>
                             <span className="icon is-small m-1">
-                              <i className="fas fa-chevron-down"></i>
+                              <ChevronDown className="h-4 w-4" />
                             </span>
                           </div>
                         </CollapsibleTrigger>
@@ -1100,7 +1115,10 @@ export default function Page() {
                                 >
                                   {references.carriers?.[carrier] || carrier}
                                 </label>
-                                <hr className="my-1" style={{ height: "1px" }} />
+                                <hr
+                                  className="my-1"
+                                  style={{ height: "1px" }}
+                                />
 
                                 {Object.entries(options).map(
                                   ([name, option]) => (
@@ -1110,9 +1128,9 @@ export default function Page() {
                                       fieldClass="mb-0 px-1"
                                       labelClass="px-2"
                                       checked={
-                                        (shipment.options as any)?.[
-                                        carrier
-                                        ]?.[name] || false
+                                        (shipment.options as any)?.[carrier]?.[
+                                          name
+                                        ] || false
                                       }
                                       onChange={(e: any) =>
                                         onChange({
@@ -1120,7 +1138,7 @@ export default function Page() {
                                             ...(shipment.options || {}),
                                             [carrier]: {
                                               ...(shipment.options as any)?.[
-                                              carrier
+                                                carrier
                                               ],
                                               [name]: e.target.checked,
                                             },
@@ -1263,7 +1281,7 @@ export default function Page() {
                                           }
                                         >
                                           <span className="icon is-small">
-                                            <i className="fas fa-pen"></i>
+                                            <Pencil className="h-4 w-4" />
                                           </span>
                                         </button>
                                       )}
@@ -1274,7 +1292,7 @@ export default function Page() {
                                       disabled={
                                         query.isFetching ||
                                         shipment.customs!.commodities.length ===
-                                        1
+                                          1
                                       }
                                       onClick={() =>
                                         mutation.removeCommodity(
@@ -1284,7 +1302,7 @@ export default function Page() {
                                       }
                                     >
                                       <span className="icon is-small">
-                                        <i className="fas fa-times"></i>
+                                        <X className="h-4 w-4" />
                                       </span>
                                     </button>
                                   </div>
@@ -1295,11 +1313,11 @@ export default function Page() {
 
                           {(shipment.customs!.commodities || []).length ===
                             0 && (
-                              <div className="notification is-warning is-light my-2 py-2 px-4 is-size-7">
-                                You need provide commodity items for customs
-                                purpose. (required)
-                              </div>
-                            )}
+                            <div className="notification is-warning is-light my-2 py-2 px-4 is-size-7">
+                              You need provide commodity items for customs
+                              purpose. (required)
+                            </div>
+                          )}
 
                           <div className="is-flex is-justify-content-space-between mt-4">
                             {/* @ts-ignore */}
@@ -1317,7 +1335,7 @@ export default function Page() {
                                   }
                                 >
                                   <span className="icon is-small">
-                                    <i className="fas fa-plus"></i>
+                                    <Plus className="h-4 w-4" />
                                   </span>
                                   <span>add commodity</span>
                                 </button>
@@ -1328,64 +1346,64 @@ export default function Page() {
                           {/* Duty Billing address section */}
                           {(shipment.customs!.duty_billing_address ||
                             shipment.customs!.duty?.paid_by ===
-                            PaidByEnum.third_party) && (
-                              <>
-                                <hr className="my-1" style={{ height: "1px" }} />
+                              PaidByEnum.third_party) && (
+                            <>
+                              <hr className="my-1" style={{ height: "1px" }} />
 
-                                <div className="py-3">
-                                  <header className="is-flex is-justify-content-space-between">
-                                    <label
-                                      className="label is-capitalized"
-                                      style={{ fontSize: "0.8em" }}
-                                    >
-                                      Billing address
-                                    </label>
-                                    <div className="is-vcentered">
-                                      <AddressModalEditor
-                                        address={
-                                          shipment.customs
-                                            ?.duty_billing_address ||
-                                          ({} as AddressType)
-                                        }
-                                        onSubmit={(address) =>
-                                          mutation.updateShipment({
-                                            customs: {
-                                              ...shipment!.customs,
-                                              duty_billing_address: address,
-                                            } as any,
-                                          })
-                                        }
-                                        trigger={
-                                          <button
-                                            className="button is-small is-info is-text is-inverted p-1"
-                                            disabled={query.isFetching}
-                                          >
-                                            Edit duty billing address
-                                          </button>
-                                        }
-                                      />
-                                    </div>
-                                  </header>
-
-                                  {shipment!.customs!.duty_billing_address && (
-                                    <AddressDescription
+                              <div className="py-3">
+                                <header className="is-flex is-justify-content-space-between">
+                                  <label
+                                    className="label is-capitalized"
+                                    style={{ fontSize: "0.8em" }}
+                                  >
+                                    Billing address
+                                  </label>
+                                  <div className="is-vcentered">
+                                    <AddressModalEditor
                                       address={
-                                        shipment!.customs!
-                                          .duty_billing_address as any
+                                        shipment.customs
+                                          ?.duty_billing_address ||
+                                        ({} as AddressType)
+                                      }
+                                      onSubmit={(address) =>
+                                        mutation.updateShipment({
+                                          customs: {
+                                            ...shipment!.customs,
+                                            duty_billing_address: address,
+                                          } as any,
+                                        })
+                                      }
+                                      trigger={
+                                        <button
+                                          className="button is-small is-info is-text is-inverted p-1"
+                                          disabled={query.isFetching}
+                                        >
+                                          Edit duty billing address
+                                        </button>
                                       }
                                     />
-                                  )}
+                                  </div>
+                                </header>
 
-                                  {isNone(
-                                    shipment!.customs!.duty_billing_address,
-                                  ) && (
-                                      <div className="notification is-default p-2 is-size-7">
-                                        Add customs duty billing address. (optional)
-                                      </div>
-                                    )}
-                                </div>
-                              </>
-                            )}
+                                {shipment!.customs!.duty_billing_address && (
+                                  <AddressDescription
+                                    address={
+                                      shipment!.customs!
+                                        .duty_billing_address as any
+                                    }
+                                  />
+                                )}
+
+                                {isNone(
+                                  shipment!.customs!.duty_billing_address,
+                                ) && (
+                                  <div className="notification is-default p-2 is-size-7">
+                                    Add customs duty billing address. (optional)
+                                  </div>
+                                )}
+                              </div>
+                            </>
+                          )}
                         </>
                       )}
 
@@ -1445,21 +1463,26 @@ export default function Page() {
                     {/* Live rates section */}
                     <div className="p-0 py-1">
                       {/* Show spinner when fetching rates */}
-                      {(mutation.fetchRates.isLoading || (loading && (shipment.rates || []).length === 0)) && (
+                      {(mutation.fetchRates.isLoading ||
+                        (loading && (shipment.rates || []).length === 0)) && (
                         <div className="has-text-centered p-4">
                           <Spinner className="my-1" />
                           <div className="is-size-7 has-text-grey mt-2">
-                            {(shipment.rates || []).length > 0 ? "Refreshing rates..." : "Fetching shipping rates..."}
+                            {(shipment.rates || []).length > 0
+                              ? "Refreshing rates..."
+                              : "Fetching shipping rates..."}
                           </div>
                         </div>
                       )}
 
-                      {!loading && !mutation.fetchRates.isLoading && (shipment.rates || []).length === 0 && (
-                        <div className="notification p-2 m-2 is-default is-size-7">
-                          Provide all shipping details to retrieve shipping
-                          rates.
-                        </div>
-                      )}
+                      {!loading &&
+                        !mutation.fetchRates.isLoading &&
+                        (shipment.rates || []).length === 0 && (
+                          <div className="notification p-2 m-2 is-default is-size-7">
+                            Provide all shipping details to retrieve shipping
+                            rates.
+                          </div>
+                        )}
 
                       {(shipment.rates || []).length > 0 && (
                         <div
@@ -1485,8 +1508,12 @@ export default function Page() {
                                 }
                               }}
                               style={{
-                                pointerEvents: mutation.fetchRates.isLoading ? "none" : "auto",
-                                opacity: mutation.fetchRates.isLoading ? 0.6 : 1
+                                pointerEvents: mutation.fetchRates.isLoading
+                                  ? "none"
+                                  : "auto",
+                                opacity: mutation.fetchRates.isLoading
+                                  ? 0.6
+                                  : 1,
                               }}
                             >
                               <div className="icon-text">
@@ -1609,7 +1636,9 @@ export default function Page() {
                         className="is-small"
                         placeholder="shipper instructions"
                         defaultValue={shipment.options?.shipper_instructions}
-                        required={!isNone(shipment.options?.shipper_instructions)}
+                        required={
+                          !isNone(shipment.options?.shipper_instructions)
+                        }
                         onChange={(e) =>
                           onChange({
                             options: {

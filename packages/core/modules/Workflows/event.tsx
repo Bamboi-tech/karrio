@@ -1,4 +1,5 @@
 "use client";
+import { ExternalLink } from "lucide-react";
 import { failsafe, formatDateTimeLong, isNone, jsonify } from "@karrio/lib";
 import { Tabs, TabStateProvider } from "@karrio/ui/core/components/tabs";
 import { CopiableLink } from "@karrio/ui/core/components/copiable-link";
@@ -54,7 +55,7 @@ export const Component = ({
                   className="button is-default has-text-info is-small mx-1"
                 >
                   <span className="icon">
-                    <i className="fas fa-external-link-alt"></i>
+                    <ExternalLink className="h-4 w-4" />
                   </span>
                 </AppLink>
               </div>
@@ -200,8 +201,8 @@ export const Component = ({
                                     parseWorkflowEventRecordData(
                                       trace.record.output || trace.record,
                                     ) ||
-                                    trace.record.url ||
-                                    "",
+                                      trace.record.url ||
+                                      "",
                                     {
                                       language: trace.record?.format || "json",
                                     },
@@ -229,7 +230,7 @@ export default function Page({ params }: { params: Promise<{ id: string }> }) {
     const [id, setId] = React.useState<string>();
 
     React.useEffect(() => {
-      params.then(query => {
+      params.then((query) => {
         setId(query.id);
       });
     }, []);

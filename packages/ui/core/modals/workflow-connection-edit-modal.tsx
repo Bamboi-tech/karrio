@@ -1,3 +1,4 @@
+import { Check, CircleAlert, TriangleAlert } from "lucide-react";
 import {
   AutomationAuthType,
   PartialWorkflowConnectionMutationInput,
@@ -39,10 +40,10 @@ function reducer(
   }: {
     name: string;
     value:
-    | string
-    | boolean
-    | Partial<PartialWorkflowConnectionMutationInput>
-    | string[];
+      | string
+      | boolean
+      | Partial<PartialWorkflowConnectionMutationInput>
+      | string[];
   },
 ): PartialWorkflowConnectionMutationInput {
   switch (name) {
@@ -107,12 +108,26 @@ export const ConnectionModalEditor = ({
       const validation = defaultValue.credential_validation;
       const errors: string[] = [];
 
-      if (validation.missing_credentials && validation.missing_credentials.length > 0) {
-        errors.push(...validation.missing_credentials.map((cred: string) => `Missing: ${cred}`));
+      if (
+        validation.missing_credentials &&
+        validation.missing_credentials.length > 0
+      ) {
+        errors.push(
+          ...validation.missing_credentials.map(
+            (cred: string) => `Missing: ${cred}`,
+          ),
+        );
       }
 
-      if (validation.invalid_credentials && validation.invalid_credentials.length > 0) {
-        errors.push(...validation.invalid_credentials.map((cred: string) => `Invalid: ${cred}`));
+      if (
+        validation.invalid_credentials &&
+        validation.invalid_credentials.length > 0
+      ) {
+        errors.push(
+          ...validation.invalid_credentials.map(
+            (cred: string) => `Invalid: ${cred}`,
+          ),
+        );
       }
 
       return errors;
@@ -120,7 +135,10 @@ export const ConnectionModalEditor = ({
 
     // Helper function to check if credentials are incomplete
     const isCredentialsIncomplete = () => {
-      return defaultValue.is_credentials_complete === false || getCredentialErrors().length > 0;
+      return (
+        defaultValue.is_credentials_complete === false ||
+        getCredentialErrors().length > 0
+      );
     };
 
     console.log(connection);
@@ -140,12 +158,12 @@ export const ConnectionModalEditor = ({
             <div className="mt-2">
               {defaultValue.is_credentials_complete ? (
                 <span className="tag is-success is-small">
-                  <i className="fas fa-check mr-1"></i>
+                  <Check className="mr-1 h-4 w-4" />
                   Credentials Complete
                 </span>
               ) : (
                 <span className="tag is-danger is-small">
-                  <i className="fas fa-exclamation-triangle mr-1"></i>
+                  <TriangleAlert className="mr-1 h-4 w-4" />
                   Credentials Incomplete
                 </span>
               )}
@@ -212,81 +230,90 @@ export const ConnectionModalEditor = ({
             {[AutomationAuthType.jwt, AutomationAuthType.oauth2].includes(
               connection.auth_type as any,
             ) && (
-                <div className="column mb-0 p-0">
-                  <InputField
-                    name="host"
-                    label="Host"
-                    className="is-fullwidth is-small"
-                    wrapperClass="px-1 py-2"
-                    fieldClass="column mb-0 p-0"
-                    defaultValue={connection.host || ""}
-                    required={[
-                      AutomationAuthType.jwt,
-                      AutomationAuthType.oauth2,
-                    ].includes(connection.auth_type as any)}
-                    onChange={handleChange}
-                  />
+              <div className="column mb-0 p-0">
+                <InputField
+                  name="host"
+                  label="Host"
+                  className="is-fullwidth is-small"
+                  wrapperClass="px-1 py-2"
+                  fieldClass="column mb-0 p-0"
+                  defaultValue={connection.host || ""}
+                  required={[
+                    AutomationAuthType.jwt,
+                    AutomationAuthType.oauth2,
+                  ].includes(connection.auth_type as any)}
+                  onChange={handleChange}
+                />
 
-                  <InputField
-                    name="endpoint"
-                    label="Endpoint"
-                    className="is-fullwidth is-small"
-                    wrapperClass="px-1 py-2"
-                    fieldClass="column mb-0 p-0"
-                    defaultValue={connection.endpoint || ""}
-                    onChange={handleChange}
-                  />
+                <InputField
+                  name="endpoint"
+                  label="Endpoint"
+                  className="is-fullwidth is-small"
+                  wrapperClass="px-1 py-2"
+                  fieldClass="column mb-0 p-0"
+                  defaultValue={connection.endpoint || ""}
+                  onChange={handleChange}
+                />
 
-                  <InputField
-                    name="port"
-                    label="Port"
-                    type="number"
-                    className="is-fullwidth is-small"
-                    wrapperClass="px-1 py-2"
-                    fieldClass="column mb-0 p-0"
-                    defaultValue={connection.port || ""}
-                    onChange={handleChange}
-                  />
-                </div>
-              )}
+                <InputField
+                  name="port"
+                  label="Port"
+                  type="number"
+                  className="is-fullwidth is-small"
+                  wrapperClass="px-1 py-2"
+                  fieldClass="column mb-0 p-0"
+                  defaultValue={connection.port || ""}
+                  onChange={handleChange}
+                />
+              </div>
+            )}
 
             {/* credentials with validation feedback */}
             <div className="column mb-0 px-0 py-2 control">
               <div
                 className="card p-2"
                 style={{
-                  borderColor: isCredentialsIncomplete() ? '#ff3860' : undefined,
-                  borderWidth: isCredentialsIncomplete() ? '2px' : undefined,
+                  borderColor: isCredentialsIncomplete()
+                    ? "#ff3860"
+                    : undefined,
+                  borderWidth: isCredentialsIncomplete() ? "2px" : undefined,
                 }}
               >
-
                 {/* Credentials validation warning */}
                 {isCredentialsIncomplete() && (
                   <div className="notification is-danger is-light p-3 mb-3">
                     <div className="is-flex is-align-items-center mb-2">
-                      <i className="fas fa-exclamation-triangle mr-2"></i>
+                      <TriangleAlert className="mr-2 h-4 w-4" />
                       <strong>Credentials Required</strong>
                     </div>
 
-                    {defaultValue.required_credentials && defaultValue.required_credentials.length > 0 && (
-                      <div className="mb-2">
-                        <p className="is-size-7 mb-1">Required credentials:</p>
-                        <div className="tags">
-                          {defaultValue.required_credentials.map((cred) => (
-                            <span key={cred} className="tag is-danger is-light is-small">
-                              {cred}
-                            </span>
-                          ))}
+                    {defaultValue.required_credentials &&
+                      defaultValue.required_credentials.length > 0 && (
+                        <div className="mb-2">
+                          <p className="is-size-7 mb-1">
+                            Required credentials:
+                          </p>
+                          <div className="tags">
+                            {defaultValue.required_credentials.map((cred) => (
+                              <span
+                                key={cred}
+                                className="tag is-danger is-light is-small"
+                              >
+                                {cred}
+                              </span>
+                            ))}
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      )}
 
                     {getCredentialErrors().length > 0 && (
                       <div>
                         <p className="is-size-7 mb-1">Issues:</p>
                         <ul className="is-size-7">
                           {getCredentialErrors().map((error, index) => (
-                            <li key={index} className="has-text-danger">• {error}</li>
+                            <li key={index} className="has-text-danger">
+                              • {error}
+                            </li>
                           ))}
                         </ul>
                       </div>
@@ -308,20 +335,25 @@ export const ConnectionModalEditor = ({
                               Credentials
                             </span>
                             {isCredentialsIncomplete() && (
-                              <span className="icon has-text-danger ml-2" title="Credentials incomplete">
-                                <i className="fas fa-exclamation-circle"></i>
+                              <span
+                                className="icon has-text-danger ml-2"
+                                title="Credentials incomplete"
+                              >
+                                <CircleAlert className="h-4 w-4" />
                               </span>
                             )}
                           </div>
                           <div className="is-vcentered">
                             <button
                               type="button"
-                              className={`button is-small ${isCredentialsIncomplete() ? 'is-danger' : 'is-info'} is-text is-inverted px-2 py-1`}
+                              className={`button is-small ${isCredentialsIncomplete() ? "is-danger" : "is-info"} is-text is-inverted px-2 py-1`}
                               disabled={isEditing}
                               onClick={() => editMetadata()}
                             >
                               <span className="is-size-7">
-                                {isCredentialsIncomplete() ? 'Fix Credentials' : 'Edit'}
+                                {isCredentialsIncomplete()
+                                  ? "Fix Credentials"
+                                  : "Edit"}
                               </span>
                             </button>
                           </div>
@@ -332,18 +364,27 @@ export const ConnectionModalEditor = ({
                 </MetadataEditor>
 
                 {/* Show current credentials from metafields for reference */}
-                {defaultValue.credentials_from_metafields && Object.keys(defaultValue.credentials_from_metafields).length > 0 && (
-                  <div className="mt-3">
-                    <p className="is-size-7 has-text-grey mb-1">Current credentials from metafields:</p>
-                    <div className="tags">
-                      {Object.keys(defaultValue.credentials_from_metafields).map((key) => (
-                        <span key={key} className="tag is-light is-small">
-                          {key}: {defaultValue.credentials_from_metafields[key] ? '✓' : '✗'}
-                        </span>
-                      ))}
+                {defaultValue.credentials_from_metafields &&
+                  Object.keys(defaultValue.credentials_from_metafields).length >
+                    0 && (
+                    <div className="mt-3">
+                      <p className="is-size-7 has-text-grey mb-1">
+                        Current credentials from metafields:
+                      </p>
+                      <div className="tags">
+                        {Object.keys(
+                          defaultValue.credentials_from_metafields,
+                        ).map((key) => (
+                          <span key={key} className="tag is-light is-small">
+                            {key}:{" "}
+                            {defaultValue.credentials_from_metafields[key]
+                              ? "✓"
+                              : "✗"}
+                          </span>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
               </div>
             </div>
 
@@ -366,24 +407,24 @@ export const ConnectionModalEditor = ({
             {[AutomationAuthType.jwt, AutomationAuthType.oauth2].includes(
               connection.auth_type as any,
             ) && (
-                <div className="column mb-0 p-0">
-                  {/* parameters_template */}
-                  <div className="column mb-0 p-0 control">
-                    <label className="label is-size-7">Parameters template</label>
-                    <div className="card is-radiusless">
-                      {/* @ts-ignore */}
-                      <CodeMirror
-                        height="15vh"
-                        extensions={[htmlLanguage]}
-                        value={connection.parameters_template || ("" as string)}
-                        onChange={(value) =>
-                          dispatch({ name: "parameters_template", value })
-                        }
-                      />
-                    </div>
+              <div className="column mb-0 p-0">
+                {/* parameters_template */}
+                <div className="column mb-0 p-0 control">
+                  <label className="label is-size-7">Parameters template</label>
+                  <div className="card is-radiusless">
+                    {/* @ts-ignore */}
+                    <CodeMirror
+                      height="15vh"
+                      extensions={[htmlLanguage]}
+                      value={connection.parameters_template || ("" as string)}
+                      onChange={(value) =>
+                        dispatch({ name: "parameters_template", value })
+                      }
+                    />
                   </div>
                 </div>
-              )}
+              </div>
+            )}
 
             <div className="py-3"></div>
 

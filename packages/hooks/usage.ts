@@ -4,12 +4,23 @@ import {
   get_organization_organization_usage
 } from "@karrio/types/graphql/ee";
 import {
+  GET_DASHBOARD_USAGE,
   GET_SYSTEM_USAGE,
   GetSystemUsage,
   GetSystemUsage_system_usage,
   UsageFilter,
+  UsagePrefetch,
 } from "@karrio/types";
-import { gqlstr, insertUrlParam, isNoneOrEmpty } from "@karrio/lib";
+import {
+  DEFAULT_USAGE_RANGE,
+  USAGE_RANGE_DAYS,
+  gqlstr,
+  insertUrlParam,
+  isNoneOrEmpty,
+  usageDayLabels,
+  usageFilterFor,
+  usageRangeOf,
+} from "@karrio/lib";
 import { useKarrio, useAuthenticatedQuery } from "./karrio";
 import { useAPIMetadata } from "./api-metadata";
 import { useSyncedSession } from "./session";
@@ -18,78 +29,69 @@ import React from "react";
 
 type UsageType = GetSystemUsage_system_usage &
   get_organization_organization_usage;
-type FilterType = UsageFilter & { setVariablesToURL?: boolean };
-const USAGE_FILTERS: Record<string, UsageFilter> = {
-  "7 days": {
-    date_before: moment().toISOString(),
-    date_after: moment().subtract(7, "days").toISOString(),
-  },
-  "15 days": {
-    date_before: moment().toISOString(),
-    date_after: moment().subtract(15, "days").toISOString(),
-  },
-  "Last 30 days": {
-    date_before: moment().toISOString(),
-    date_after: moment().subtract(30, "days").toISOString(),
-  },
-  "Last 3 months": {
-    date_before: moment().toISOString(),
-    date_after: moment().subtract(90, "days").toISOString(),
-  },
-  "Last 6 months": {
-    date_before: moment().toISOString(),
-    date_after: moment().subtract(180, "days").toISOString(),
-  },
-  "Last year": {
-    date_before: moment().toISOString(),
-    date_after: moment().subtract(360, "days").toISOString(),
-  },
+type FilterType = UsageFilter & {
+  setVariablesToURL?: boolean;
+  /** Usage for the default range fetched by the server page, with the exact
+   *  window it was fetched for: the cards are in the HTML and the hydrated
+   *  client renders that same window instead of fetching again. */
+  initialUsage?: UsagePrefetch | null;
+  /** "dashboard" selects only the four home series; the API computes and
+   *  caches nothing else. Default: every series (developer activity view). */
+  series?: "dashboard" | "all";
 };
-const DAYS_LIST: Record<string, string[]> = {
-  "7 days": Array.from(Array(7))
-    .map((_, i) => i)
-    .reverse()
-    .map((i) => moment().subtract(i, "days").format("MMM D")),
-  "15 days": Array.from(Array(15))
-    .map((_, i) => i)
-    .reverse()
-    .map((i) => moment().subtract(i, "days").format("MMM D")),
-  "Last 30 days": Array.from(Array(30))
-    .map((_, i) => i)
-    .reverse()
-    .map((i) => moment().subtract(i, "days").format("MMM D")),
-  "Last 3 months": Array.from(Array(90))
-    .map((_, i) => i)
-    .reverse()
-    .map((i) => moment().subtract(i, "days").format("MMM D")),
-  "Last 6 months": Array.from(Array(180))
-    .map((_, i) => i)
-    .reverse()
-    .map((i) => moment().subtract(i, "days").format("MMM D")),
-  "Last year": Array.from(Array(360))
-    .map((_, i) => i)
-    .reverse()
-    .map((i) => moment().subtract(i, "days").format("MMM D")),
-};
+
+// Built per mount, not at module load: the dashboard's Node process lives for
+// days, and module-level dates would freeze on the server (stale labels and
+// a hydration mismatch after midnight).
+function buildUsageFilters(): Record<string, UsageFilter> {
+  return Object.fromEntries(
+    Object.keys(USAGE_RANGE_DAYS).map((range) => [range, usageFilterFor(range)]),
+  );
+}
+
+function buildDaysList(): Record<string, string[]> {
+  return Object.fromEntries(
+    Object.entries(USAGE_RANGE_DAYS).map(([range, days]) => [
+      range,
+      Array.from({ length: days }, (_, index) =>
+        moment().subtract(days - 1 - index, "days").format("MMM D"),
+      ),
+    ]),
+  );
+}
 
 export function useAPIUsage({
   setVariablesToURL = false,
+  initialUsage,
+  series = "all",
   ...initialData
 }: FilterType = {}) {
   const karrio = useKarrio();
   const { metadata } = useAPIMetadata();
   const { query: sessionQuery } = useSyncedSession();
   const session = sessionQuery.data;
-  const [filter, _setFilter] = React.useState<UsageFilter>({
-    ...USAGE_FILTERS["15 days"],
-    ...initialData,
-  });
+  const USAGE_FILTERS = React.useMemo(buildUsageFilters, []);
+  const DAYS_LIST = React.useMemo(buildDaysList, []);
+  const [filter, _setFilter] = React.useState<UsageFilter>(
+    () =>
+      initialUsage?.filter ?? {
+        ...USAGE_FILTERS[DEFAULT_USAGE_RANGE],
+        ...initialData,
+      },
+  );
+  const currentRange = usageRangeOf(filter);
+  // UTC day labels for the window actually queried; see usageDayLabel.
+  const dayLabels = React.useMemo(
+    () => usageDayLabels(filter),
+    [filter.date_after, filter.date_before],
+  );
 
   const systemUsage = () =>
     karrio.graphql
-      .request<GetSystemUsage>(gqlstr(GET_SYSTEM_USAGE), {
-        variables: { filter },
-      })
+      .request<GetSystemUsage>(
+        gqlstr(series === "dashboard" ? GET_DASHBOARD_USAGE : GET_SYSTEM_USAGE),
+        { variables: { filter } },
+      )
       .then(({ system_usage }) => ({ usage: system_usage as UsageType }));
 
   const orgUsage = () =>
@@ -108,8 +110,16 @@ export function useAPIUsage({
       });
 
   const query = useAuthenticatedQuery({
-    queryKey: ["usage", filter],
+    queryKey: ["usage", series, filter],
     queryFn: metadata.MULTI_ORGANIZATIONS == true ? orgUsage : systemUsage,
+    // The prefetched window is the initial filter, so the seed lands on that
+    // key only; a range change creates a new key and fetches. The fetch time
+    // travels with the seed so a stale server response refetches on mount.
+    initialData:
+      !!initialUsage && filter === initialUsage.filter
+        ? { usage: initialUsage.usage as UsageType }
+        : undefined,
+    initialDataUpdatedAt: initialUsage?.fetchedAt,
     staleTime: 1500000,
     enabled: metadata.MULTI_ORGANIZATIONS ? !!session?.orgId : true,
     retry: (failureCount, error) => {
@@ -144,11 +154,7 @@ export function useAPIUsage({
     setFilter,
     DAYS_LIST,
     USAGE_FILTERS,
-    currentFilter: () =>
-      Object.keys(USAGE_FILTERS).find(
-        (_: any) =>
-          USAGE_FILTERS[_].date_before == filter.date_before &&
-          USAGE_FILTERS[_].date_after == filter.date_after,
-      ),
+    dayLabels,
+    currentFilter: () => currentRange,
   };
 }

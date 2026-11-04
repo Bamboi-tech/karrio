@@ -44,6 +44,39 @@ export const GET_SYSTEM_USAGE = gql`
   }
 `;
 
+// The dashboard home shows four cards; it selects only their series so the
+// API computes (and caches) nothing else.
+export const GET_DASHBOARD_USAGE = gql`
+  query GetDashboardUsage($filter: UsageFilter) {
+    system_usage(filter: $filter) {
+      order_volume
+      total_trackers
+      total_shipments
+      total_shipping_spend
+      order_volumes {
+        label
+        count
+        date
+      }
+      shipment_count {
+        label
+        count
+        date
+      }
+      tracker_count {
+        label
+        count
+        date
+      }
+      shipping_spend {
+        label
+        count
+        date
+      }
+    }
+  }
+`;
+
 export const GET_ADDRESSES = gql`
   query get_addresses($filter: AddressFilter) {
     addresses(filter: $filter) {

@@ -1,3 +1,4 @@
+import { Asterisk } from "lucide-react";
 import { NotificationType, EVENT_TYPES, WebhookType } from "@karrio/types";
 import React, { useContext, useReducer, useState } from "react";
 import { TextAreaField } from "../components/textarea-field";
@@ -147,7 +148,7 @@ export const WebhookEditModal = ({
               >
                 <span>Events</span>
                 <span className="icon is-small has-text-danger small-icon">
-                  <i className="fas fa-asterisk"></i>
+                  <Asterisk className="h-2.5 w-2.5" />
                 </span>
               </label>
 

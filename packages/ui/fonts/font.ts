@@ -5,8 +5,13 @@ import {
   Noto_Sans,
   Ubuntu,
   Oxygen,
-  Open_Sans,
 } from "next/font/google";
+
+// Fonts of the public web app and the console (apps/web, ee/packages/console).
+// The dashboard must not import this module: next/font preloads every font
+// instantiated in a module in the page's import graph, which used to cost the
+// dashboard ten preloaded woff2 files it never applied. Its font lives in
+// ./open-sans.ts.
 
 export const inter = Inter({
   subsets: ["latin"],
@@ -45,15 +50,4 @@ export const jetbrains = JetBrains_Mono({
   subsets: ["latin"],
   display: "swap",
   variable: "--font-jetbrains",
-});
-
-// Brand font of the dashboard (Bulma `$family-sans-serif` in theme.scss reads
-// `var(--font-open-sans)`); replaces the render-blocking Google Fonts
-// `@import` that used to sit inside the bundled CSS.
-export const openSans = Open_Sans({
-  subsets: ["latin"],
-  weight: ["300", "400", "600", "700"],
-  style: ["normal"],
-  display: "swap",
-  variable: "--font-open-sans",
 });

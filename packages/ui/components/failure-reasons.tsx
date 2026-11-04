@@ -1,4 +1,5 @@
 "use client";
+import { Circle } from "lucide-react";
 
 import * as React from "react";
 import { cn } from "@karrio/ui/lib/utils";
@@ -32,9 +33,16 @@ function extractReasons(
   const reasons: FailureReason[] = [];
 
   // Extract API-level errors from response
-  const parsed = typeof response === "string"
-    ? (() => { try { return JSON.parse(response); } catch { return response; } })()
-    : response;
+  const parsed =
+    typeof response === "string"
+      ? (() => {
+          try {
+            return JSON.parse(response);
+          } catch {
+            return response;
+          }
+        })()
+      : response;
 
   if (parsed && typeof parsed === "object") {
     // Handle errors array
@@ -55,14 +63,14 @@ function extractReasons(
     });
 
     // Handle single error message
-    if (reasons.length === 0 && (parsed.error || parsed.message || parsed.detail)) {
+    if (
+      reasons.length === 0 &&
+      (parsed.error || parsed.message || parsed.detail)
+    ) {
       reasons.push({
         id: "api-error-single",
-        message: toDisplayText(
-          parsed.error || parsed.message || parsed.detail,
-        ),
-        code:
-          toDisplayText(parsed.code) || String(parsed.status_code || ""),
+        message: toDisplayText(parsed.error || parsed.message || parsed.detail),
+        code: toDisplayText(parsed.code) || String(parsed.status_code || ""),
         carrier: null,
         timestamp: requestedAt,
       });
@@ -74,9 +82,16 @@ function extractReasons(
     if (!record) return;
 
     const meta = record.meta || {};
-    const rec = typeof record.record === "string"
-      ? (() => { try { return JSON.parse(record.record); } catch { return record.record; } })()
-      : record.record;
+    const rec =
+      typeof record.record === "string"
+        ? (() => {
+            try {
+              return JSON.parse(record.record);
+            } catch {
+              return record.record;
+            }
+          })()
+        : record.record;
 
     if (!rec) return;
 
@@ -84,9 +99,16 @@ function extractReasons(
     const errorData = rec.error || rec.response;
     if (!errorData) return;
 
-    const parsedError = typeof errorData === "string"
-      ? (() => { try { return JSON.parse(errorData); } catch { return errorData; } })()
-      : errorData;
+    const parsedError =
+      typeof errorData === "string"
+        ? (() => {
+            try {
+              return JSON.parse(errorData);
+            } catch {
+              return errorData;
+            }
+          })()
+        : errorData;
 
     if (typeof parsedError === "string") {
       reasons.push({
@@ -94,9 +116,8 @@ function extractReasons(
         message: parsedError,
         code: null,
         carrier:
-          toDisplayText(
-            meta.connection?.carrier_name || meta.carrier_name,
-          ) || null,
+          toDisplayText(meta.connection?.carrier_name || meta.carrier_name) ||
+          null,
         timestamp: record.timestamp
           ? new Date(record.timestamp * 1000).toISOString()
           : null,
@@ -123,7 +144,11 @@ function extractReasons(
               : null,
           });
         });
-      } else if (parsedError.error || parsedError.message || parsedError.detail) {
+      } else if (
+        parsedError.error ||
+        parsedError.message ||
+        parsedError.detail
+      ) {
         reasons.push({
           id: `trace-error-${i}`,
           message: toDisplayText(
@@ -131,9 +156,8 @@ function extractReasons(
           ),
           code: toDisplayText(parsedError.code) || null,
           carrier:
-            toDisplayText(
-              meta.connection?.carrier_name || meta.carrier_name,
-            ) || null,
+            toDisplayText(meta.connection?.carrier_name || meta.carrier_name) ||
+            null,
           timestamp: record.timestamp
             ? new Date(record.timestamp * 1000).toISOString()
             : null,
@@ -169,7 +193,7 @@ export const FailureReasons: React.FC<FailureReasonsProps> = ({
               <div className="flex items-start gap-3">
                 {/* Error Icon */}
                 <div className="flex-shrink-0">
-                  <i className="fas fa-circle text-red-500 text-xs" />
+                  <Circle className="h-3 w-3 text-red-500" />
                 </div>
 
                 {/* Error Content */}

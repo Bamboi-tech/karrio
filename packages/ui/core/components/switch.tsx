@@ -1,3 +1,4 @@
+import { ToggleLeft, ToggleRight } from "lucide-react";
 import { Switch as ShadcnSwitch } from "@karrio/ui/components/ui/switch";
 import React from "react";
 
@@ -28,9 +29,11 @@ export const Switch = ({
       <span
         className={`icon ${checked ? "has-text-success" : "has-text-grey"} ${iconClassName || "is-medium"}`}
       >
-        <i
-          className={`fas fa-${checked ? "toggle-on" : "toggle-off"} fa-lg`}
-        ></i>
+        {checked ? (
+          <ToggleRight className="h-5 w-5" />
+        ) : (
+          <ToggleLeft className="h-5 w-5" />
+        )}
       </span>
     </div>
   );

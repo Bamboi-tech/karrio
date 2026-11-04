@@ -1,3 +1,4 @@
+import { Asterisk, Pencil, Unlink } from "lucide-react";
 import {
   CurrencyCodeEnum,
   DEFAULT_COMMODITY_CONTENT,
@@ -10,7 +11,12 @@ import {
   MetadataEditorContext,
 } from "../forms/metadata-editor";
 import { isEqual, isNone, validationMessage, validityCheck } from "@karrio/lib";
-import { CommodityType, CustomsCommodityType, CURRENCY_OPTIONS, WEIGHT_UNITS } from "@karrio/types";
+import {
+  CommodityType,
+  CustomsCommodityType,
+  CURRENCY_OPTIONS,
+  WEIGHT_UNITS,
+} from "@karrio/types";
 import React, { useContext, useReducer, useState } from "react";
 import { TextAreaField } from "../components/textarea-field";
 import { useAPIMetadata } from "@karrio/hooks/api-metadata";
@@ -189,7 +195,7 @@ export const CommodityEditModalProvider = ({
                           }}
                         >
                           <span className="icon is-small">
-                            <i className="fas fa-unlink"></i>
+                            <Unlink className="h-4 w-4" />
                           </span>
                         </button>
                       </div>
@@ -280,10 +286,7 @@ export const CommodityEditModalProvider = ({
                       >
                         Weight
                         <span className="icon is-small has-text-danger small-icon">
-                          <i
-                            className="fas fa-asterisk"
-                            style={{ fontSize: ".7em" }}
-                          ></i>
+                          <Asterisk className="h-2.5 w-2.5" />
                         </span>
                       </label>
                       <div className="field has-addons">
@@ -406,7 +409,7 @@ export const CommodityEditModalProvider = ({
                               onClick={() => editMetadata()}
                             >
                               <span className="icon is-small">
-                                <i className="fas fa-pen"></i>
+                                <Pencil className="h-4 w-4" />
                               </span>
                               <span>Edit metadata</span>
                             </button>

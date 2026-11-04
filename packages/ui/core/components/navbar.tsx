@@ -1,4 +1,5 @@
 "use client";
+import { LoaderCircle, Search, X } from "lucide-react";
 import { useAPIMetadata } from "@karrio/hooks/api-metadata";
 import { ShortcutDropdown } from "./shortcut-dropdown";
 import { AccountDropdown } from "./account-dropdown";
@@ -8,10 +9,12 @@ import React, { Suspense } from "react";
 
 // Lazy load the AppLauncher component
 const AppLauncher = React.lazy(() =>
-  import("@karrio/app-store").then(module => ({ default: module.AppLauncher }))
+  import("@karrio/app-store").then((module) => ({
+    default: module.AppLauncher,
+  })),
 );
 
-export const Navbar = ({ }): JSX.Element => {
+export const Navbar = ({}): JSX.Element => {
   const { metadata } = useAPIMetadata();
   const openSidebar = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -38,19 +41,21 @@ export const Navbar = ({ }): JSX.Element => {
         </div>
         <div className="nav-end">
           <div className="nav-item mobile-item is-flex mobile-search-trigger">
-            <i className="fas fa-search"></i>
+            <Search className="h-4 w-4" />
           </div>
 
           {metadata?.APPS_MANAGEMENT && (
-            <Suspense fallback={
-              <div className="nav-item is-flex">
-                <button className="button is-white is-small" disabled>
-                  <span className="icon is-small">
-                    <i className="fas fa-spinner fa-spin"></i>
-                  </span>
-                </button>
-              </div>
-            }>
+            <Suspense
+              fallback={
+                <div className="nav-item is-flex">
+                  <button className="button is-white is-small" disabled>
+                    <span className="icon is-small">
+                      <LoaderCircle className="h-4 w-4 animate-spin" />
+                    </span>
+                  </button>
+                </div>
+              }
+            >
               <AppLauncher />
             </Suspense>
           )}
@@ -69,10 +74,10 @@ export const Navbar = ({ }): JSX.Element => {
                 placeholder="Search for shipments..."
               />
               <div className="form-icon">
-                <i className="fas fa-search"></i>
+                <Search className="h-4 w-4" />
               </div>
               <div className="form-icon right-icon mobile-search-trigger">
-                <i className="fas fa-clear"></i>
+                <X className="h-4 w-4" />
               </div>
               <div className="search-results has-slimscroll"></div>
             </div>

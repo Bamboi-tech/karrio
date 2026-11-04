@@ -15,6 +15,8 @@ type APIMeta = {
 };
 const APIMetadata = React.createContext<APIMeta>({} as any);
 
+const REDUCED_REFERENCE_PATHS = ["/", "/test"];
+
 function APIMetadataProvider({
   children,
   metadata,
@@ -33,7 +35,12 @@ function APIMetadataProvider({
   const metadataHost = metadata?.HOST;
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const reduced = pathname === "/shipments" && !searchParams?.get("modal");
+  // Screens that only need carrier names and metadata get the reduced
+  // reference set (~1/6 of the full one): the shipment list and the home.
+  // Detail and configuration screens load the full option catalogue.
+  const reduced =
+    (REDUCED_REFERENCE_PATHS.includes(pathname) || pathname === "/shipments") &&
+    !searchParams?.get("modal");
 
   const getHost = useCallback(() => {
     const host = (

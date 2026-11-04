@@ -1,10 +1,10 @@
+import { Asterisk } from "lucide-react";
 import React from "react";
 import { Textarea } from "@karrio/ui/components/ui/textarea";
 import { Label } from "@karrio/ui/components/ui/label";
 import { cn } from "@karrio/ui/lib/utils";
 
-export interface TextareaFieldComponent
-  extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
+export interface TextareaFieldComponent extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
   label?: string;
   fieldClass?: string;
   controlClass?: string;
@@ -12,18 +12,24 @@ export interface TextareaFieldComponent
   labelBold?: boolean;
 }
 
-export const TextareaField = React.forwardRef<HTMLTextAreaElement, TextareaFieldComponent>(
-  ({
-    label,
-    required,
-    className,
-    fieldClass,
-    controlClass,
-    wrapperClass,
-    children,
-    labelBold = false,
-    ...props
-  }, ref) => {
+export const TextareaField = React.forwardRef<
+  HTMLTextAreaElement,
+  TextareaFieldComponent
+>(
+  (
+    {
+      label,
+      required,
+      className,
+      fieldClass,
+      controlClass,
+      wrapperClass,
+      children,
+      labelBold = false,
+      ...props
+    },
+    ref,
+  ) => {
     const Props = {
       required,
       ...props,
@@ -35,14 +41,17 @@ export const TextareaField = React.forwardRef<HTMLTextAreaElement, TextareaField
     return (
       <div className={cn("px-1 py-2", wrapperClass)}>
         {label !== undefined && (
-          <Label 
-            className={cn("capitalize text-xs mb-1 block", labelBold ? "font-bold" : "font-normal")}
+          <Label
+            className={cn(
+              "capitalize text-xs mb-1 block",
+              labelBold ? "font-bold" : "font-normal",
+            )}
             style={{ fontSize: ".8em" }}
           >
             {label}
             {required && (
               <span className="ml-1 text-red-500 text-xs">
-                <i className="fas fa-asterisk" style={{ fontSize: ".7em" }}></i>
+                <Asterisk className="h-2.5 w-2.5" />
               </span>
             )}
           </Label>
@@ -60,7 +69,7 @@ export const TextareaField = React.forwardRef<HTMLTextAreaElement, TextareaField
         </div>
       </div>
     );
-  }
+  },
 );
 
 TextareaField.displayName = "TextareaField";

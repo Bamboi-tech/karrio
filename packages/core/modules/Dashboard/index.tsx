@@ -1,16 +1,16 @@
 "use client";
 
 import React from "react";
-import dynamic from "next/dynamic";
 import { Card, CardContent } from "@karrio/ui/components/ui/card";
+import { UsageSparkline } from "@karrio/ui/components/usage-sparkline";
+import { UsagePrefetch } from "@karrio/types";
 import { AppLink } from "@karrio/ui/core/components/app-link";
 import { Button } from "@karrio/ui/components/ui/button";
 import { useAppMode } from "@karrio/hooks/app-mode";
 import { useAPIUsage } from "@karrio/hooks/usage";
 import { useUser } from "@karrio/hooks/user";
 import { useRouter } from "next/navigation";
-import { p } from "@karrio/lib";
-import moment from "moment";
+import { p, usageDayLabel } from "@karrio/lib";
 import {
   Package,
   MapPin,
@@ -31,13 +31,11 @@ import {
   SelectValue,
 } from "@karrio/ui/components/ui/select";
 
-// recharts is only fetched when a chart is rendered (see ./charts.tsx).
-const DashboardBarChart = dynamic(
-  () => import("./charts").then((m) => m.DashboardBarChart),
-  { ssr: false, loading: () => null },
-);
-
-export default function DashboardPage() {
+export default function DashboardPage({
+  initialUsage,
+}: {
+  initialUsage?: UsagePrefetch | null;
+}) {
   const router = useRouter();
   const { basePath } = useAppMode();
   const {
@@ -46,11 +44,10 @@ export default function DashboardPage() {
   const {
     query: { data: { usage } = {}, isLoading: usageLoading, error: usageError },
     setFilter,
-    filter,
     USAGE_FILTERS,
-    DAYS_LIST,
+    dayLabels,
     currentFilter,
-  } = useAPIUsage();
+  } = useAPIUsage({ initialUsage, series: "dashboard" });
 
   // Don't render until user is loaded
   if (userLoading) {
@@ -170,18 +167,13 @@ export default function DashboardPage() {
   const renderChart = (data: any[] | null | undefined, dataKey: string = "count") => {
     if (!data || data.length === 0) return null;
 
-    const chartData = DAYS_LIST[currentFilter() || "15 days"].map(
-      (day) => ({
-        name: day,
-        [dataKey]: data.find(
-          ({ date }) => moment(date).format("MMM D") === day,
-        )?.[dataKey] || 0,
-      }),
-    );
+    const chartData = dayLabels.map((day) => ({
+      label: day,
+      value:
+        data.find(({ date }) => usageDayLabel(date) === day)?.[dataKey] || 0,
+    }));
 
-    return (
-      <DashboardBarChart data={chartData} dataKey={dataKey} />
-    );
+    return <UsageSparkline data={chartData} />;
   };
 
   return (
@@ -204,16 +196,16 @@ export default function DashboardPage() {
           </div>
           <div className="w-full sm:w-48 sm:ml-auto">
             <Select
-              value={JSON.stringify(filter)}
-              onValueChange={(value) => setFilter(JSON.parse(value))}
+              value={currentFilter()}
+              onValueChange={(range) => setFilter(USAGE_FILTERS[range])}
               disabled={usageLoading}
             >
               <SelectTrigger className="w-full text-right border-gray-300 focus:border-blue-500">
                 <SelectValue placeholder="Select time range" />
               </SelectTrigger>
               <SelectContent align="end">
-                {Object.entries(USAGE_FILTERS).map(([key, value]) => (
-                  <SelectItem key={key} value={JSON.stringify(value)}>
+                {Object.keys(USAGE_FILTERS).map((key) => (
+                  <SelectItem key={key} value={key}>
                     {key}
                   </SelectItem>
                 ))}

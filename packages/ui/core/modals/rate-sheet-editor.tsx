@@ -1,3 +1,4 @@
+import { X } from "lucide-react";
 import {
   CreateRateSheetMutationInput,
   CurrencyCodeEnum,
@@ -106,7 +107,9 @@ export const RateSheetModalEditor = ({
       defaultValue: { services?: ServiceLevelType[] } | ServiceLevelType[],
     ): CurrencyCodeEnum => {
       // Handle both new format (object with services) and legacy format (array)
-      const services = Array.isArray(defaultValue) ? defaultValue : (defaultValue?.services || []);
+      const services = Array.isArray(defaultValue)
+        ? defaultValue
+        : defaultValue?.services || [];
       const svc = services.find((svc) => !isNone(svc.currency));
       return (svc?.currency || CurrencyCodeEnum.USD) as CurrencyCodeEnum;
     };
@@ -173,7 +176,7 @@ export const RateSheetModalEditor = ({
                   onClick={close}
                 >
                   <span className="icon is-large">
-                    <i className="fas fa-lg fa-times"></i>
+                    <X className="h-5 w-5" />
                   </span>
                 </button>
                 <span className="title is-6 has-text-weight-semibold px-2 py-3">

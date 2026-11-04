@@ -1,12 +1,28 @@
 "use client";
 import {
+  ArrowDown,
+  Check,
+  CircleCheck,
+  Copy,
+  Pencil,
+  Play,
+  Plus,
+  Trash2,
+  TriangleAlert,
+  X,
+} from "lucide-react";
+import {
   ActionNodeInput,
   AutomationActionType,
   AutomationAuthType,
   AutomationEventStatus,
   AutomationTriggerType,
 } from "@karrio/types/graphql/ee";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@karrio/ui/components/ui/collapsible";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@karrio/ui/components/ui/collapsible";
 import { ConnectionModalEditor } from "@karrio/ui/core/modals/workflow-connection-edit-modal";
 import { ActionModalEditor } from "@karrio/ui/core/modals/workflow-action-edit-modal";
 import { TextAreaField } from "@karrio/ui/core/components/textarea-field";
@@ -43,7 +59,7 @@ export default function Page({ params }: { params: Promise<{ id: string }> }) {
     const [id, setId] = React.useState<string>();
 
     React.useEffect(() => {
-      params.then(query => {
+      params.then((query) => {
         setId(query.id);
       });
     }, []);
@@ -86,17 +102,14 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
   const NextIndicator = () => (
     <div className="is-flex is-justify-content-space-around p-2 my-3">
       <span className="icon is-size-6">
-        <i className="fas fa-lg fa-arrow-down"></i>
+        <ArrowDown className="h-5 w-5" />
       </span>
     </div>
   );
 
   return (
     <ContextProviders>
-      <TabStateProvider
-        tabs={["Editor", "Executions"]}
-        setSelectedToURL={true}
-      >
+      <TabStateProvider tabs={["Editor", "Executions"]} setSelectedToURL={true}>
         <div className="p-4">
           <header
             className="columns has-background-white"
@@ -116,7 +129,7 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
                 style={{ borderRadius: "50%" }}
               >
                 <span className="icon is-large">
-                  <i className="fas fa-lg fa-times"></i>
+                  <X className="h-5 w-5" />
                 </span>
               </AppLink>
               <span className="title is-6 has-text-weight-semibold px-2 py-3">
@@ -248,7 +261,9 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
                                   label="Schedule (cron)"
                                   wrapperClass="px-1 py-2"
                                   fieldClass="column mb-0 p-0"
-                                  defaultValue={workflow.trigger?.schedule || ""}
+                                  defaultValue={
+                                    workflow.trigger?.schedule || ""
+                                  }
                                   required={
                                     workflow.trigger?.trigger_type ==
                                     AutomationTriggerType.scheduled
@@ -326,7 +341,7 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
                               }
                               iconRight={
                                 <span className="icon is-small is-right">
-                                  <i className="fas fa-copy"></i>
+                                  <Copy className="h-4 w-4" />
                                 </span>
                               }
                               readOnly
@@ -372,7 +387,7 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
                                           className="button is-white"
                                         >
                                           <span className="icon">
-                                            <i className="fas fa-pen"></i>
+                                            <Pencil className="h-4 w-4" />
                                           </span>
                                         </button>
                                       }
@@ -389,7 +404,7 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
                                           disabled={index == 0}
                                         >
                                           <span className="icon">
-                                            <i className="fas fa-trash"></i>
+                                            <Trash2 className="h-4 w-4" />
                                           </span>
                                         </button>
                                       }
@@ -398,7 +413,10 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
                                 </div>
                               </CollapsibleTrigger>
                               <CollapsibleContent>
-                                <hr className="my-1" style={{ height: "1px" }} />
+                                <hr
+                                  className="my-1"
+                                  style={{ height: "1px" }}
+                                />
 
                                 <TabStateProvider
                                   tabs={[
@@ -445,212 +463,218 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
                                       {(debug_event?.records || []).filter(
                                         (_) =>
                                           _.meta.workflow_action_slug ===
-                                          action.slug &&
+                                            action.slug &&
                                           _.key === "action-input",
                                       ).length == 0 && (
-                                          <div className="notification is-default p-2 is-size-6">
-                                            No input data sample...
-                                          </div>
-                                        )}
+                                        <div className="notification is-default p-2 is-size-6">
+                                          No input data sample...
+                                        </div>
+                                      )}
 
                                       {(debug_event?.records || []).length >
                                         0 && (
-                                          <>
-                                            {debug_event!.records
-                                              .filter(
-                                                (_) =>
-                                                  _.meta.workflow_action_slug ===
+                                        <>
+                                          {debug_event!.records
+                                            .filter(
+                                              (_) =>
+                                                _.meta.workflow_action_slug ===
                                                   action.slug &&
-                                                  _.key === "action-input",
-                                              )
-                                              .map((trace) => {
-                                                return (
-                                                  <div
-                                                    className="card is-radiusless"
-                                                    key={trace.id}
-                                                  >
-                                                    {/* @ts-ignore */}
-                                                    <CodeMirror
-                                                      height="297px"
-                                                      extensions={[jsonLanguage]}
-                                                      value={
-                                                        parseWorkflowEventRecordData(
-                                                          trace.record.output ||
+                                                _.key === "action-input",
+                                            )
+                                            .map((trace) => {
+                                              return (
+                                                <div
+                                                  className="card is-radiusless"
+                                                  key={trace.id}
+                                                >
+                                                  {/* @ts-ignore */}
+                                                  <CodeMirror
+                                                    height="297px"
+                                                    extensions={[jsonLanguage]}
+                                                    value={
+                                                      parseWorkflowEventRecordData(
+                                                        trace.record.output ||
                                                           trace.record,
-                                                        ) || ("{}" as string)
-                                                      }
-                                                      readOnly={true}
-                                                    />
-                                                  </div>
-                                                );
-                                              })}
-                                          </>
-                                        )}
+                                                      ) || ("{}" as string)
+                                                    }
+                                                    readOnly={true}
+                                                  />
+                                                </div>
+                                              );
+                                            })}
+                                        </>
+                                      )}
                                     </div>
 
                                     <div>
                                       {(debug_event?.records || []).filter(
                                         (_) =>
                                           _.meta.workflow_action_slug ===
-                                          action.slug &&
+                                            action.slug &&
                                           _.key === "action-output",
                                       ).length == 0 && (
-                                          <div className="notification is-default p-2 is-size-6">
-                                            No output data sample...
-                                          </div>
-                                        )}
+                                        <div className="notification is-default p-2 is-size-6">
+                                          No output data sample...
+                                        </div>
+                                      )}
 
                                       {(debug_event?.records || []).length >
                                         0 && (
-                                          <>
-                                            {debug_event!.records
-                                              .filter(
-                                                (_) =>
-                                                  _.meta.workflow_action_slug ===
+                                        <>
+                                          {debug_event!.records
+                                            .filter(
+                                              (_) =>
+                                                _.meta.workflow_action_slug ===
                                                   action.slug &&
-                                                  _.key === "action-output",
-                                              )
-                                              .map((trace) => {
-                                                return (
-                                                  <div
-                                                    className="card is-radiusless"
-                                                    key={trace.id}
-                                                  >
-                                                    {/* @ts-ignore */}
-                                                    <CodeMirror
-                                                      height="297px"
-                                                      extensions={[jsonLanguage]}
-                                                      value={
-                                                        parseWorkflowEventRecordData(
-                                                          trace.record.output ||
+                                                _.key === "action-output",
+                                            )
+                                            .map((trace) => {
+                                              return (
+                                                <div
+                                                  className="card is-radiusless"
+                                                  key={trace.id}
+                                                >
+                                                  {/* @ts-ignore */}
+                                                  <CodeMirror
+                                                    height="297px"
+                                                    extensions={[jsonLanguage]}
+                                                    value={
+                                                      parseWorkflowEventRecordData(
+                                                        trace.record.output ||
                                                           trace.record,
-                                                        ) || ("{}" as string)
-                                                      }
-                                                      readOnly={true}
-                                                    />
-                                                  </div>
-                                                );
-                                              })}
-                                          </>
-                                        )}
+                                                      ) || ("{}" as string)
+                                                    }
+                                                    readOnly={true}
+                                                  />
+                                                </div>
+                                              );
+                                            })}
+                                        </>
+                                      )}
                                     </div>
 
                                     <div>
                                       {(debug_event?.records || []).length ==
                                         0 && (
-                                          <div className="notification is-default p-2 is-size-6">
-                                            No tracing records...
-                                          </div>
-                                        )}
+                                        <div className="notification is-default p-2 is-size-6">
+                                          No tracing records...
+                                        </div>
+                                      )}
 
                                       {(debug_event?.records || []).length >
                                         0 && (
-                                          <>
-                                            {debug_event!.records
-                                              .filter(
-                                                (_) =>
-                                                  _.meta.workflow_action_id ==
-                                                  action.id,
-                                              )
-                                              .map((trace) => {
-                                                return (
-                                                  <div
-                                                    className={"card m-4"}
-                                                    key={trace.id}
-                                                  >
-                                                    <div className="p-3 is-size-7 has-text-weight-semibold has-text-grey">
+                                        <>
+                                          {debug_event!.records
+                                            .filter(
+                                              (_) =>
+                                                _.meta.workflow_action_id ==
+                                                action.id,
+                                            )
+                                            .map((trace) => {
+                                              return (
+                                                <div
+                                                  className={"card m-4"}
+                                                  key={trace.id}
+                                                >
+                                                  <div className="p-3 is-size-7 has-text-weight-semibold has-text-grey">
+                                                    <p className="my-1">
+                                                      <span>
+                                                        Record type:{" "}
+                                                        <strong>
+                                                          {trace.key}
+                                                        </strong>
+                                                      </span>
+                                                    </p>
+                                                    {!!trace.record.url && (
                                                       <p className="my-1">
                                                         <span>
-                                                          Record type:{" "}
+                                                          URL:{" "}
                                                           <strong>
-                                                            {trace.key}
+                                                            {trace.record.url}
                                                           </strong>
                                                         </span>
                                                       </p>
-                                                      {!!trace.record.url && (
-                                                        <p className="my-1">
-                                                          <span>
-                                                            URL:{" "}
-                                                            <strong>
-                                                              {trace.record.url}
-                                                            </strong>
-                                                          </span>
-                                                        </p>
-                                                      )}
-                                                      {!!trace.record
-                                                        .request_id && (
-                                                          <p className="my-1">
-                                                            <span>
-                                                              Request id:{" "}
-                                                              <strong>
-                                                                {
-                                                                  trace.record
-                                                                    .request_id
-                                                                }
-                                                              </strong>
-                                                            </span>
-                                                          </p>
-                                                        )}
-                                                      {trace?.timestamp && (
-                                                        <p className="my-1">
-                                                          <span>
-                                                            Request timestamp:{" "}
-                                                            <strong>
-                                                              {moment(
-                                                                trace.timestamp *
+                                                    )}
+                                                    {!!trace.record
+                                                      .request_id && (
+                                                      <p className="my-1">
+                                                        <span>
+                                                          Request id:{" "}
+                                                          <strong>
+                                                            {
+                                                              trace.record
+                                                                .request_id
+                                                            }
+                                                          </strong>
+                                                        </span>
+                                                      </p>
+                                                    )}
+                                                    {trace?.timestamp && (
+                                                      <p className="my-1">
+                                                        <span>
+                                                          Request timestamp:{" "}
+                                                          <strong>
+                                                            {moment(
+                                                              trace.timestamp *
                                                                 1000,
-                                                              ).format("LTS")}
-                                                            </strong>
-                                                          </span>
-                                                        </p>
-                                                      )}
-                                                      {!!trace.record.status && (
-                                                        <p className="my-1">
-                                                          <span>
-                                                            Step status:{" "}
-                                                            <strong>
-                                                              {trace.record.status}
-                                                            </strong>
-                                                          </span>
-                                                        </p>
-                                                      )}
-                                                    </div>
+                                                            ).format("LTS")}
+                                                          </strong>
+                                                        </span>
+                                                      </p>
+                                                    )}
+                                                    {!!trace.record.status && (
+                                                      <p className="my-1">
+                                                        <span>
+                                                          Step status:{" "}
+                                                          <strong>
+                                                            {
+                                                              trace.record
+                                                                .status
+                                                            }
+                                                          </strong>
+                                                        </span>
+                                                      </p>
+                                                    )}
+                                                  </div>
 
-                                                    <div className="p-0 is-relative">
-                                                      <CopiableLink
-                                                        text="COPY"
-                                                        value={
-                                                          trace.record ||
-                                                          trace.record?.url ||
-                                                          ""
-                                                        }
+                                                  <div className="p-0 is-relative">
+                                                    <CopiableLink
+                                                      text="COPY"
+                                                      value={
+                                                        trace.record ||
+                                                        trace.record?.url ||
+                                                        ""
+                                                      }
+                                                      style={{
+                                                        position: "absolute",
+                                                        right: 4,
+                                                      }}
+                                                      className="button is-primary is-small m-1"
+                                                    />
+                                                    <pre
+                                                      className="code p-1"
+                                                      style={{
+                                                        overflow: "auto",
+                                                        minHeight: "40px",
+                                                        maxHeight: "30vh",
+                                                      }}
+                                                    >
+                                                      <code
                                                         style={{
-                                                          position: "absolute",
-                                                          right: 4,
+                                                          whiteSpace:
+                                                            "pre-wrap",
                                                         }}
-                                                        className="button is-primary is-small m-1"
-                                                      />
-                                                      <pre
-                                                        className="code p-1"
-                                                        style={{
-                                                          overflow: "auto",
-                                                          minHeight: "40px",
-                                                          maxHeight: "30vh",
-                                                        }}
-                                                      >
-                                                        <code
-                                                          style={{
-                                                            whiteSpace: "pre-wrap",
-                                                          }}
-                                                          dangerouslySetInnerHTML={{
-                                                            __html: hljs.highlight(
+                                                        dangerouslySetInnerHTML={{
+                                                          __html:
+                                                            hljs.highlight(
                                                               parseWorkflowEventRecordData(
                                                                 trace.record
                                                                   .output ||
-                                                                trace.record,
+                                                                  trace.record,
                                                               ) ||
-                                                              trace.record.url ||
-                                                              "",
+                                                                trace.record
+                                                                  .url ||
+                                                                "",
                                                               {
                                                                 language:
                                                                   trace.record
@@ -658,15 +682,15 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
                                                                   "json",
                                                               },
                                                             ).value,
-                                                          }}
-                                                        />
-                                                      </pre>
-                                                    </div>
+                                                        }}
+                                                      />
+                                                    </pre>
                                                   </div>
-                                                );
-                                              })}
-                                          </>
-                                        )}
+                                                </div>
+                                              );
+                                            })}
+                                        </>
+                                      )}
                                     </div>
 
                                     <div>
@@ -700,106 +724,112 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
                                         {/* data mapping options */}
                                         {action.action_type ==
                                           AutomationActionType.data_mapping && (
-                                            <>
-                                              {/* action parameters type */}
-                                              <div className="columns my-0 px-3">
-                                                <div className="column is-4 py-1">
-                                                  <span className="has-text-weight-bold has-text-grey">
-                                                    format
-                                                  </span>
-                                                </div>
-                                                <div className="column is-8 py-1">
-                                                  <code>{action.content_type}</code>
-                                                </div>
+                                          <>
+                                            {/* action parameters type */}
+                                            <div className="columns my-0 px-3">
+                                              <div className="column is-4 py-1">
+                                                <span className="has-text-weight-bold has-text-grey">
+                                                  format
+                                                </span>
                                               </div>
-                                            </>
-                                          )}
+                                              <div className="column is-8 py-1">
+                                                <code>
+                                                  {action.content_type}
+                                                </code>
+                                              </div>
+                                            </div>
+                                          </>
+                                        )}
 
                                         {/* http request options */}
                                         {action.action_type ==
                                           AutomationActionType.http_request && (
-                                            <>
-                                              {/* action method */}
+                                          <>
+                                            {/* action method */}
+                                            <div className="columns my-0 px-3">
+                                              <div className="column is-4 py-1">
+                                                <span className="has-text-weight-bold has-text-grey">
+                                                  Method
+                                                </span>
+                                              </div>
+                                              <div className="column is-8 py-1">
+                                                <code>
+                                                  {action.method?.toLocaleUpperCase()}
+                                                </code>
+                                              </div>
+                                            </div>
+
+                                            {/* action host */}
+                                            <div className="columns my-0 px-3">
+                                              <div className="column is-4 py-1">
+                                                <span className="has-text-weight-bold has-text-grey">
+                                                  Host
+                                                </span>
+                                              </div>
+                                              <div className="column is-8 py-1">
+                                                <code>{action.host}</code>
+                                              </div>
+                                            </div>
+
+                                            {/* host port */}
+                                            {!isNone(action.port) && (
                                               <div className="columns my-0 px-3">
                                                 <div className="column is-4 py-1">
                                                   <span className="has-text-weight-bold has-text-grey">
-                                                    Method
+                                                    Port
                                                   </span>
                                                 </div>
                                                 <div className="column is-8 py-1">
-                                                  <code>
-                                                    {action.method?.toLocaleUpperCase()}
-                                                  </code>
+                                                  <code>{action.port}</code>
                                                 </div>
                                               </div>
+                                            )}
 
-                                              {/* action host */}
+                                            {/* action endpoint */}
+                                            {!isNoneOrEmpty(
+                                              action.endpoint,
+                                            ) && (
                                               <div className="columns my-0 px-3">
                                                 <div className="column is-4 py-1">
                                                   <span className="has-text-weight-bold has-text-grey">
-                                                    Host
+                                                    Endpoint
                                                   </span>
                                                 </div>
                                                 <div className="column is-8 py-1">
-                                                  <code>{action.host}</code>
+                                                  <code>{action.endpoint}</code>
                                                 </div>
                                               </div>
+                                            )}
 
-                                              {/* host port */}
-                                              {!isNone(action.port) && (
-                                                <div className="columns my-0 px-3">
-                                                  <div className="column is-4 py-1">
-                                                    <span className="has-text-weight-bold has-text-grey">
-                                                      Port
-                                                    </span>
-                                                  </div>
-                                                  <div className="column is-8 py-1">
-                                                    <code>{action.port}</code>
-                                                  </div>
-                                                </div>
-                                              )}
-
-                                              {/* action endpoint */}
-                                              {!isNoneOrEmpty(action.endpoint) && (
-                                                <div className="columns my-0 px-3">
-                                                  <div className="column is-4 py-1">
-                                                    <span className="has-text-weight-bold has-text-grey">
-                                                      Endpoint
-                                                    </span>
-                                                  </div>
-                                                  <div className="column is-8 py-1">
-                                                    <code>{action.endpoint}</code>
-                                                  </div>
-                                                </div>
-                                              )}
-
-                                              {/* action content type */}
-                                              <div className="columns my-0 px-3">
-                                                <div className="column is-4 py-1">
-                                                  <span className="has-text-weight-bold has-text-grey">
-                                                    Content Type
-                                                  </span>
-                                                </div>
-                                                <div className="column is-8 py-1">
-                                                  <code>{action.content_type}</code>
-                                                </div>
+                                            {/* action content type */}
+                                            <div className="columns my-0 px-3">
+                                              <div className="column is-4 py-1">
+                                                <span className="has-text-weight-bold has-text-grey">
+                                                  Content Type
+                                                </span>
                                               </div>
-
-                                              {/* action parameters type */}
-                                              <div className="columns my-0 px-3">
-                                                <div className="column is-4 py-1">
-                                                  <span className="has-text-weight-bold has-text-grey">
-                                                    Parameters Type
-                                                  </span>
-                                                </div>
-                                                <div className="column is-8 py-1">
-                                                  <code>
-                                                    {action.parameters_type}
-                                                  </code>
-                                                </div>
+                                              <div className="column is-8 py-1">
+                                                <code>
+                                                  {action.content_type}
+                                                </code>
                                               </div>
-                                            </>
-                                          )}
+                                            </div>
+
+                                            {/* action parameters type */}
+                                            <div className="columns my-0 px-3">
+                                              <div className="column is-4 py-1">
+                                                <span className="has-text-weight-bold has-text-grey">
+                                                  Parameters Type
+                                                </span>
+                                              </div>
+                                              <div className="column is-8 py-1">
+                                                <code>
+                                                  {action.parameters_type}
+                                                </code>
+                                              </div>
+                                            </div>
+                                          </>
+                                        )}
                                       </div>
 
                                       <Collapsible
@@ -819,30 +849,49 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
                                                 <span className="has-text-weight-bold">
                                                   Connection
                                                 </span>
-                                                {action.connection && (action.connection as any).is_credentials_complete === false && (
-                                                  <span className="icon has-text-danger ml-2" title="Credentials incomplete">
-                                                    <i className="fas fa-exclamation-triangle"></i>
-                                                  </span>
-                                                )}
-                                                {action.connection && (action.connection as any).is_credentials_complete === true && (
-                                                  <span className="icon has-text-success ml-2" title="Credentials complete">
-                                                    <i className="fas fa-check-circle"></i>
-                                                  </span>
-                                                )}
+                                                {action.connection &&
+                                                  (action.connection as any)
+                                                    .is_credentials_complete ===
+                                                    false && (
+                                                    <span
+                                                      className="icon has-text-danger ml-2"
+                                                      title="Credentials incomplete"
+                                                    >
+                                                      <TriangleAlert className="h-4 w-4" />
+                                                    </span>
+                                                  )}
+                                                {action.connection &&
+                                                  (action.connection as any)
+                                                    .is_credentials_complete ===
+                                                    true && (
+                                                    <span
+                                                      className="icon has-text-success ml-2"
+                                                      title="Credentials complete"
+                                                    >
+                                                      <CircleCheck className="h-4 w-4" />
+                                                    </span>
+                                                  )}
                                               </div>
                                               <p className="is-size-7 has-text-weight-semibold has-text-grey my-1">
                                                 {action.connection?.name ||
                                                   "A connection for the action"}
-                                                {action.connection && (action.connection as any).is_credentials_complete === false && (
-                                                  <span className="has-text-danger ml-1">(Missing credentials)</span>
-                                                )}
+                                                {action.connection &&
+                                                  (action.connection as any)
+                                                    .is_credentials_complete ===
+                                                    false && (
+                                                    <span className="has-text-danger ml-1">
+                                                      (Missing credentials)
+                                                    </span>
+                                                  )}
                                               </p>
                                             </div>
                                             <div>
                                               <ConnectionModalEditor
                                                 connection={
                                                   action.connection ||
-                                                  ({ auth_type: "basic" } as any)
+                                                  ({
+                                                    auth_type: "basic",
+                                                  } as any)
                                                 }
                                                 onSubmit={mutation.updateActionConnection(
                                                   index,
@@ -854,9 +903,11 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
                                                     className="button is-white"
                                                   >
                                                     <span className="icon">
-                                                      <i
-                                                        className={`fas fa-${!!action.connection ? "pen" : "plus"}`}
-                                                      ></i>
+                                                      {!!action.connection ? (
+                                                        <Pencil className="h-4 w-4" />
+                                                      ) : (
+                                                        <Plus className="h-4 w-4" />
+                                                      )}
                                                     </span>
                                                   </button>
                                                 }
@@ -871,10 +922,12 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
                                                   <button
                                                     type="button"
                                                     className="button is-white"
-                                                    disabled={!action.connection}
+                                                    disabled={
+                                                      !action.connection
+                                                    }
                                                   >
                                                     <span className="icon">
-                                                      <i className="fas fa-trash"></i>
+                                                      <Trash2 className="h-4 w-4" />
                                                     </span>
                                                   </button>
                                                 }
@@ -909,7 +962,10 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
                                                 </div>
                                                 <div className="column is-8 py-1">
                                                   <code>
-                                                    {action.connection.auth_type}
+                                                    {
+                                                      action.connection
+                                                        .auth_type
+                                                    }
                                                   </code>
                                                 </div>
                                               </div>
@@ -917,22 +973,22 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
                                               {/* connection description */}
                                               {!!action.connection
                                                 .description && (
-                                                  <div className="columns my-0 px-3">
-                                                    <div className="column is-4 py-1">
-                                                      <span className="has-text-weight-bold has-text-grey">
-                                                        description
-                                                      </span>
-                                                    </div>
-                                                    <div className="column is-8 py-1">
-                                                      <code>
-                                                        {
-                                                          action.connection
-                                                            .description
-                                                        }
-                                                      </code>
-                                                    </div>
+                                                <div className="columns my-0 px-3">
+                                                  <div className="column is-4 py-1">
+                                                    <span className="has-text-weight-bold has-text-grey">
+                                                      description
+                                                    </span>
                                                   </div>
-                                                )}
+                                                  <div className="column is-8 py-1">
+                                                    <code>
+                                                      {
+                                                        action.connection
+                                                          .description
+                                                      }
+                                                    </code>
+                                                  </div>
+                                                </div>
+                                              )}
 
                                               {/* credentials status */}
                                               <div className="columns my-0 px-3">
@@ -942,14 +998,15 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
                                                   </span>
                                                 </div>
                                                 <div className="column is-8 py-1">
-                                                  {(action.connection as any).is_credentials_complete ? (
+                                                  {(action.connection as any)
+                                                    .is_credentials_complete ? (
                                                     <span className="tag is-success is-small">
-                                                      <i className="fas fa-check mr-1"></i>
+                                                      <Check className="h-4 w-4 mr-1" />
                                                       Complete
                                                     </span>
                                                   ) : (
                                                     <span className="tag is-danger is-small">
-                                                      <i className="fas fa-exclamation-triangle mr-1"></i>
+                                                      <TriangleAlert className="h-4 w-4 mr-1" />
                                                       Incomplete
                                                     </span>
                                                   )}
@@ -957,24 +1014,35 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
                                               </div>
 
                                               {/* required credentials */}
-                                              {(action.connection as any).required_credentials && (action.connection as any).required_credentials.length > 0 && (
-                                                <div className="columns my-0 px-3">
-                                                  <div className="column is-4 py-1">
-                                                    <span className="has-text-weight-bold has-text-grey">
-                                                      Required
-                                                    </span>
-                                                  </div>
-                                                  <div className="column is-8 py-1">
-                                                    <div className="tags">
-                                                      {(action.connection as any).required_credentials.map((cred: string) => (
-                                                        <span key={cred} className="tag is-light is-small">
-                                                          {cred}
-                                                        </span>
-                                                      ))}
+                                              {(action.connection as any)
+                                                .required_credentials &&
+                                                (action.connection as any)
+                                                  .required_credentials.length >
+                                                  0 && (
+                                                  <div className="columns my-0 px-3">
+                                                    <div className="column is-4 py-1">
+                                                      <span className="has-text-weight-bold has-text-grey">
+                                                        Required
+                                                      </span>
+                                                    </div>
+                                                    <div className="column is-8 py-1">
+                                                      <div className="tags">
+                                                        {(
+                                                          action.connection as any
+                                                        ).required_credentials.map(
+                                                          (cred: string) => (
+                                                            <span
+                                                              key={cred}
+                                                              className="tag is-light is-small"
+                                                            >
+                                                              {cred}
+                                                            </span>
+                                                          ),
+                                                        )}
+                                                      </div>
                                                     </div>
                                                   </div>
-                                                </div>
-                                              )}
+                                                )}
 
                                               {/* http request options */}
                                               {[
@@ -984,61 +1052,64 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
                                                 action.connection
                                                   .auth_type as any,
                                               ) && (
-                                                  <>
-                                                    {/* connection host */}
+                                                <>
+                                                  {/* connection host */}
+                                                  <div className="columns my-0 px-3">
+                                                    <div className="column is-4 py-1">
+                                                      <span className="has-text-weight-bold has-text-grey">
+                                                        Host
+                                                      </span>
+                                                    </div>
+                                                    <div className="column is-8 py-1">
+                                                      <code>
+                                                        {action.connection.host}
+                                                      </code>
+                                                    </div>
+                                                  </div>
+
+                                                  {/* host port */}
+                                                  {!isNone(
+                                                    action.connection.port,
+                                                  ) && (
                                                     <div className="columns my-0 px-3">
                                                       <div className="column is-4 py-1">
                                                         <span className="has-text-weight-bold has-text-grey">
-                                                          Host
+                                                          Port
                                                         </span>
                                                       </div>
                                                       <div className="column is-8 py-1">
                                                         <code>
-                                                          {action.connection.host}
+                                                          {
+                                                            action.connection
+                                                              .port
+                                                          }
                                                         </code>
                                                       </div>
                                                     </div>
+                                                  )}
 
-                                                    {/* host port */}
-                                                    {!isNone(
-                                                      action.connection.port,
-                                                    ) && (
-                                                        <div className="columns my-0 px-3">
-                                                          <div className="column is-4 py-1">
-                                                            <span className="has-text-weight-bold has-text-grey">
-                                                              Port
-                                                            </span>
-                                                          </div>
-                                                          <div className="column is-8 py-1">
-                                                            <code>
-                                                              {action.connection.port}
-                                                            </code>
-                                                          </div>
-                                                        </div>
-                                                      )}
-
-                                                    {/* endpoint */}
-                                                    {!isNoneOrEmpty(
-                                                      action.connection.endpoint,
-                                                    ) && (
-                                                        <div className="columns my-0 px-3">
-                                                          <div className="column is-4 py-1">
-                                                            <span className="has-text-weight-bold has-text-grey">
-                                                              Endpoint
-                                                            </span>
-                                                          </div>
-                                                          <div className="column is-8 py-1">
-                                                            <code>
-                                                              {
-                                                                action.connection
-                                                                  .endpoint
-                                                              }
-                                                            </code>
-                                                          </div>
-                                                        </div>
-                                                      )}
-                                                  </>
-                                                )}
+                                                  {/* endpoint */}
+                                                  {!isNoneOrEmpty(
+                                                    action.connection.endpoint,
+                                                  ) && (
+                                                    <div className="columns my-0 px-3">
+                                                      <div className="column is-4 py-1">
+                                                        <span className="has-text-weight-bold has-text-grey">
+                                                          Endpoint
+                                                        </span>
+                                                      </div>
+                                                      <div className="column is-8 py-1">
+                                                        <code>
+                                                          {
+                                                            action.connection
+                                                              .endpoint
+                                                          }
+                                                        </code>
+                                                      </div>
+                                                    </div>
+                                                  )}
+                                                </>
+                                              )}
 
                                               {/* connection auth template */}
                                               <div className="columns is-multiline my-0 px-3">
@@ -1061,7 +1132,9 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
                                                           (action.connection
                                                             .auth_template ||
                                                             "") as string,
-                                                          { language: "django" },
+                                                          {
+                                                            language: "django",
+                                                          },
                                                         ).value,
                                                       }}
                                                     />
@@ -1076,41 +1149,42 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
                                                 action.connection
                                                   .auth_type as any,
                                               ) && (
-                                                  <>
-                                                    {/* parameters template */}
-                                                    <div className="columns is-multiline my-0 px-3">
-                                                      <div className="column py-1">
-                                                        <span className="has-text-weight-bold has-text-grey">
-                                                          Template
-                                                        </span>
-                                                      </div>
-                                                      <div className="column is-12 py-1">
-                                                        <pre
-                                                          className="code p-1"
-                                                          style={{
-                                                            maxHeight: "15vh",
-                                                            overflowY: "auto",
-                                                          }}
-                                                        >
-                                                          <code
-                                                            dangerouslySetInnerHTML={{
-                                                              __html:
-                                                                hljs.highlight(
-                                                                  (action.connection
-                                                                    .parameters_template ||
-                                                                    "{}") as string,
-                                                                  {
-                                                                    language:
-                                                                      "django",
-                                                                  },
-                                                                ).value,
-                                                            }}
-                                                          />
-                                                        </pre>
-                                                      </div>
+                                                <>
+                                                  {/* parameters template */}
+                                                  <div className="columns is-multiline my-0 px-3">
+                                                    <div className="column py-1">
+                                                      <span className="has-text-weight-bold has-text-grey">
+                                                        Template
+                                                      </span>
                                                     </div>
-                                                  </>
-                                                )}
+                                                    <div className="column is-12 py-1">
+                                                      <pre
+                                                        className="code p-1"
+                                                        style={{
+                                                          maxHeight: "15vh",
+                                                          overflowY: "auto",
+                                                        }}
+                                                      >
+                                                        <code
+                                                          dangerouslySetInnerHTML={{
+                                                            __html:
+                                                              hljs.highlight(
+                                                                (action
+                                                                  .connection
+                                                                  .parameters_template ||
+                                                                  "{}") as string,
+                                                                {
+                                                                  language:
+                                                                    "django",
+                                                                },
+                                                              ).value,
+                                                          }}
+                                                        />
+                                                      </pre>
+                                                    </div>
+                                                  </div>
+                                                </>
+                                              )}
                                             </div>
                                           )}
                                         </CollapsibleContent>
@@ -1149,7 +1223,7 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
                           onClick={() => mutation.runWorkflow()}
                         >
                           <span className="icon">
-                            <i className="fas fa-play"></i>
+                            <Play className="h-4 w-4" />
                           </span>
                           <span>Exexute workflow</span>
                         </button>
@@ -1160,7 +1234,11 @@ function WorkflowComponent({ workflowId }: { workflowId: string }) {
               )}
             </>
 
-            <>{!!workflowId && <WorkflowEventList defaultFilter={{ keyword: workflowId }} />}</>
+            <>
+              {!!workflowId && (
+                <WorkflowEventList defaultFilter={{ keyword: workflowId }} />
+              )}
+            </>
           </Tabs>
         </div>
       </TabStateProvider>

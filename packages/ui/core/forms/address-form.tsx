@@ -1,3 +1,4 @@
+import { ChevronDown, ChevronUp } from "lucide-react";
 import {
   AddressType,
   DEFAULT_ADDRESS_CONTENT,
@@ -282,9 +283,9 @@ export const AddressForm = ({
           Advanced
           <span className="icon is-small">
             {advancedExpanded ? (
-              <i className="fas fa-chevron-down"></i>
+              <ChevronDown className="h-4 w-4" />
             ) : (
-              <i className="fas fa-chevron-up"></i>
+              <ChevronUp className="h-4 w-4" />
             )}
           </span>
         </div>

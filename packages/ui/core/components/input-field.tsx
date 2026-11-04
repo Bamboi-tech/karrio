@@ -1,8 +1,8 @@
+import { Asterisk } from "lucide-react";
 import { isNone } from "@karrio/lib";
 import React, { RefObject } from "react";
 
-export interface InputFieldComponent
-  extends React.InputHTMLAttributes<HTMLInputElement> {
+export interface InputFieldComponent extends React.InputHTMLAttributes<HTMLInputElement> {
   label?: string;
   fieldClass?: string;
   controlClass?: string;
@@ -45,7 +45,7 @@ export const InputField = ({
           {label}
           {required && (
             <span className="icon is-small has-text-danger small-icon">
-              <i className="fas fa-asterisk" style={{ fontSize: ".7em" }}></i>
+              <Asterisk className="h-2.5 w-2.5" />
             </span>
           )}
         </label>

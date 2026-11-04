@@ -1,5 +1,5 @@
 import { ErrorBoundary } from "@karrio/ui/core/components/error-boudaries";
-import { openSans } from "@karrio/ui/fonts/font";
+import { openSans } from "@karrio/ui/fonts/open-sans";
 import { Toaster } from "@karrio/ui/components/ui/toaster";
 import { PublicEnvScript } from "next-runtime-env";
 

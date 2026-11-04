@@ -158,6 +158,18 @@ class Proxy(proxy.Proxy):
             or provider_utils.collo_already_exists(response)
         ] + existing
 
+        # Grant a retry only with local proof the paid call was never reached.
+        # Code 42 returned by label creation/download has no such guarantee.
+        purchase_not_attempted = bool(errors) and all(
+            failure.get("HttpStatus") in (None, 400)
+            and bool(failure.get("OrderInvalidReasons"))
+            and all(
+                str(reason.get("Code")) == "42"
+                for reason in failure["OrderInvalidReasons"]
+            )
+            for failure in errors
+        )
+
         # 3. create the shipping labels — this flips the order to shipped!
         labels = (
             lib.to_dict(
@@ -249,6 +261,11 @@ class Proxy(proxy.Proxy):
                         return_labels if isinstance(return_labels, list) else []
                     ),
                     errors=errors,
+                    **(
+                        {"purchase_not_attempted": True}
+                        if purchase_not_attempted
+                        else {}
+                    ),
                 )
             ),
             lib.to_dict,

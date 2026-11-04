@@ -244,6 +244,109 @@ class TestMontaShipment(unittest.TestCase):
 
             self.assertListEqual(lib.to_dict(parsed_response), ParsedErrorResponse)
 
+    def test_verification_before_paid_call_carries_retry_proof(self):
+        failure = lib.to_json(
+            {
+                "HttpStatus": 400,
+                "OrderInvalidReasons": [{"Code": 42, "Message": "Not verified"}],
+            }
+        )
+        with patch(
+            "karrio.mappers.monta.proxy.lib.request", side_effect=["[]", failure]
+        ) as request:
+            shipment, messages = (
+                karrio.Shipment.create(self.ShipmentRequest).from_(gateway).parse()
+            )
+        self.assertIsNone(shipment)
+        self.assertEqual(request.call_count, 2)
+        self.assertTrue(messages[0].details["monta_purchase_not_attempted"])
+        self.assertEqual(messages[0].code, "42")
+
+    def test_mixed_or_transport_colli_errors_do_not_grant_retry(self):
+        for failure in (
+            {
+                "HttpStatus": 503,
+                "OrderInvalidReasons": [{"Code": 42, "Message": "Not verified"}],
+            },
+            {"HttpStatus": 400, "OrderInvalidReasons": [{"Code": 42}, {"Code": 21}]},
+        ):
+            with self.subTest(failure=failure), patch(
+                "karrio.mappers.monta.proxy.lib.request",
+                side_effect=["[]", lib.to_json(failure)],
+            ):
+                shipment, messages = (
+                    karrio.Shipment.create(self.ShipmentRequest).from_(gateway).parse()
+                )
+            self.assertIsNone(shipment)
+            self.assertTrue(messages)
+            self.assertTrue(
+                all(
+                    "monta_purchase_not_attempted" not in msg.details
+                    for msg in messages
+                )
+            )
+
+    def test_verification_code_after_paid_call_does_not_grant_retry(self):
+        failure = lib.to_json(
+            {
+                "HttpStatus": 400,
+                "OrderInvalidReasons": [{"Code": 42, "Message": "Not verified"}],
+            }
+        )
+        with patch(
+            "karrio.mappers.monta.proxy.lib.request",
+            side_effect=["[]", ColloResponse, failure],
+        ) as request:
+            shipment, messages = (
+                karrio.Shipment.create(self.ShipmentRequest).from_(gateway).parse()
+            )
+        self.assertIsNone(shipment)
+        self.assertIn("shippinglabels", request.call_args.kwargs["url"])
+        self.assertTrue(
+            all("monta_purchase_not_attempted" not in msg.details for msg in messages)
+        )
+
+    def test_label_download_verification_error_does_not_grant_retry(self):
+        import io
+        from urllib.error import HTTPError
+
+        responses = iter(
+            [
+                "[]",
+                ColloResponse,
+                SecondColloResponse,
+                TwoLabelObjectsResponse,
+                ReturnLabelsResponse,
+            ]
+        )
+        downloads = iter([False, True])
+        failure = lib.to_json(
+            {"OrderInvalidReasons": [{"Code": 42, "Message": "Not verified"}]}
+        ).encode()
+
+        def respond(**kwargs):
+            if kwargs["method"] == "GET" and "/shippinglabels/" in kwargs["url"]:
+                if next(downloads):
+                    return LabelZpl2
+                return kwargs["on_error"](
+                    HTTPError(
+                        kwargs["url"], 400, "Bad Request", {}, io.BytesIO(failure)
+                    )
+                )
+            return next(responses)
+
+        with patch("karrio.mappers.monta.proxy.lib.request", side_effect=respond):
+            shipment, messages = (
+                karrio.Shipment.create(self.TwoParcelShipmentRequest)
+                .from_(gateway)
+                .parse()
+            )
+        self.assertIsNotNone(shipment)
+        self.assertTrue(messages)
+        self.assertTrue(
+            all("monta_purchase_not_attempted" not in msg.details for msg in messages)
+        )
+
     def test_cancel_shipment(self):
         with patch("karrio.mappers.monta.proxy.lib.request") as mock:
             mock.return_value = ""

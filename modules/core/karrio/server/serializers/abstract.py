@@ -15,7 +15,7 @@ from karrio.server.core.logging import logger
 T = typing.TypeVar("T")
 
 # Pattern for JSON-generated IDs: prefix_12hexchars (e.g., pcl_a1b2c3d4e5f6)
-JSON_ID_PATTERN = re.compile(r'^[a-z]{2,4}_[a-f0-9]{12}$')
+JSON_ID_PATTERN = re.compile(r"^[a-z]{2,4}_[a-f0-9]{12}$")
 
 
 def is_json_generated_id(value: typing.Any) -> bool:
@@ -33,6 +33,8 @@ class Context(typing.NamedTuple):
     user: typing.Any
     org: typing.Any = None
     test_mode: bool = None
+    token: typing.Any = None
+    erp_label_operation_id: str = None
 
     def __getitem__(self, item):
         return getattr(self, item)
@@ -80,18 +82,18 @@ class AbstractSerializer:
             serializer = None
         else:
             serializer = (
-                cls(data=data or {}, **kwargs)  # type:ignore
+                cls(data=data or {}, **kwargs)  # type: ignore
                 if instance is None
                 else cls(
                     instance, data=data or {}, **{**kwargs, "partial": True}
-                )  # type:ignore
+                )  # type: ignore
             )
 
-            serializer.is_valid(raise_exception=True)  # type:ignore
+            serializer.is_valid(raise_exception=True)  # type: ignore
 
         return DecoratedSerializer(
             instance=instance,
-            serializer=serializer,  # type:ignore
+            serializer=serializer,  # type: ignore
         )
 
 
@@ -200,7 +202,20 @@ def owned_model_serializer(
                         users__id=getattr(user, "id", None)
                     ).first()
 
-                self.__context: Context = Context(user, org, test_mode)
+                token = (
+                    context.get("token")
+                    if isinstance(context, dict)
+                    else getattr(context, "token", None)
+                )
+                operation_id = (
+                    context.get("erp_label_operation_id")
+                    if isinstance(context, dict)
+                    else getattr(context, "erp_label_operation_id", None)
+                    or getattr(context, "headers", {}).get("X-Bamboi-Label-Operation")
+                )
+                self.__context: Context = Context(
+                    user, org, test_mode, token, operation_id
+                )
             else:
                 self.__context: Context = getattr(self, "__context", None)
                 kwargs.update({"context": self.__context})
@@ -246,7 +261,8 @@ def link_org(entity: ModelSerializer, context: Context):
 
     # Evaluate org from context (handles SimpleLazyObject)
     org = (
-        context.org if not isinstance(context.org, SimpleLazyObject)
+        context.org
+        if not isinstance(context.org, SimpleLazyObject)
         else (context.org if context.org else None)
     )
 
@@ -256,8 +272,12 @@ def link_org(entity: ModelSerializer, context: Context):
     should_link = org is not None and has_org_relation and not entity_org.exists()
 
     if should_link:
-        entity.link = entity.__class__.link.related.related_model.objects.create(org=org, item=entity)
-        entity.save(update_fields=(["created_at"] if hasattr(entity, "created_at") else []))
+        entity.link = entity.__class__.link.related.related_model.objects.create(
+            org=org, item=entity
+        )
+        entity.save(
+            update_fields=(["created_at"] if hasattr(entity, "created_at") else [])
+        )
 
 
 def bulk_link_org(entities: typing.List[models.Model], context: Context):

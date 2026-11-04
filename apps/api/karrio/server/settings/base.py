@@ -742,6 +742,9 @@ if USE_LOGURU:
 # closed when ERP does not answer. See karrio.server.core.erp_gate.
 ERP_GATE_URL = config("ERP_GATE_URL", default=None)
 ERP_GATE_TOKEN = config("ERP_GATE_TOKEN", default=None)
+# Non-secret IDs: a dedicated API-token user and the organization owning this ERP.
+ERP_INTEGRATION_USER_ID = config("ERP_INTEGRATION_USER_ID", default=None)
+ERP_ORGANIZATION_ID = config("ERP_ORGANIZATION_ID", default=None)
 # Connect fast or fail; read long enough for Frappe to run the method under
 # load (a flat 5 s read cut off mark_picked on 2026-08-31 while the ERP was
 # merely slow). Seconds; see erp_gate._erp_timeout.

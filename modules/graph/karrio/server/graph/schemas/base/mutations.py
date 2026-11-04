@@ -455,15 +455,20 @@ class MetadataMutation(utils.BaseMutation):
     ) -> "MetadataMutation":
         object_model = utils.MetadataObjectType[object_type].value
         instance = object_model.access_by(info.context.request).get(id=id)
-        instance.metadata = {
+        metadata = {
             key: value
             for key, value in (instance.metadata or {}).items()
             if key not in discarded_keys
         }
-        instance.metadata.update(added_values)
+        metadata.update(added_values)
+        if isinstance(instance, manager.Shipment):
+            from karrio.server.core.erp_gate import assert_erp_metadata_write
+
+            assert_erp_metadata_write(info.context.request, metadata, instance.metadata)
+        instance.metadata = metadata
         instance.save(update_fields=["metadata"])
 
-        return MetadataMutation(id=id, metadata=instance.metadata)  # type:ignore
+        return MetadataMutation(id=id, metadata=instance.metadata)  # type: ignore
 
 
 @strawberry.type

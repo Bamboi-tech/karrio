@@ -2,6 +2,7 @@
 
 import contextlib
 import io
+import hashlib
 import json
 import os
 import re
@@ -9,6 +10,72 @@ import sys
 
 EMAIL = "karrio-erp-staging@bamboi.eu"
 PURPOSE = "bamboi-staging-erp"
+
+
+def clone_connections(user, sources):
+    from karrio.server.providers.models import CarrierConnection
+
+    fields = (
+        "carrier_code",
+        "carrier_id",
+        "credentials",
+        "config",
+        "capabilities",
+        "active",
+        "test_mode",
+        "rate_sheet_id",
+        "metadata",
+    )
+    bindings = dict(user.metadata.get("carrier_sources") or {})
+    changed = False
+    for expected in sources:
+        source = CarrierConnection.objects.select_for_update(of=("self",)).get(
+            pk=expected["id"]
+        )
+        if source.created_by_id != 1 or any(
+            getattr(source, key) != expected[key]
+            for key in ("carrier_id", "carrier_code", "active", "test_mode")
+        ):
+            raise ValueError(
+                "Staging source connection does not match the reviewed plan."
+            )
+        values = {key: getattr(source, key) for key in fields}
+        digest = hashlib.sha256(
+            json.dumps(values, sort_keys=True, default=str).encode()
+        ).hexdigest()
+        binding = bindings.get(source.pk)
+        if binding:
+            if binding["digest"] != digest:
+                raise ValueError(
+                    "Source connection changed; review configuration before resynchronizing."
+                )
+            clone = CarrierConnection.objects.select_for_update(of=("self",)).get(
+                pk=binding["clone_id"]
+            )
+            if clone.created_by_id != user.id or any(
+                getattr(clone, key) != value for key, value in values.items()
+            ):
+                raise ValueError(
+                    "Dedicated connection changed; manual review is required."
+                )
+        else:
+            if CarrierConnection.objects.filter(
+                created_by=user, carrier_id=source.carrier_id
+            ).exists():
+                raise ValueError("Unbound dedicated connection collision.")
+            clone = CarrierConnection.objects.create(created_by=user, **values)
+            # The create signal expands empty capabilities; keep the reviewed
+            # source's explicit representation so repeat checks stay exact.
+            if clone.capabilities != values["capabilities"]:
+                CarrierConnection.objects.filter(pk=clone.pk).update(
+                    capabilities=values["capabilities"]
+                )
+            bindings[source.pk] = {"clone_id": clone.pk, "digest": digest}
+            changed = True
+    if changed:
+        user.metadata = {**user.metadata, "carrier_sources": bindings}
+        user.save(update_fields=["metadata"])
+    return changed, len(sources)
 
 
 def provision(payload):
@@ -63,7 +130,16 @@ def provision(payload):
         Token.objects.get_or_create(
             key=token, defaults={"user": user, "test_mode": False, "label": PURPOSE}
         )
-        return {"user_id": user.id, "created": created, "organization_id": None}
+        connections_changed, connection_count = clone_connections(
+            user, payload.get("source_connections", [])
+        )
+        return {
+            "user_id": user.id,
+            "created": created,
+            "changed": created or connections_changed,
+            "organization_id": None,
+            "connection_count": connection_count,
+        }
 
 
 if __name__ == "__main__":

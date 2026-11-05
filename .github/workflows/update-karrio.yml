@@ -18,6 +18,11 @@ on:
         options:
           - staging
           - production
+      provision_only:
+        description: Only configure the staging ERP account, without VM or image rollout
+        required: false
+        default: false
+        type: boolean
       provision_erp_integration:
         description: Provision the dedicated staging ERP account (staging only)
         required: false
@@ -106,7 +111,15 @@ jobs:
           if [ -n "${{ inputs.karrio_tag }}" ]; then
             EXTRA_ARGS+=(-e "karrio_tag=${{ inputs.karrio_tag }}")
           fi
-          ansible-playbook google-vm.yaml \
+          PLAYBOOK=google-vm.yaml
+          if [ "${{ inputs.provision_only }}" = "true" ]; then
+            if [ "${{ inputs.env }}" != "staging" ] || [ "${{ inputs.provision_erp_integration }}" != "true" ]; then
+              echo "Provision-only requires explicit staging provisioning" >&2
+              exit 1
+            fi
+            PLAYBOOK=provision-stage-erp-only.yaml
+          fi
+          ansible-playbook "$PLAYBOOK" \
             --private-key ~/.ssh/id_ed25519 \
             -e env=${{ inputs.env }} \
             "${EXTRA_ARGS[@]}"

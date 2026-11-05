@@ -27,9 +27,9 @@
       - python
       - -c
       - '{{ lookup("file", "scripts/provision_stage_erp.py") }}'
-    stdin: '{{ {"environment": "staging", "token": erp_integration_api_token} | to_json }}'
+    stdin: '{{ {"environment": "staging", "token": erp_integration_api_token, "source_connections": erp_integration_source_connections | default([])} | to_json }}'
   register: stage_erp_account
-  changed_when: (stage_erp_account.stdout | from_json).created
+  changed_when: (stage_erp_account.stdout | from_json).changed
   no_log: true
 
 - name: Set verified integration identity for this deployment

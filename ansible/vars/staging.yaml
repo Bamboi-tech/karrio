@@ -33,3 +33,17 @@ erp_gate_url: "https://stage-erp.bamboi.eu"
 # Provisioned by update-karrio run 41943832566; stage is single-tenant.
 erp_integration_user_id: "2"
 erp_organization_id: ""
+
+# Reviewed source identities; copy configuration to the service account only.
+# No provider call and no activation of the disabled Monta connection.
+erp_integration_source_connections:
+  - id: car_c52ccf6553734307838d98ac967beae1
+    carrier_id: mock-carrier
+    carrier_code: generic
+    active: true
+    test_mode: false
+  - id: car_95e63193bd174e2b97c9365c29551562
+    carrier_id: monta
+    carrier_code: monta
+    active: false
+    test_mode: false

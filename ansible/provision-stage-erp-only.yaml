@@ -1,0 +1,15 @@
+# Configure only the dedicated staging service identity; no VM/image changes.
+- name: Provision staging ERP integration
+  hosts: staging
+  become: true
+  vars_files:
+    - vars/staging.yaml
+    - vault/env/staging.yaml
+  tasks:
+    - name: Require explicit staging-only operation
+      ansible.builtin.assert:
+        that:
+          - env == 'staging'
+          - provision_erp_integration | default(false) | bool
+    - name: Provision reviewed service account and connections
+      ansible.builtin.include_tasks: provision-stage-erp.yaml

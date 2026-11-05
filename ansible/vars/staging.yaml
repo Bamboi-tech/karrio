@@ -4,8 +4,8 @@ domains:
 letsencrypt_email: tools@bamboi.eu
 
 # Custom image tag from the "Build Karrio Images" workflow (e.g. 2026.1.31-ab12cd3).
-# Keep staging and production on the SAME tag. Empty = deploy fails fast with a hint.
-karrio_tag: "2026.1.31-1ea7f9e"
+# Staging candidate; production remains separately pinned until explicitly approved.
+karrio_tag: "2026.1.31-6ef7ec3"
 karrio_server_image: europe-north2-docker.pkg.dev/bamboi-tech/bamboi-karrio/karrio-server
 karrio_dashboard_image: europe-north2-docker.pkg.dev/bamboi-tech/bamboi-karrio/karrio-dashboard
 caddy_image: caddy:2.8.4
@@ -28,3 +28,8 @@ email_from_address: noreply@bamboi.eu
 # vault/env/staging.yaml as erp_gate_token. Empty token = purchases on
 # ERP-linked shipments fail closed with a clear message.
 erp_gate_url: "https://stage-erp.bamboi.eu"
+
+# Dedicated non-staff staging ERP account, verified by authenticated API read.
+# Provisioned by update-karrio run 41943832566; stage is single-tenant.
+erp_integration_user_id: "2"
+erp_organization_id: ""

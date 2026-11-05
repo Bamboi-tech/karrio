@@ -33,3 +33,13 @@ CLI gap: `bamboi karrio` has no current-user/organization query. A read-only
 explicit staging GraphQL queries with in-memory credentials and selected output.
 The normal CLI repo checkout was unavailable during this rollout; copy this gap
 to that repo's `docs/CLI_GAPS.md` in its owning session.
+
+## Validated staging rollout
+
+Build: `41909709513`, tag `2026.1.31-6ef7ec3` (merged application source).
+Deploy: `41943832566`, Ansible source `5e826a03320219d30479ccfbdb3dc4a4e36bfac4`,
+completed 2026-11-05 00:58:48 UTC. Provisioning returned dedicated user ID `2`.
+Authenticated read verified active, non-staff, non-superuser identity; health,
+shipment and connection reads returned HTTP 200. Staging vars now preserve that
+identity and image for subsequent deployments without reprovisioning. Production
+vars, credentials and deployment were untouched.

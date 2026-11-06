@@ -30,6 +30,7 @@ import {
   ShipmentFilter,
   ShipmentType,
   ShipmentColumnId,
+  ShipmentsPageSeed,
   get_shipments_badge,
   get_shipments_list_shipments_edges_node,
   GET_SHIPMENTS_BADGE,
@@ -81,6 +82,17 @@ import { useAPIMetadata } from "@karrio/hooks/api-metadata";
 import { AppLink } from "@karrio/ui/core/components/app-link";
 import { useShipments, useShipmentBadgeCounts, useShipmentMutation } from "@karrio/hooks/shipment";
 import {
+  ALL_STATUSES,
+  FAILED_SENTINEL,
+  SHIPMENT_PAGE_SIZE,
+  SHIPMENT_PAGE_SIZE_OPTIONS,
+  ShipmentListView,
+  isFailedShipmentsView,
+  shipmentListDefaults,
+  writeShipmentListCookie,
+} from "@karrio/lib/shipment-list";
+import { useShipmentListScope } from "@karrio/hooks/shipment-list-preferences";
+import {
   DELIVERY_OUTCOME_OPTIONS,
   DeliveryOutcomeOption,
   useShipmentERPActions,
@@ -126,7 +138,6 @@ const PicklistDialog = dynamic(
   () => import("@karrio/ui/components/picklist-dialog").then((module) => module.PicklistDialog),
 );
 
-const FAILED_SENTINEL = "_failed_creation";
 // Keeps the Needs Attention card highlighted while the real filtering happens
 // via metadata_key (see onFilterChange); stripped from the outgoing query by
 // useShipments like every "_"-prefixed sentinel.
@@ -141,23 +152,6 @@ const PICKED_SENTINEL = "_picked";
 // this card filters server-side (like Needs Attention) and its pagination
 // count is exact. The sentinel only keeps the card highlighted.
 const HOLD_SENTINEL = "_on_hold";
-
-// The All card and the initial query share this list. "draft" rides along
-// since the All card started speaking card language (cardStatus below):
-// a draft row there names its own card — Today, Planned, On hold, Needs
-// Attention — instead of the Karrio status, so there is no longer any
-// reason to keep drafts off the All card.
-const ALL_STATUSES = [
-  "draft",
-  "created",
-  "shipped",
-  "delivered",
-  "in_transit",
-  "cancelled",
-  "needs_attention",
-  "out_for_delivery",
-  "delivery_failed",
-];
 
 // Planning metadata mirrored onto every draft by the ERP (karrio_shipping):
 // the day the parcel leaves (shipment_date), where that day came from
@@ -287,22 +281,27 @@ const shipmentLabel = (shipment: Pick<ShipmentType, "id" | "metadata">) => {
 
 // The operator's page-size choice for the worklist. Remembered across
 // sessions in localStorage; the URL (setVariablesToURL) carries it within
-// one. The footer only mounts after the client-side fetch, so reading
-// localStorage in the state initializer can never cause a hydration
-// mismatch.
-const PAGE_SIZE_OPTIONS = [20, 50, 100];
+// one. The first render takes the server's cookie mirror of it (the view
+// prop), never localStorage: the rows may already be in the HTML, and the
+// hydrating client must ask for the same page the server fetched.
+const PAGE_SIZE_OPTIONS = SHIPMENT_PAGE_SIZE_OPTIONS;
 const PAGE_SIZE_STORAGE_KEY = "shipments_page_size";
-const DEFAULT_PAGE_SIZE = 20;
-const initialPageSize = () => {
-  if (typeof window === "undefined") return DEFAULT_PAGE_SIZE;
+const storedPageSize = () => {
   try {
     const stored = parseInt(
       window.localStorage.getItem(PAGE_SIZE_STORAGE_KEY) || "",
       10,
     );
-    return PAGE_SIZE_OPTIONS.includes(stored) ? stored : DEFAULT_PAGE_SIZE;
+    return PAGE_SIZE_OPTIONS.includes(stored) ? stored : SHIPMENT_PAGE_SIZE;
   } catch {
-    return DEFAULT_PAGE_SIZE;
+    return SHIPMENT_PAGE_SIZE;
+  }
+};
+const browserTimeZone = () => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {
+    return null;
   }
 };
 
@@ -545,6 +544,7 @@ const ShipmentRow = React.memo(function ShipmentRow({
   appName,
   userConnections,
   systemConnections,
+  timeZone,
   onPreview,
   actionState,
   onPrefetch,
@@ -558,6 +558,9 @@ const ShipmentRow = React.memo(function ShipmentRow({
   appName: string;
   userConnections: ConnectionLike[];
   systemConnections: ConnectionLike[];
+  // Timestamps are printed in this zone on the server and in the browser
+  // alike; null (no cookie yet) means the browser's own, as before.
+  timeZone: string | null;
   actionState?: string;
   onPreview: (id: string) => void;
   onPrefetch?: (id: string) => void;
@@ -588,8 +591,8 @@ const ShipmentRow = React.memo(function ShipmentRow({
       {metadata.karrio_shipment && <span className="block text-xs font-normal text-gray-400">{metadata.karrio_shipment}</span>}
       {!metadata.shopify_order_number && !salesOrderRef && !metadata.karrio_shipment && shipment.id}
     </button>{review && <AddressReviewPopover shipment={shipment} onEdit={preview} />}</div>,
-    date: <span title={formatDateTime(shipment.created_at)}>{formatDateTime(shipment.created_at)}</span>,
-    updated: <span>{formatDateTime(shipment.updated_at)}</span>,
+    date: <span title={formatDateTime(shipment.created_at, timeZone)}>{formatDateTime(shipment.created_at, timeZone)}</span>,
+    updated: <span>{formatDateTime(shipment.updated_at, timeZone)}</span>,
     recipient: <span className="block max-w-[220px] truncate" title={formatAddressShort(shipment.recipient as AddressType)}>{shipment.recipient?.person_name || shipment.recipient?.company_name || "—"}</span>,
     status: <ShipmentsStatusBadge status={cardStatus(shipment)} className="whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium" />,
     service: <div className="flex items-center gap-2">
@@ -628,11 +631,33 @@ const ShipmentRow = React.memo(function ShipmentRow({
   );
 });
 
-export default function Page(pageProps: any) {
+export type ShipmentsPageProps = {
+  // Set by the server page on a document request (see Shipments/page.tsx).
+  seed: ShipmentsPageSeed | null;
+  // How this browser shows the list, from the cookie the board keeps.
+  view: ShipmentListView;
+};
+
+// What the HTML shows until the server's first page has streamed in: the
+// same shapes as the route's loading state, so the two blend.
+const BoardSkeleton = () => (
+  <div className="animate-pulse space-y-6" aria-busy="true" aria-label="Loading shipments">
+    <div className="h-7 w-40 rounded bg-slate-200" />
+    <div className="flex gap-2">{[0, 1, 2, 3].map((card) => <div key={card} className="h-8 w-20 rounded bg-slate-200" />)}</div>
+    <div className="rounded-lg border border-slate-200 bg-white">
+      <div className="h-10 border-b border-slate-200 bg-slate-50" />
+      {[0, 1, 2, 3, 4, 5, 6, 7].map((row) => <div key={row} className="h-11 border-b border-slate-100 last:border-b-0" />)}
+    </div>
+  </div>
+);
+
+export default function Page({ seed, view }: ShipmentsPageProps) {
   return (
     <FailedShipmentSheet>
       <ShipmentPreviewSheet>
-        <ShipmentsBoard />
+        <React.Suspense fallback={<BoardSkeleton />}>
+          <ShipmentsBoard seed={seed} view={view} />
+        </React.Suspense>
       </ShipmentPreviewSheet>
     </FailedShipmentSheet>
   );
@@ -641,15 +666,22 @@ export default function Page(pageProps: any) {
 // Module scope, not a closure inside Page: a component type created per
 // Page render is a new element type each time, which remounts the whole
 // board (and re-fires every query) whenever Page re-renders.
-function ShipmentsBoard(): JSX.Element {
+function ShipmentsBoard({ seed, view }: ShipmentsPageProps): JSX.Element {
+  // Suspends (into the boundary above) until the server's fetches have
+  // streamed in. Only a document request carries them, so an in-app
+  // navigation never waits here; it reads the react-query cache instead.
+  const listSeed = seed?.list ? React.use(seed.list) : null;
+  const badgeSeed = seed?.badges ? React.use(seed.badges) : null;
   const searchParams = useSearchParams();
   const { references } = useAPIMetadata();
   const [allChecked, setAllChecked] = React.useState(false);
   const [initialized, setInitialized] = React.useState(false);
   const [selection, setSelection] = React.useState<string[]>([]);
   // Rows per page (20/50/100), fed into the query as filter.first.
-  const [pageSize, setPageSize] = React.useState<number>(initialPageSize);
-  const { preferences: listPreferences, update: updateListPreferences, ready: preferencesReady } = useShipmentListPreferences();
+  const [pageSize, setPageSize] = React.useState<number>(view.first);
+  const [timeZone, setTimeZone] = React.useState<string | null>(view.timeZone);
+  const { preferences: listPreferences, update: updateListPreferences, ready: preferencesReady } = useShipmentListPreferences(view.preferences);
+  const viewScope = useShipmentListScope();
   const [viewMode, setViewMode] = React.useState<ViewMode>(DEFAULT_VIEW_MODE);
   useEffect(() => {
     setViewMode(readStoredViewMode());
@@ -753,24 +785,26 @@ function ShipmentsBoard(): JSX.Element {
   // identical client-side defaults answer, so the toolbar never flickers.
   const { isEnabled } = useBamboiFeatures();
   const context = useShipments({
-    status: ALL_STATUSES as any,
-    first: pageSize,
+    // The same defaults the server page fetched with, so the seed below
+    // lands on the key this hook derives from the URL.
+    ...shipmentListDefaults(view),
     setVariablesToURL: true,
     preloadNextPage: true,
     variant: "list",
+    initial: listSeed && seed ? { ...listSeed, filter: seed.filter, scope: seed.scope } : null,
     // The Failed card renders FailedShipmentsList instead of this list;
     // fetching a page of every other status behind it is wasted.
-    isDisabled: (filter: ShipmentFilter) =>
-      ([] as string[])
-        .concat((filter.status as any) || [])
-        .includes(FAILED_SENTINEL),
+    isDisabled: isFailedShipmentsView,
   });
   const {
     query: { data: { shipments } = {}, ...query },
     filter,
     setFilter,
   } = context;
-  const badgeCounts = useShipmentBadgeCounts();
+  const badgeCounts = useShipmentBadgeCounts(badgeSeed && seed ? { ...badgeSeed, scope: seed.scope } : null);
+  // A page that came with the HTML counts as fetched: react-query reports
+  // seeded data as never fetched, and the rows must not wait for a refetch.
+  const listReady = query.isFetched || shipments !== undefined;
   const {
     query: { data: { document_templates } = {} },
   } = useDocumentTemplates({
@@ -793,12 +827,32 @@ function ShipmentsBoard(): JSX.Element {
     const timer = setTimeout(() => updateFilter({ keyword: searchText || undefined, offset: 0 }), 300);
     return () => clearTimeout(timer);
   }, [searchText, filter.keyword]);
-  const sortInitialized = React.useRef(false);
+  // Once the stores are read, bring the view in line with them: the server
+  // rendered from the cookie mirror, which is empty on a first visit and
+  // may lag a change made elsewhere. One filter update at most, and none
+  // when the mirror was right — the common case, and no second fetch.
+  const viewReconciled = React.useRef(false);
+  const [viewReady, setViewReady] = React.useState(false);
   useEffect(() => {
-    if (!preferencesReady || sortInitialized.current) return;
-    sortInitialized.current = true;
-    if (!searchParams.has("order_by") && listPreferences.sort) updateFilter({ order_by: listPreferences.sort, offset: 0 });
+    if (!preferencesReady || viewReconciled.current) return;
+    viewReconciled.current = true;
+    const first = storedPageSize();
+    const zone = browserTimeZone();
+    const sort = searchParams.has("order_by") ? filter.order_by : listPreferences.sort;
+    setPageSize(first);
+    if (zone !== timeZone) setTimeZone(zone);
+    setViewReady(true);
+    const changes = {
+      ...((sort || undefined) !== filter.order_by ? { order_by: sort || undefined } : {}),
+      ...(!searchParams.has("first") && first !== filter.first ? { first } : {}),
+    };
+    if (Object.keys(changes).length > 0) updateFilter({ ...changes, offset: 0 });
   }, [preferencesReady, listPreferences.sort]);
+  // The cookie mirror the server page renders from, kept current.
+  useEffect(() => {
+    if (!viewReady || !viewScope) return;
+    writeShipmentListCookie(viewScope, { preferences: listPreferences, first: pageSize, timeZone });
+  }, [viewReady, viewScope, listPreferences, pageSize, timeZone]);
   const changeSort = (sort: string) => {
     updateListPreferences({ sort });
     updateFilter({ order_by: sort || undefined, offset: 0 });
@@ -1706,14 +1760,14 @@ function ShipmentsBoard(): JSX.Element {
   }, [selection, visibleShipments]);
   useEffect(() => {
     if (
-      query.isFetched &&
+      listReady &&
       !initialized &&
       !isNoneOrEmpty(searchParams.get("modal"))
     ) {
       previewShipment(searchParams.get("modal") as string);
       setInitialized(true);
     }
-  }, [searchParams.get("modal"), query.isFetched]);
+  }, [searchParams.get("modal"), listReady]);
 
   // Shared by both presentations. Needs Attention and On hold both filter
   // on an ERP-stamped metadata key server-side; every other view must
@@ -1816,7 +1870,7 @@ function ShipmentsBoard(): JSX.Element {
       )}
       {isFailedView && <FailedShipmentsList />}
 
-      {!isFailedView && !query.isFetched && (
+      {!isFailedView && !listReady && (
         <div className="bg-white rounded-lg shadow-sm border my-6 p-6">
           <div className="space-y-4">
             {[...Array(5)].map((_, i) => (
@@ -1834,7 +1888,7 @@ function ShipmentsBoard(): JSX.Element {
         </div>
       )}
 
-      {!isFailedView && query.isFetched && visibleShipments.length > 0 && (
+      {!isFailedView && listReady && visibleShipments.length > 0 && (
         <>
           <div aria-busy={query.isFetching} inert={query.isPreviousData || bulkAction !== null ? true : undefined} className={query.isPreviousData ? "opacity-60 transition-opacity" : "transition-opacity"}>
           <StickyTableWrapper>
@@ -2085,6 +2139,7 @@ function ShipmentsBoard(): JSX.Element {
                     selected={selection.includes(shipment.id)}
                     columns={columns}
                     isTodayView={isTodayView}
+                    timeZone={timeZone}
                     appName={references.APP_NAME}
                     userConnections={user_connections || []}
                     systemConnections={system_connections || []}
@@ -2116,7 +2171,7 @@ function ShipmentsBoard(): JSX.Element {
         </>
       )}
 
-      {!isFailedView && query.isFetched && !query.isFetching && !query.isError && visibleShipments.length == 0 && (
+      {!isFailedView && listReady && !query.isFetching && !query.isError && visibleShipments.length == 0 && (
         <div className="bg-white rounded-lg shadow-sm border my-6">
           <div className="p-6 text-center">
             <p>No shipment found.</p>

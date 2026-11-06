@@ -1204,6 +1204,28 @@ export interface get_shipments_badgeVariables {
 // This file was automatically generated and should not be edited.
 
 // ====================================================
+// GraphQL query operation: shipment_badge_counts
+// ====================================================
+
+export interface shipment_badge_counts_page_info {
+  count: number;
+}
+
+export interface shipment_badge_counts_shipments {
+  page_info: shipment_badge_counts_page_info;
+}
+
+export interface shipment_badge_counts {
+  today: shipment_badge_counts_shipments;
+  hold: shipment_badge_counts_shipments;
+  review: shipment_badge_counts_shipments;
+}
+
+
+/* tslint:disable */
+// This file was automatically generated and should not be edited.
+
+// ====================================================
 // GraphQL query operation: get_shipment_follow
 // ====================================================
 

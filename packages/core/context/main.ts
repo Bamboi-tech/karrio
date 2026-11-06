@@ -13,13 +13,20 @@ import {
   url$,
   usageFilterFor,
 } from "@karrio/lib";
+import { shipmentQueryFilter } from "@karrio/lib/shipment-list";
 import {
   AccountContextDataType,
   GET_DASHBOARD_USAGE,
+  GET_SHIPMENTS_LIST,
+  GET_SHIPMENT_BADGE_COUNTS,
   GetDashboardUsage,
   Metadata,
+  ServerSeed,
+  ShipmentFilter,
   TenantType,
   UsagePrefetch,
+  get_shipments_list,
+  shipment_badge_counts,
 } from "@karrio/types";
 import { revalidateTag, unstable_cache } from "next/cache";
 import { redirect } from "next/navigation";
@@ -32,9 +39,9 @@ const METADATA_REVALIDATE = 60;
 const ACCOUNT_DATA_REVALIDATE = 60;
 const ACCOUNT_DATA_TAG = "account-data";
 const ORG_DATA_TAG = "org-data";
-// A stalled aggregation must not hold the whole home page: past this the
-// client fetches as before.
-const USAGE_PREFETCH_TIMEOUT_MS = 3000;
+// A stalled query must not hold a page: past this the client fetches as
+// before. Home usage, the shipments board's first page and its badge counts.
+const SEED_TIMEOUT_MS = 3000;
 
 /**
  * Helper function to extract the current domain from headers
@@ -349,16 +356,42 @@ async function fetchSystemUsage(
   metadata: Metadata,
   domain?: string,
 ): Promise<{ prefetch: UsagePrefetch | null; error: any }> {
+  const filter = usageFilterFor(DEFAULT_USAGE_RANGE);
+  const seed = await fetchServerSeed<GetDashboardUsage>(
+    session,
+    metadata,
+    domain,
+    gqlstr(GET_DASHBOARD_USAGE),
+    { filter },
+  );
+  const usage = seed?.data.system_usage ?? null;
+  return {
+    prefetch: usage && seed ? { usage, filter, fetchedAt: seed.fetchedAt } : null,
+    error: usage ? null : { code: "usage" },
+  };
+}
+
+/**
+ * One GraphQL read for a server page's first render: the user's token, the
+ * seed deadline, and null instead of an error, because a failed seed is
+ * simply no seed — the client fetches as it always did.
+ */
+async function fetchServerSeed<T>(
+  session: any,
+  metadata: Metadata,
+  domain: string | undefined,
+  query: string,
+  variables?: Record<string, unknown>,
+): Promise<ServerSeed<T> | null> {
   const API_URL = await getAPIURL(metadata, domain);
   const { accessToken, orgId, testMode } = session;
-  const filter = usageFilterFor(DEFAULT_USAGE_RANGE);
 
   return await axios
-    .post<{ data?: GetDashboardUsage; errors?: unknown[] }>(
+    .post<{ data?: T; errors?: unknown[] }>(
       url$`${API_URL}/graphql`,
-      { query: gqlstr(GET_DASHBOARD_USAGE), variables: { filter } },
+      { query, variables },
       {
-        timeout: USAGE_PREFETCH_TIMEOUT_MS,
+        timeout: SEED_TIMEOUT_MS,
         headers: {
           ...(orgId ? { "x-org-id": orgId } : {}),
           ...(testMode ? { "x-test-mode": testMode } : {}),
@@ -366,19 +399,51 @@ async function fetchSystemUsage(
         } as any,
       },
     )
-    .then((res) => {
-      const usage = res.data?.data?.system_usage ?? null;
-      return {
-        prefetch: usage ? { usage, filter, fetchedAt: Date.now() } : null,
-        error: res.data?.errors
-          ? { code: "usage", errors: res.data.errors }
-          : null,
-      };
-    })
+    .then((res) =>
+      res.data?.data && !res.data.errors
+        ? { data: res.data.data, fetchedAt: Date.now() }
+        : null,
+    )
     .catch((e) => {
-      logger.warn("system usage prefetch failed", { message: e?.message });
-      return { prefetch: null, error: { code: "usage", message: e?.message } };
+      logger.warn("server seed failed", { message: e?.message });
+      return null;
     });
+}
+
+/**
+ * The shipments board's first page for the filter the URL maps to, fetched
+ * during SSR so the rows are in the first HTML. Not awaited by the page:
+ * the client resolves it with `use()` while the response streams.
+ */
+export async function loadShipmentsList(
+  session: any,
+  metadata: Metadata | undefined,
+  domain: string | undefined,
+  filter: ShipmentFilter,
+): Promise<ServerSeed<get_shipments_list> | null> {
+  if (!session || !metadata) return null;
+  return await fetchServerSeed<get_shipments_list>(
+    session,
+    metadata,
+    domain,
+    gqlstr(GET_SHIPMENTS_LIST),
+    { filter: shipmentQueryFilter(filter) },
+  );
+}
+
+/** The counts on the board's status cards, fetched next to the first page. */
+export async function loadShipmentBadgeCounts(
+  session: any,
+  metadata: Metadata | undefined,
+  domain: string | undefined,
+): Promise<ServerSeed<shipment_badge_counts> | null> {
+  if (!session || !metadata) return null;
+  return await fetchServerSeed<shipment_badge_counts>(
+    session,
+    metadata,
+    domain,
+    gqlstr(GET_SHIPMENT_BADGE_COUNTS),
+  );
 }
 
 export async function loadOrgData(

@@ -2,9 +2,11 @@ from karrio.server.core.utils import *
 import typing
 import base64
 import functools
+import collections.abc
 import strawberry
 import dataclasses
 from strawberry.types import Info
+import strawberry.types.nodes as nodes
 from rest_framework import exceptions
 from django.utils.translation import gettext_lazy as _
 
@@ -290,13 +292,28 @@ class PageInfo:
         - https://relay.dev/graphql/connections.htm
     """
 
-    has_next_page: bool
-    has_previous_page: bool
-    start_cursor: typing.Optional[str]
-    end_cursor: typing.Optional[str]
-    # The total is a full-filter COUNT(*) — a second scan once a keyword
-    # filter is present — so it only runs when a query selects ``count``.
+    # Both queries behind a connection run on demand: the page SELECT when a
+    # query selects edges or cursors, the full-filter COUNT(*) when it selects
+    # ``count``. A count badge never loads rows, a list without a total never
+    # counts.
+    page: strawberry.Private["Page"]
     count_resolver: strawberry.Private[typing.Callable[[], int]]
+
+    @strawberry.field
+    def has_next_page(self) -> bool:
+        return self.page.has_next_page
+
+    @strawberry.field
+    def has_previous_page(self) -> bool:
+        return False
+
+    @strawberry.field
+    def start_cursor(self) -> typing.Optional[str]:
+        return self.page.start_cursor
+
+    @strawberry.field
+    def end_cursor(self) -> typing.Optional[str]:
+        return self.page.end_cursor
 
     @strawberry.field
     def count(self) -> int:
@@ -324,35 +341,81 @@ def build_entity_cursor(entity: T):
     return base64.b64encode(entityid).decode()
 
 
+class Page(collections.abc.Sequence):
+    """The edges of one page, read from the database on first use."""
+
+    def __init__(self, queryset, first: int, offset: int):
+        self.queryset = queryset
+        self.first = first
+        self.offset = offset
+
+    @functools.cached_property
+    def fetched(self) -> typing.List[Edge]:
+        # Fetch the requested results plus one, just to calculate `has_next_page`
+        # fmt: off
+        results = self.queryset[self.offset:self.offset+self.first+1]
+        # fmt: on
+
+        return [
+            Edge(node=entity, cursor=build_entity_cursor(entity)) for entity in results
+        ]
+
+    @property
+    def has_next_page(self) -> bool:
+        return len(self.fetched) > self.first
+
+    @property
+    def start_cursor(self) -> typing.Optional[str]:
+        return self.fetched[0].cursor if self.fetched else None
+
+    @property
+    def end_cursor(self) -> typing.Optional[str]:
+        return self.fetched[-2].cursor if len(self.fetched) > 1 else None
+
+    @functools.cached_property
+    def edges(self) -> typing.List[Edge]:
+        return self.fetched[:-1] if self.has_next_page else self.fetched
+
+    def __getitem__(self, index):
+        return self.edges[index]
+
+    def __len__(self) -> int:
+        return len(self.edges)
+
+
 def paginated_connection(
     queryset,
     first: int = 25,
     offset: int = 0,
 ) -> Connection[T]:
-    """A non-trivial implementation should efficiently fetch only
-    the necessary books after the offset.
-    For simplicity, here we build the list and then slice it accordingly
+    """Paginate a queryset without touching the database: the page and the
+    total are only queried for the parts of the connection a query selects.
     """
+    page = Page(queryset, first, offset)
 
-    # Fetch the requested results plus one, just to calculate `has_next_page`
-    # fmt: off
-    results = queryset[offset:offset+first+1]
-    # fmt: on
-
-    edges: typing.List[typing.Any] = [
-        Edge(node=typing.cast(T, entity), cursor=build_entity_cursor(entity))
-        for entity in results
-    ]
     return Connection(
-        page_info=PageInfo(
-            count_resolver=queryset.count,
-            has_previous_page=False,
-            has_next_page=len(results) > first,
-            start_cursor=edges[0].cursor if edges else None,
-            end_cursor=edges[-2].cursor if len(edges) > 1 else None,
-        ),
-        edges=(edges[:-1] if len(edges) > first else edges),
+        page_info=PageInfo(page=page, count_resolver=queryset.count),
+        edges=typing.cast(typing.List[typing.Any], page),
     )
+
+
+def _fields_named(selections, name: str) -> typing.Iterator[nodes.SelectedField]:
+    for selection in selections:
+        if isinstance(selection, nodes.SelectedField):
+            if selection.name == name:
+                yield selection
+        else:  # a fragment spread or inline fragment: look inside
+            yield from _fields_named(selection.selections, name)
+
+
+def selects(info: Info, *path: str) -> bool:
+    """Whether the operation selects ``path`` under the field being resolved,
+    e.g. ``selects(info, "edges", "node", "tracker")`` on a connection.
+    """
+    fields = info.selected_fields
+    for name in path:
+        fields = [child for field in fields for child in _fields_named(field.selections, name)]
+    return bool(fields)
 
 
 def is_unset(v: typing.Any) -> bool:

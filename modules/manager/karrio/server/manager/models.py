@@ -1072,9 +1072,35 @@ class Shipment(core.OwnedEntity):
             return self.shipment_tracker
         return None
 
+    # Listing queries leave the documents in the database and read their
+    # presence instead: a label is a base64 file of tens of kilobytes.
+    LISTING_DEFERRED = ("label", "invoice")
+    TRACKER_PAYLOAD = (
+        "shipment_tracker__events",
+        "shipment_tracker__messages",
+        "shipment_tracker__delivery_image",
+        "shipment_tracker__signature_image",
+    )
+
+    @classmethod
+    def for_listing(cls, queryset, with_tracker: bool = False):
+        """Trim a queryset to what a listing reads. The label and invoice are
+        never loaded (``label_url`` reads the annotation); the tracker's events
+        and images only when the caller selects the tracker itself.
+        """
+        queryset = queryset.defer(*cls.LISTING_DEFERRED).annotate(
+            _has_label=models.Q(label__isnull=False),
+            _has_invoice=models.Q(invoice__isnull=False),
+        )
+        return queryset if with_tracker else queryset.defer(*cls.TRACKER_PAYLOAD)
+
+    def has_document(self, name: str) -> bool:
+        present = getattr(self, f"_has_{name}", None)
+        return getattr(self, name) is not None if present is None else bool(present)
+
     @property
     def label_url(self) -> typing.Optional[str]:
-        if self.label is None:
+        if not self.has_document("label"):
             return None
 
         return urls.reverse(
@@ -1086,7 +1112,7 @@ class Shipment(core.OwnedEntity):
 
     @property
     def invoice_url(self) -> typing.Optional[str]:
-        if self.invoice is None:
+        if not self.has_document("invoice"):
             return None
 
         return urls.reverse(

@@ -1932,7 +1932,10 @@ class ShipmentType:
         queryset = filters.ShipmentFilters(
             filter_dict, manager.Shipment.access_by(info.context.request, manager=mgr)
         ).qs
-        return utils.paginated_connection(queryset, **_filter.pagination())
+        rows = manager.Shipment.for_listing(
+            queryset, with_tracker=utils.selects(info, "edges", "node", "tracker")
+        )
+        return utils.paginated_connection(rows, **_filter.pagination())
 
 
 # ─────────────────────────────────────────────────────────────────────────────

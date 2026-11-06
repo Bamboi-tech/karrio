@@ -44,6 +44,9 @@ from karrio.server.core.tests.test_references_i18n import (
     TestReferencesTranslation,
     TestCarriersTranslation,
 )
+from karrio.server.core.tests.test_references_cache import (
+    TestReferencesCache,
+)
 from karrio.server.core.tests.test_schema_safety import (
     TestRollingDeploySafetyCheck,
 )

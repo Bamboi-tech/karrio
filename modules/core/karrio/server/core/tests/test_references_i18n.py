@@ -30,8 +30,8 @@ class TestReferencesTranslation(APITestCase):
         second = self.client.get("/v1/references?reduced=true", HTTP_HOST="second.example.com")
         self.assertEqual(first.status_code, status.HTTP_200_OK)
         self.assertEqual(second.status_code, status.HTTP_200_OK)
-        self.assertIn("first.example.com", first.data["HOST"])
-        self.assertIn("second.example.com", second.data["HOST"])
+        self.assertIn("first.example.com", first.json()["HOST"])
+        self.assertIn("second.example.com", second.json()["HOST"])
         self.assertNotEqual(first["ETag"], second["ETag"])
 
     def test_references_carry_an_etag_and_honour_if_none_match(self):

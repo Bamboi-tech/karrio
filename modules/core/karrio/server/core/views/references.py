@@ -1,4 +1,5 @@
 import json
+import typing
 import hashlib
 import yaml  # type: ignore
 from rest_framework import status
@@ -7,6 +8,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.request import Request
 from rest_framework.renderers import JSONRenderer
+from django.http import HttpResponse, HttpResponseNotModified
 from django.urls import path
 from django.conf import settings
 from django.core.cache import cache
@@ -20,6 +22,9 @@ import karrio.server.openapi as openapi
 ENDPOINT_ID = "&&"  # This endpoint id is used to make operation ids unique make sure not to duplicate
 BASE_PATH = getattr(settings, "BASE_PATH", "")
 REFERENCES_CACHE_TTL = 300
+# The payload is scoped to the caller (their custom carriers), so only the
+# browser may keep it, and it must revalidate with the ETag on every use.
+REFERENCES_CACHE_CONTROL = "private, no-cache"
 References = openapi.OpenApiResponse(
     openapi.OpenApiTypes.OBJECT,
     examples=[
@@ -85,6 +90,15 @@ def references(request: Request):
 
         language = lang or getattr(request, "LANGUAGE_CODE", settings.LANGUAGE_CODE)
         cache_key = _references_cache_key(request, language, reduced)
+        etag_key = f"{cache_key}:etag"
+        offered = _if_none_match(request)
+
+        # A revalidation only needs the validator: answer it from the small
+        # ETag entry without loading the serialized payload.
+        etag = cache.get(etag_key) if offered else None
+        if _matches(offered, etag):
+            return _not_modified(etag)
+
         entry = cache.get(cache_key)
 
         if entry is None:
@@ -94,16 +108,18 @@ def references(request: Request):
                 data = dataunits.contextual_reference(reduced=reduced)
                 data = translate_references(data)
 
-            entry = dict(etag=_etag(data), data=data)
-            cache.set(cache_key, entry, REFERENCES_CACHE_TTL)
-
-        if _matches_if_none_match(request, entry["etag"]):
-            return Response(
-                status=status.HTTP_304_NOT_MODIFIED, headers={"ETag": entry["etag"]}
+            entry = dict(etag=_etag(data), body=JSONRenderer().render(data))
+            cache.set_many(
+                {cache_key: entry, etag_key: entry["etag"]}, REFERENCES_CACHE_TTL
             )
 
-        return Response(
-            entry["data"], status=status.HTTP_200_OK, headers={"ETag": entry["etag"]}
+        if _matches(offered, entry["etag"]):
+            return _not_modified(entry["etag"])
+
+        return HttpResponse(
+            entry["body"],
+            content_type="application/json",
+            headers=_validators(entry["etag"]),
         )
     except Exception as e:
         from karrio.server.core.logging import logger
@@ -127,8 +143,10 @@ def _references_cache_key(request: Request, language: str, reduced: bool) -> str
     return ":".join(
         str(part)
         for part in (
-            "references",
+            # "v2": entries hold the serialized body; never read a "v1" dict.
+            "references:v2",
             dataunits.get_references_version(),
+            settings.VERSION,
             request.build_absolute_uri("/"),
             getattr(getattr(raw, "org", None), "pk", None),
             language,
@@ -146,14 +164,25 @@ def _etag(data: dict) -> str:
     return f'"{digest}"'
 
 
-def _matches_if_none_match(request: Request, etag: str) -> bool:
+def _if_none_match(request: Request) -> set:
     header = request.META.get("HTTP_IF_NONE_MATCH", "")
-    offered = {
+    return {
         tag.strip().removeprefix("W/").strip('"')
         for tag in header.split(",")
         if tag.strip()
     }
-    return "*" in offered or etag.strip('"') in offered
+
+
+def _matches(offered: set, etag: typing.Optional[str]) -> bool:
+    return etag is not None and ("*" in offered or etag.strip('"') in offered)
+
+
+def _validators(etag: str) -> dict:
+    return {"ETag": etag, "Cache-Control": REFERENCES_CACHE_CONTROL}
+
+
+def _not_modified(etag: str) -> HttpResponseNotModified:
+    return HttpResponseNotModified(headers=_validators(etag))
 
 
 router.urls.append(path("references", references))

@@ -5,3 +5,4 @@ export * from "./logger";
 export * from "./sample";
 export * from "./autocomplete";
 export * from "./crypto";
+export * from "./references-cache";

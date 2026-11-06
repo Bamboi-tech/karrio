@@ -1,5 +1,6 @@
 import pkgutil
 import strawberry
+import strawberry.extensions as extensions
 import strawberry.schema.config as config
 from strawberry.types import Info
 
@@ -62,5 +63,11 @@ schema = strawberry.Schema(  # type: ignore
     mutation=Mutation,
     types=[*EXTRA_TYPES],
     config=config.StrawberryConfig(auto_camel_case=False),
-    extensions=[],
+    # The dashboard sends the same few operation texts all day; parsing and
+    # validating a 100-line document again on every request was a fixed cost
+    # paid before any resolver ran. Both caches are per process and bounded.
+    extensions=[
+        lambda: extensions.ParserCache(maxsize=256),
+        lambda: extensions.ValidationCache(maxsize=256),
+    ],
 )

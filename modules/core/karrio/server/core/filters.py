@@ -304,6 +304,9 @@ class ShipmentFilters(filters.FilterSet):
     )
     status = filters.MultipleChoiceFilter(
         field_name="status",
+        # A column of the row itself cannot duplicate rows; the default
+        # DISTINCT compared every column of every match, documents included.
+        distinct=False,
         choices=[(c.value, c.value) for c in list(serializers.ShipmentStatus)],
         help_text=f"""
         shipment status

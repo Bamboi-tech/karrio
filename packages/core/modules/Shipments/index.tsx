@@ -106,6 +106,7 @@ import {
   getERPStatus,
 } from "@karrio/hooks/erp-actions";
 import { useBamboiFeatures } from "@karrio/hooks/bamboi-features";
+import { useBrowserIdle } from "@karrio/hooks/browser-idle";
 import { ConfirmationDialog } from "@karrio/ui/components/confirmation-dialog";
 import { ReasonPromptDialog } from "@karrio/ui/components/reason-prompt-dialog";
 import type {
@@ -767,8 +768,12 @@ function ShipmentsBoard({ seed, view }: ShipmentsPageProps): JSX.Element {
     [],
   );
   const { previewShipment, prefetchShipment } = useContext(ShipmentPreviewSheetContext);
-  const { user_connections } = useCarrierConnections();
-  const { system_connections } = useSystemConnections();
+  // Everything the first paint of the table does not need waits until the
+  // rows are on screen and the browser is idle: the list goes first, alone,
+  // on an API with two workers. Until then the connections are empty (a
+  // row only reads avatar colours from them) and the flags answer from
+  // their defaults; see settled below.
+  const idle = useBrowserIdle();
   const documentPrinter = useDocumentPrinter();
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -781,9 +786,6 @@ function ShipmentsBoard({ seed, view }: ShipmentsPageProps): JSX.Element {
   const erpActions = useShipmentERPActions(undefined, { silent: true });
   // Pick & Print's per-row merged print (btn_print_batch).
   const printBatches = useERPPrintBatches();
-  // Same flags as the per-row menu: until the ERP registry loads, the
-  // identical client-side defaults answer, so the toolbar never flickers.
-  const { isEnabled } = useBamboiFeatures();
   const context = useShipments({
     // The same defaults the server page fetched with, so the seed below
     // lands on the key this hook derives from the URL.
@@ -805,6 +807,12 @@ function ShipmentsBoard({ seed, view }: ShipmentsPageProps): JSX.Element {
   // A page that came with the HTML counts as fetched: react-query reports
   // seeded data as never fetched, and the rows must not wait for a refetch.
   const listReady = query.isFetched || shipments !== undefined;
+  const settled = idle && (listReady || query.isError || isFailedShipmentsView(filter));
+  const { user_connections } = useCarrierConnections({ enabled: settled });
+  const { system_connections } = useSystemConnections(undefined, { enabled: settled });
+  // Same flags as the per-row menu: until the ERP registry loads, the
+  // identical client-side defaults answer, so the toolbar never flickers.
+  const { isEnabled } = useBamboiFeatures({ enabled: settled });
   const {
     query: { data: { document_templates } = {} },
   } = useDocumentTemplates({

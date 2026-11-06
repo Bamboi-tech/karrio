@@ -76,7 +76,10 @@ export const fallbackFeatures = (): BamboiFeature[] =>
     enabled,
   }));
 
-export function useBamboiFeatures() {
+// `enabled` lets a page hold the fetch until it has painted what matters
+// (the shipments board waits for its rows and an idle browser): isEnabled
+// answers from the defaults meanwhile, which is the designed fallback.
+export function useBamboiFeatures({ enabled = true }: { enabled?: boolean } = {}) {
   const karrio = useKarrio();
 
   const query = useAuthenticatedQuery({
@@ -85,6 +88,7 @@ export function useBamboiFeatures() {
       karrio.axios
         .get<{ features: BamboiFeature[] }>("/v1/erp/features")
         .then(({ data }) => data.features),
+    enabled,
     // The registry barely changes; a short staleTime keeps every menu from
     // refetching it on mount while a settings toggle still shows up quickly.
     staleTime: 30000,

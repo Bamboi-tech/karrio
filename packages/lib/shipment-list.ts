@@ -201,6 +201,23 @@ export function writeShipmentListCookie(scope: string, view: ShipmentListView) {
   document.cookie = `${SHIPMENT_LIST_COOKIE}=${encodeURIComponent(value)};path=/;max-age=${SHIPMENT_LIST_COOKIE_MAX_AGE};samesite=lax`;
 }
 
+// The client's read of the mirror, for a prefetch made before the board
+// mounts: the same defaults the server page will derive on arrival.
+export function readShipmentListCookie(scope: string): ShipmentListView {
+  const match = document.cookie
+    .split("; ")
+    .find((entry) => entry.startsWith(`${SHIPMENT_LIST_COOKIE}=`));
+  let raw: string | null = null;
+  try {
+    raw = match
+      ? decodeURIComponent(match.slice(SHIPMENT_LIST_COOKIE.length + 1))
+      : null;
+  } catch {
+    // Malformed escape sequence: defaults.
+  }
+  return parseShipmentListView(raw, scope);
+}
+
 // The board's defaults for a view; the URL overrides them.
 export const shipmentListDefaults = (
   view: Pick<ShipmentListView, "preferences" | "first">,

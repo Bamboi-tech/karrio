@@ -30,6 +30,9 @@ export function NavMain({
     icon?: LucideIcon
     isActive?: boolean
     external?: boolean
+    // Called when the pointer or focus lands on the link: a chance to
+    // prefetch what the page behind it needs.
+    onIntent?: () => void
     items?: {
       title: string
       url: string
@@ -104,7 +107,7 @@ export function NavMain({
                       <span>{item.title}</span>
                     </a>
                   ) : (
-                    <AppLink href={item.url}>
+                    <AppLink href={item.url} onMouseEnter={item.onIntent} onFocus={item.onIntent}>
                       {item.icon && <item.icon />}
                       <span>{item.title}</span>
                     </AppLink>

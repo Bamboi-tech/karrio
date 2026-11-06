@@ -43,6 +43,8 @@ import {
   initialShipmentFilter,
   isFailedShipmentsView,
   parseShipmentFilter,
+  readShipmentListCookie,
+  shipmentListFilter,
   shipmentQueryFilter,
 } from "@karrio/lib/shipment-list";
 import {
@@ -52,6 +54,7 @@ import {
   useKarrio,
   useQueryScope,
 } from "./karrio";
+import { useShipmentListScope } from "./shipment-list-preferences";
 import { ShipmentType } from "@karrio/types";
 import { useSearchParams } from "next/navigation";
 import React from "react";
@@ -478,4 +481,31 @@ export function useShipmentBadgeCounts(
     staleTime: STALE_TIME,
     onError,
   });
+}
+
+// Warms the board's default first page and its card counts from somewhere
+// else — the home page when it is idle, the sidebar link on hover or focus
+// — with the keys and fetches the board itself uses. The view comes from
+// the same cookie the board's server page reads, so both arrive at one
+// filter.
+export function usePrefetchShipmentsList() {
+  const karrio = useKarrio();
+  const queryClient = useQueryClient();
+  const scope = useQueryScope();
+  const viewScope = useShipmentListScope();
+
+  return React.useCallback(() => {
+    if (!karrio.isAuthenticated || !viewScope) return;
+    const filter = shipmentListFilter(null, readShipmentListCookie(viewScope));
+    const prefetch = <T,>(query: { queryKey: unknown[]; queryFn: () => Promise<T> }) =>
+      queryClient.prefetchQuery({
+        queryKey: scopeQueryKey(query.queryKey, scope) as unknown[],
+        queryFn: query.queryFn,
+        staleTime: STALE_TIME,
+      });
+    return Promise.all([
+      prefetch(shipmentsQuery(karrio, filter, "list")),
+      prefetch(shipmentBadgeCountsQuery(karrio)),
+    ]);
+  }, [karrio, queryClient, scope, viewScope]);
 }

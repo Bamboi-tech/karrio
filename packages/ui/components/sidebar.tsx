@@ -30,6 +30,7 @@ import {
   SidebarMenuButton,
 } from "@karrio/ui/components/ui/sidebar"
 import { useAPIMetadata } from "@karrio/hooks/api-metadata"
+import { usePrefetchShipmentsList } from "@karrio/hooks/shipment"
 import { useUser } from "@karrio/hooks/user"
 import { useAppMode } from "@karrio/hooks/app-mode"
 
@@ -39,6 +40,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const {
     query: { data: { user } = {} },
   } = useUser();
+  // Hovering or focusing the link already fetches the board's first page.
+  const prefetchShipments = usePrefetchShipmentsList();
 
   // Navigation items based on Karrio features - matching expanded-sidebar.tsx exactly
   const navMain = [
@@ -51,6 +54,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       title: "Shipments",
       url: "/shipments",
       icon: Truck,
+      onIntent: prefetchShipments,
     },
     {
       title: "Pickups",

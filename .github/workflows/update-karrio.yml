@@ -6,6 +6,8 @@
 #   Repo (or environment) secrets:
 #     ANSIBLE_VAULT_PASSWORD — the vault password (same as local .vault_pass)
 #     SSH_PRIVATE_KEY        — private key matching the terraform ssh_public_key
+#   Repo variables (SSH over the tailnet, see ansible/README.md):
+#     TAILNET_SSH_ENVS, TS_OAUTH_CLIENT_ID, TS_AUDIENCE
 name: Update Karrio (Ansible)
 
 on:
@@ -30,6 +32,7 @@ jobs:
     environment: ${{ inputs.env }}
     permissions:
       contents: read
+      id-token: write # tailnet login, .github/actions/tailnet
     defaults:
       run:
         working-directory: ansible
@@ -80,6 +83,15 @@ jobs:
           printf '%s\n' "$ANSIBLE_VAULT_ENV_FILE" > "vault/env/${{ inputs.env }}.yaml"
           chmod 600 "vault/env/${{ inputs.env }}.yaml"
 
+      - name: Reach the VM over the tailnet
+        id: tailnet
+        uses: ./.github/actions/tailnet
+        with:
+          host: bamboi-karrio-${{ inputs.env }}-vm
+          enabled: ${{ contains(vars.TAILNET_SSH_ENVS, inputs.env) }}
+          client-id: ${{ vars.TS_OAUTH_CLIENT_ID }}
+          audience: ${{ vars.TS_AUDIENCE }}
+
       - name: Install SSH key for Ansible
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
@@ -96,6 +108,7 @@ jobs:
           fi
           ansible-playbook google-vm.yaml \
             --private-key ~/.ssh/id_ed25519 \
+            ${{ steps.tailnet.outputs.ansible_args }} \
             -e env=${{ inputs.env }} \
             "${EXTRA_ARGS[@]}"
 

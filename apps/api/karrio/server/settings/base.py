@@ -73,7 +73,11 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
     # Sentry distributed tracing headers
     "sentry-trace",
     "baggage",
+    # The dashboard revalidates its stored /v1/references copy from another
+    # origin: it sends the validator and must be able to read the new one.
+    "if-none-match",
 ]
+CORS_EXPOSE_HEADERS = ["ETag"]
 
 # HTTPS configuration
 if USE_HTTPS is True:

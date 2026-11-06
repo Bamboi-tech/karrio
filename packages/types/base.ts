@@ -609,3 +609,19 @@ export type UsagePrefetch = {
   filter: graph.UsageFilter;
   fetchedAt: number;
 };
+
+/** A query result a server page fetched for the first render, with its fetch time. */
+export type ServerSeed<T> = { data: T; fetchedAt: number };
+
+/** What the shipments server page hands to its client board on a document
+ *  request: the filter and cache scope it fetched for, and the two fetches
+ *  themselves, still running, so the page streams instead of waiting. A
+ *  fetch resolves to null when it failed or timed out; `list` is null when
+ *  no page is fetched at all (the Failed card, or a browser whose time zone
+ *  the server does not know yet). */
+export type ShipmentsPageSeed = {
+  filter: graph.ShipmentFilter;
+  scope: { orgId?: string; testMode?: boolean };
+  list: Promise<ServerSeed<graph.get_shipments_list> | null> | null;
+  badges: Promise<ServerSeed<graph.shipment_badge_counts> | null>;
+};

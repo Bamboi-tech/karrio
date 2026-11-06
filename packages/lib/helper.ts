@@ -39,8 +39,35 @@ export function formatDate(date_string: string): string {
   return moment(date_string).format("ll");
 }
 
-export function formatDateTime(date_string: string): string {
-  return moment(date_string).format("MMM D, hh:mm A");
+const zonedDateTimeFormats = new Map<string, Intl.DateTimeFormat>();
+
+// With a time zone the result no longer depends on where the code runs: a
+// server render and the browser that hydrates it print the same text. The
+// parts are joined by hand because the literals between them differ per ICU
+// version. Without one, the browser's own zone, as before.
+export function formatDateTime(
+  date_string: string,
+  timeZone?: string | null,
+): string {
+  const date = new Date(date_string);
+  if (!timeZone || isNaN(date.getTime())) {
+    return moment(date_string).format("MMM D, hh:mm A");
+  }
+  const format =
+    zonedDateTimeFormats.get(timeZone) ||
+    new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h12",
+    });
+  zonedDateTimeFormats.set(timeZone, format);
+  const part = Object.fromEntries(
+    format.formatToParts(date).map(({ type, value }) => [type, value]),
+  );
+  return `${part.month} ${part.day}, ${part.hour}:${part.minute} ${part.dayPeriod}`;
 }
 
 export function formatDateTimeLong(date_string: string): string {
@@ -389,6 +416,20 @@ export function removeUrlParam(param: string) {
   const params = getURLSearchParams();
   delete params[param];
   insertUrlParam(params);
+}
+
+// Runs `task` once the browser is idle, or after `timeout` ms at the latest
+// (Safari has no requestIdleCallback: there the timeout is the delay). For
+// work that must not join the requests a page starts when it mounts: a
+// prefetch of what the operator opens next, the preload of a next page.
+// Returns the cancel function, so it fits an effect's cleanup.
+export function onIdle(task: () => void, timeout: number): () => void {
+  if (typeof window.requestIdleCallback === "function") {
+    const handle = window.requestIdleCallback(() => task(), { timeout });
+    return () => window.cancelIdleCallback(handle);
+  }
+  const handle = setTimeout(task, timeout);
+  return () => clearTimeout(handle);
 }
 
 export function jsonify(value: any): string {

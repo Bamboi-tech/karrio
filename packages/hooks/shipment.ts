@@ -21,10 +21,32 @@ import {
   CHANGE_SHIPMENT_STATUS,
   change_shipment_status,
   DISCARD_PARCEL,
+  GraphQLApi,
+  ServerSeed,
+  ShipmentsPageSeed,
+  shipment_badge_counts,
 } from "@karrio/types";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { gqlstr, handleFailure, insertUrlParam, onError } from "@karrio/lib";
 import {
+  hashQueryKey,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
+import {
+  gqlstr,
+  handleFailure,
+  insertUrlParam,
+  onError,
+  onIdle,
+} from "@karrio/lib";
+import {
+  SHIPMENT_PAGE_SIZE,
+  initialShipmentFilter,
+  isFailedShipmentsView,
+  parseShipmentFilter,
+  shipmentQueryFilter,
+} from "@karrio/lib/shipment-list";
+import {
+  QueryScope,
   scopeQueryKey,
   useAuthenticatedQuery,
   useKarrio,
@@ -34,8 +56,10 @@ import { ShipmentType } from "@karrio/types";
 import { useSearchParams } from "next/navigation";
 import React from "react";
 
-const PAGE_SIZE = 20;
-const PAGINATION = { offset: 0, first: PAGE_SIZE };
+const PAGE_SIZE = SHIPMENT_PAGE_SIZE;
+const STALE_TIME = 5000;
+// How long the next page's preload waits for an idle browser.
+const NEXT_PAGE_IDLE_MS = 1000;
 
 // Which shipment document the list fetches. "full" is the historical
 // GET_SHIPMENTS (every address, customs, payment, all rates) and stays the
@@ -63,53 +87,35 @@ type FilterType<V extends ShipmentsVariant> = ShipmentFilter & {
   isDisabled?: boolean | ((filter: ShipmentFilter) => boolean);
   preloadNextPage?: boolean;
   variant?: V;
+  // The first page as the server page fetched it ("list" variant only).
+  initial?:
+    | (ServerSeed<get_shipments_list> &
+        Pick<ShipmentsPageSeed, "filter" | "scope">)
+    | null;
 };
 
-// Normalizes filter input from any source — the hook's initialData, the URL
-// (all strings) or a setFilter call — into the shape the query is keyed and
-// sent with. Shared by the state initializer and setFilter so a deep link
-// seeds exactly the filter a later setFilter would have produced.
-function parseFilter(options: Record<string, unknown>): ShipmentFilter {
-  return Object.keys(options).reduce((acc, key) => {
-    if (["modal"].includes(key)) return acc;
-    // A key explicitly set to undefined means "clear this filter". Dropping
-    // it here keeps it out of the URL too — URLSearchParams would otherwise
-    // stringify it to a literal "undefined", which then round-trips back in
-    // as a real filter value. The string check heals URLs already polluted
-    // that way.
-    const value = options[key];
-    if (value == null || value === "undefined") return acc;
-    // Multi-value filters: a comma-joined URL param must round-trip back
-    // into a list (fulfilment_mode is the Bamboi fork's route filter).
-    if (["carrier_name", "status", "service", "fulfilment_mode"].includes(key))
-      return {
-        ...acc,
-        [key]: ([] as unknown[])
-          .concat(value as string | string[])
-          .flatMap((item) =>
-            typeof item === "string" ? item.split(",") : [item],
-          )
-          .map((v) => (v === "purchased" ? "created" : v)),
-      };
-    if (["offset", "first"].includes(key))
-      return {
-        ...acc,
-        [key]: parseInt(value as string),
-      };
-    if (
-      ["has_tracker", "has_manifest"].includes(key) ||
-      ["true", "false"].includes(value as string)
-    )
-      return {
-        ...acc,
-        [key]: value === true || value === "true",
-      };
+// A result the server page fetched, with the filter and cache scope it was
+// fetched for; it seeds only the query with exactly that key.
+type Seeded<T> = (ServerSeed<T> & Pick<ShipmentsPageSeed, "scope">) | null;
+const sameScope = (a: QueryScope, b: QueryScope) =>
+  (a.orgId || null) === (b.orgId || null) && !!a.testMode === !!b.testMode;
 
-    return {
-      ...acc,
-      [key]: value,
-    };
-  }, PAGINATION as ShipmentFilter);
+// The one definition of a shipments page query. useShipments, its
+// prefetches and the prefetch other pages do for the board all build their
+// key and fetch here, so a prefetched page is the page the board reads.
+export function shipmentsQuery<V extends ShipmentsVariant>(
+  karrio: { graphql: GraphQLApi },
+  filter: ShipmentFilter,
+  variant: V,
+  cacheKey?: string,
+) {
+  return {
+    queryKey: [cacheKey || "shipments", filter] as unknown[],
+    queryFn: () =>
+      karrio.graphql.request<ShipmentsData<V>>(SHIPMENTS_QUERY[variant], {
+        variables: { filter: shipmentQueryFilter(filter) },
+      }),
+  };
 }
 
 export function useShipments<V extends ShipmentsVariant = "full">({
@@ -118,6 +124,7 @@ export function useShipments<V extends ShipmentsVariant = "full">({
   preloadNextPage = false,
   cacheKey,
   variant = "full" as V,
+  initial,
   ...initialData
 }: FilterType<V> = {}) {
   const karrio = useKarrio();
@@ -130,59 +137,50 @@ export function useShipments<V extends ShipmentsVariant = "full">({
   // needed to "apply" the URL after mount.
   const searchParams = useSearchParams();
   const [filter, _setFilter] = React.useState<ShipmentFilter>(() =>
-    parseFilter({
-      ...initialData,
-      ...(setVariablesToURL && searchParams
+    initialShipmentFilter(
+      initialData,
+      setVariablesToURL && searchParams
         ? Object.fromEntries(searchParams.entries())
-        : {}),
-    }),
+        : null,
+    ),
   );
-  const fetch = (variables: { filter: ShipmentFilter }) => {
-    // Underscore-prefixed statuses are UI sentinels (the Failed card's
-    // "_failed_creation", the address-review card's "_address_review"): they
-    // keep a FiltersCard highlighted but are not server-side statuses. Strip
-    // them from the outgoing query; the rest of the filter still applies.
-    const status = ([] as string[])
-      .concat((variables.filter.status as any) || [])
-      .filter((s) => !`${s}`.startsWith("_"));
-    const warehouseView = ([] as string[]).concat(variables.filter.status || [])
-      .map((status) => ({ _print_today: "today", _print_planned: "planned", _review_clear: "complete", _picked: "picked" } as Record<string, string>)[status])
-      .find(Boolean);
-    const filter = {
-      ...variables.filter,
-      ...(warehouseView ? { warehouse_view: warehouseView } : {}),
-      ...(status.length ? { status } : { status: undefined }),
-    } as ShipmentFilter;
-    return karrio.graphql.request<ShipmentsData<V>>(SHIPMENTS_QUERY[variant], {
-      variables: { filter },
-    });
-  };
+  const queryOf = (filter: ShipmentFilter) =>
+    shipmentsQuery(karrio, filter, variant, cacheKey);
 
   const disabled =
     typeof isDisabled === "function" ? isDisabled(filter) : isDisabled;
 
   // Queries
+  // The seed lands on the key it was fetched for and no other: a filter
+  // change makes a new key and fetches. Its fetch time travels along, so a
+  // page that sat unhydrated past the stale time refetches on mount.
+  const seeded =
+    !!initial &&
+    sameScope(initial.scope, scope) &&
+    hashQueryKey([initial.filter]) === hashQueryKey([filter]);
   const query = useAuthenticatedQuery({
-    queryKey: [cacheKey || "shipments", filter],
-    queryFn: () => fetch({ filter }),
+    ...queryOf(filter),
+    initialData: seeded ? (initial.data as ShipmentsData<V>) : undefined,
+    initialDataUpdatedAt: seeded ? initial.fetchedAt : undefined,
     enabled: !disabled,
     keepPreviousData: true,
-    staleTime: 5000,
+    staleTime: STALE_TIME,
     onError,
   });
 
   function prefetch(options: ShipmentFilter) {
-    const nextFilter = parseFilter(options as Record<string, unknown>);
-    if ((nextFilter.status || []).some((status) => `${status}` === "_failed_creation")) return;
+    const nextFilter = parseShipmentFilter(options as Record<string, unknown>);
+    if (isFailedShipmentsView(nextFilter)) return;
+    const { queryKey, queryFn } = queryOf(nextFilter);
     return queryClient.prefetchQuery({
-      queryKey: scopeQueryKey([cacheKey || "shipments", nextFilter], scope) as unknown[],
-      queryFn: () => fetch({ filter: nextFilter }),
-      staleTime: 5000,
+      queryKey: scopeQueryKey(queryKey, scope) as unknown[],
+      queryFn,
+      staleTime: STALE_TIME,
     });
   }
 
   function setFilter(options: ShipmentFilter) {
-    const params = parseFilter(options as Record<string, unknown>);
+    const params = parseShipmentFilter(options as Record<string, unknown>);
 
     if (setVariablesToURL) insertUrlParam(params);
     _setFilter(params);
@@ -192,24 +190,32 @@ export function useShipments<V extends ShipmentsVariant = "full">({
 
   React.useEffect(() => {
     if (preloadNextPage === false || disabled) return;
-    if (query.data?.shipments.page_info.has_next_page) {
-      // The next page starts one page-size further, not a hardcoded 20 —
-      // the shipments list lets the operator pick 20/50/100 via filter.first.
-      const _filter = {
-        ...filter,
-        offset:
-          ((filter.offset as number) || 0) +
-          ((filter.first as number) || PAGE_SIZE),
-      };
-      // Same key shape (cache key + filter + org/test-mode scope) as the
-      // query above builds through useAuthenticatedQuery, so the page the
-      // operator clicks next actually hits this prefetch.
+    // Never ahead of the page it follows: rows kept on screen while another
+    // filter loads say nothing about that filter's next page.
+    if (query.isPreviousData) return;
+    if (!query.data?.shipments.page_info.has_next_page) return;
+    // The next page starts one page-size further, not a hardcoded 20 —
+    // the shipments list lets the operator pick 20/50/100 via filter.first.
+    const _filter = {
+      ...filter,
+      offset:
+        ((filter.offset as number) || 0) +
+        ((filter.first as number) || PAGE_SIZE),
+    };
+    // Same key shape (cache key + filter + org/test-mode scope) as the
+    // query above builds through useAuthenticatedQuery, so the page the
+    // operator clicks next actually hits this prefetch. Sent once the
+    // browser is idle: a first page that came with the HTML is on screen
+    // before hydration, and its successor must not join the requests
+    // hydration starts.
+    const { queryKey, queryFn } = queryOf(_filter);
+    return onIdle(() => {
       queryClient.prefetchQuery(
-        scopeQueryKey([cacheKey || "shipments", _filter], scope) as unknown[],
-        () => fetch({ filter: _filter }),
+        scopeQueryKey(queryKey, scope) as unknown[],
+        queryFn,
       );
-    }
-  }, [query.data, filter.offset, queryClient]);
+    }, NEXT_PAGE_IDLE_MS);
+  }, [query.data, query.isPreviousData, filter.offset, queryClient]);
 
   return {
     query,
@@ -448,15 +454,28 @@ export function useShipmentMutation(
   };
 }
 
-export function useShipmentBadgeCounts() {
+// The counts on the board's status cards: key and fetch, like shipmentsQuery.
+export function shipmentBadgeCountsQuery(karrio: { graphql: GraphQLApi }) {
+  return {
+    queryKey: ["shipments", "badge-counts"] as unknown[],
+    queryFn: () =>
+      karrio.graphql.request<shipment_badge_counts>(
+        gqlstr(GET_SHIPMENT_BADGE_COUNTS),
+      ),
+  };
+}
+
+export function useShipmentBadgeCounts(
+  initial?: Seeded<shipment_badge_counts>,
+) {
   const karrio = useKarrio();
+  const scope = useQueryScope();
+  const seeded = !!initial && sameScope(initial.scope, scope);
   return useAuthenticatedQuery({
-    queryKey: ["shipments", "badge-counts"],
-    queryFn: () => karrio.graphql.request<Record<
-      "today" | "hold" | "review",
-      Pick<get_shipments_badge["shipments"], "page_info">
-    >>(gqlstr(GET_SHIPMENT_BADGE_COUNTS)),
-    staleTime: 5000,
+    ...shipmentBadgeCountsQuery(karrio),
+    initialData: seeded ? initial.data : undefined,
+    initialDataUpdatedAt: seeded ? initial.fetchedAt : undefined,
+    staleTime: STALE_TIME,
     onError,
   });
 }

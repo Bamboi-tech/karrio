@@ -10,6 +10,7 @@ interface AppLinkProps extends LinkProps<HTMLElement> {
   target?: string;
   className?: string;
   onClick?: (e: React.MouseEvent<HTMLAnchorElement, MouseEvent>) => void;
+  onFocus?: React.FocusEventHandler<HTMLAnchorElement>;
   children?: React.ReactNode;
   style?: React.CSSProperties;
 }

@@ -8,9 +8,10 @@ import { AppLink } from "@karrio/ui/core/components/app-link";
 import { Button } from "@karrio/ui/components/ui/button";
 import { useAppMode } from "@karrio/hooks/app-mode";
 import { useAPIUsage } from "@karrio/hooks/usage";
+import { usePrefetchShipmentsList } from "@karrio/hooks/shipment";
 import { useUser } from "@karrio/hooks/user";
 import { useRouter } from "next/navigation";
-import { p, usageDayLabel } from "@karrio/lib";
+import { onIdle, p, usageDayLabel } from "@karrio/lib";
 import {
   Package,
   MapPin,
@@ -31,6 +32,9 @@ import {
   SelectValue,
 } from "@karrio/ui/components/ui/select";
 
+// How long the shipments prefetch below waits for an idle browser at most.
+const SHIPMENTS_PREFETCH_IDLE_MS = 2000;
+
 export default function DashboardPage({
   initialUsage,
 }: {
@@ -48,6 +52,14 @@ export default function DashboardPage({
     dayLabels,
     currentFilter,
   } = useAPIUsage({ initialUsage, series: "dashboard" });
+  // The board is where most operators go next: warm its first page once
+  // this page has painted and the browser is idle, so the sidebar click
+  // shows rows at once. Same key and fetch as the board (one helper).
+  const prefetchShipments = usePrefetchShipmentsList();
+  React.useEffect(
+    () => onIdle(prefetchShipments, SHIPMENTS_PREFETCH_IDLE_MS),
+    [prefetchShipments],
+  );
 
   // Don't render until user is loaded
   if (userLoading) {

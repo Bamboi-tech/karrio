@@ -8,12 +8,14 @@ import { gqlstr, onError } from "@karrio/lib";
 // Using admin query shape which returns edges -> node
 export type SystemConnectionType = any;
 
-export function useSystemConnections(usageFilter?: any) {
+// `enabled`: see useCarrierConnections.
+export function useSystemConnections(usageFilter?: any, { enabled = true }: { enabled?: boolean } = {}) {
   const karrio = useKarrio();
 
   const query = useAuthenticatedQuery({
     queryKey: ["system_connections", usageFilter],
     queryFn: () => karrio.graphql.request<get_system_connections>(gqlstr(GET_SYSTEM_CONNECTIONS), { filter: usageFilter }),
+    enabled,
     staleTime: 5000,
   });
 

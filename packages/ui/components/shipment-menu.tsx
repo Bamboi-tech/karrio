@@ -27,6 +27,7 @@ import {
   pickForPurchase,
 } from "@karrio/hooks/erp-actions";
 import { useBamboiFeatures } from "@karrio/hooks/bamboi-features";
+import { useBrowserIdle } from "@karrio/hooks/browser-idle";
 import { getShopifyHold, shopifyHoldTooltip } from "./shipment-hold";
 import { DeleteConfirmationDialog } from "./delete-confirmation-dialog";
 import { ReasonPromptDialog } from "./reason-prompt-dialog";
@@ -122,12 +123,16 @@ const ShipmentMenuContent = ({
     confirmLabel: string;
     onConfirm: () => Promise<any>;
   } | null>(null);
+  // Both only matter once the menu opens: templates and flags are fetched
+  // when the browser is idle, so a list of a hundred rows does not start
+  // them while the page is still painting (one query each, shared by key).
+  const idle = useBrowserIdle();
   const {
     query: { data: { document_templates } = {} },
   } = useDocumentTemplates({
     related_object: "shipment",
     active: true,
-  } as any);
+  } as any, idle);
   const shopifyHold = getShopifyHold(shipment.metadata);
   // Bamboi fork: warehouse actions relayed to the ERP (Ship Today phase 2).
   // The ERP enforces its own gates; a refusal (hold, wrong status) surfaces
@@ -136,7 +141,7 @@ const ShipmentMenuContent = ({
   // Feature flags come from the ERP registry; until they load, isEnabled
   // answers from the identical client-side defaults, so the menu renders the
   // same before and after the fetch — no flicker.
-  const { isEnabled } = useBamboiFeatures();
+  const { isEnabled } = useBamboiFeatures({ enabled: idle });
   const erpLinked = isERPLinked(shipment.metadata);
   const erpStatus = getERPStatus(shipment.metadata);
   const erpSelfDelivery =

@@ -6,12 +6,16 @@ import { gqlstr } from "@karrio/lib";
 
 export type CarrierConnectionType = get_user_connections_user_connections;
 
-export function useCarrierConnections() {
+// `enabled`: a page that only needs the connections for details (the
+// shipments board reads avatar colours from them) can hold the fetch until
+// its own data is on screen.
+export function useCarrierConnections({ enabled = true }: { enabled?: boolean } = {}) {
   const karrio = useKarrio();
 
   const query = useAuthenticatedQuery({
     queryKey: ['user_connections'],
     queryFn: () => karrio.graphql.request<get_user_connections>(gqlstr(GET_USER_CONNECTIONS)),
+    enabled,
     staleTime: 5000,
   });
 

@@ -60,6 +60,20 @@ Applies SSH, UFW, fail2ban, unattended security upgrades, and basic sysctl harde
 
 **UFW vs Docker:** Docker-published ports bypass UFW. UFW protects host services like SSH; for container ports, rely on the GCP firewall (only 80/443 are open) and avoid publishing ports you don't need (only Caddy's 80/443 are published).
 
+## SSH over the tailnet
+
+SSH to the VMs moves off the public internet onto the Tailscale tailnet. sshd and its keys do not change; only the network path does.
+
+- `tailscale.yaml` installs Tailscale on a VM and joins it as `bamboi-karrio-<env>-vm` with the tag `tag:server`. A VM that has not joined needs a one-off, pre-approved auth key for that tag:
+  ```sh
+  TAILSCALE_AUTHKEY=tskey-auth-... ansible-playbook tailscale.yaml -e env=staging
+  ```
+  GitHub Actions: workflow **Tailnet (join VM)**, with the key as environment secret `TAILSCALE_AUTHKEY` (delete it afterwards).
+- `.github/actions/tailnet` lets a workflow job join the tailnet as a short-lived `tag:ci` node and points Ansible at the VM's tailnet address. The login is keyless (GitHub OIDC), so the job needs `id-token: write` and the repo variables `TS_OAUTH_CLIENT_ID` and `TS_AUDIENCE`.
+- The repo variable `TAILNET_SSH_ENVS` (`staging`, later `staging,production`) switches an environment over. Empty means the public address, as before; removing an environment is the rollback.
+
+The tailnet policy, the order of the move, closing the public port for all four VMs and the IAP fallback are in `docs/TAILNET_SSH.md` of the infra repo (`erpnext-chatwoot`).
+
 ## Managing the vaults
 
 ```sh

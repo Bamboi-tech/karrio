@@ -1,5 +1,5 @@
 # ── Stage 1: base ────────────────────────────────────────────────
-FROM node:22.5.1-alpine3.19 AS base
+FROM node:22.23.4-alpine3.23 AS base
 RUN apk add --no-cache libc6-compat
 RUN npm install -g turbo@^2
 
@@ -33,7 +33,7 @@ ENV NODE_OPTIONS=--max-old-space-size=4096
 RUN npm run build -w apps/dashboard
 
 # ── Stage 4: runner ──────────────────────────────────────────────
-FROM node:22.5.1-alpine3.19 AS runner
+FROM node:22.23.4-alpine3.23 AS runner
 RUN apk add --no-cache curl
 
 ARG VERSION

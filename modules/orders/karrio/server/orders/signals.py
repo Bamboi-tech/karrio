@@ -2,6 +2,7 @@ from rest_framework import status
 from django.db.models import signals
 
 from karrio.server.core import utils
+from karrio.server.core import warm_cache
 from karrio.server.conf import settings
 from karrio.server.core.utils import failsafe
 from karrio.server.events.serializers import EventTypes
@@ -155,6 +156,7 @@ def shipment_updated(
                 updates["order_id"] = first_order.order_id
 
         manager.Shipment.objects.filter(id=instance.id).update(**updates)
+        warm_cache.data_changed()  # queryset.update fires no post_save
 
     for order in related_orders:
         if order.shipments.filter(id=instance.id).exists() == False:

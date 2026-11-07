@@ -1,6 +1,7 @@
 from django.db.models import signals
 
 from karrio.server.core import utils
+from karrio.server.core import warm_cache
 from karrio.server.core.logging import logger
 import karrio.server.manager.models as models
 import karrio.server.manager.serializers as serializers
@@ -28,6 +29,12 @@ def register_signals():
     signals.post_save.connect(address_updated, sender=models.Address)
     signals.post_save.connect(parcel_updated, sender=models.Parcel)
     signals.post_delete.connect(parcel_deleted, sender=models.Parcel)
+    # The shipments list response cache is keyed on a data version; every
+    # Shipment or Tracking row change moves it (bulk paths call it themselves).
+    signals.post_save.connect(warm_cache.data_changed, sender=models.Shipment)
+    signals.post_delete.connect(warm_cache.data_changed, sender=models.Shipment)
+    signals.post_save.connect(warm_cache.data_changed, sender=models.Tracking)
+    signals.post_delete.connect(warm_cache.data_changed, sender=models.Tracking)
 
     logger.info("Karrio manager signals registered")
 

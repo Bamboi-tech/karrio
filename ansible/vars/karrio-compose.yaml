@@ -63,6 +63,11 @@ compose:
         # gunicorn-cfg.py reads this; the old hard-coded "debug" filled the
         # journal (1.9 GB).
         GUNICORN_LOG_LEVEL: "info"
+        # Warm response cache for the shipments board: comma-separated emails
+        # of the operators whose list and badge-count queries are served from
+        # Redis and re-warmed by the worker (PRDs/SHIPMENTS_WARM_LIST_CACHE.md).
+        # Empty = off. The worker needs the same value.
+        SHIPMENTS_WARM_USERS: "{{ shipments_warm_users | default('') }}"
       # GET / is the metadata endpoint (touches constance -> Postgres), so a
       # 200 proves Django, the DB and Redis cache are up. The header avoids
       # the SECURE_SSL_REDIRECT 301 (USE_HTTPS=True) so curl -f sees a real
@@ -146,6 +151,9 @@ compose:
         DATABASE_CONN_MAX_AGE: "60"
         SENTRY_TRACES_SAMPLE_RATE: "0.05"
         PERSIST_SDK_TRACING: "False"
+        # Same value as on api: the worker re-warms these users' lists and
+        # moves the data version when the tracking pulse changes shipments.
+        SHIPMENTS_WARM_USERS: "{{ shipments_warm_users | default('') }}"
       # 2 huey workers; see api for why limits exist at all.
       mem_limit: 900m
 

@@ -40,5 +40,9 @@ erp_gate_url: "https://erp.bamboi.eu"
 # Empty = the deploy stops before touching the VM (google-vm.yaml): with it
 # unset Karrio refuses every ERP draft with 403 erp_link_protected
 # (incident 2026-11-07). Production is single-tenant.
-erp_integration_user_id: ""
+# 1 = the admin account (t.guntenaar@bamboi.eu), which owns the ERP's token
+# and the Monta carrier connection. Deviation from docs/bamboi/
+# ERP_AUTHORIZATION.md, accepted 2026-11-07; a dedicated service account
+# needs the carrier connections cloned and the ERP routes repointed first.
+erp_integration_user_id: "1"
 erp_organization_id: ""

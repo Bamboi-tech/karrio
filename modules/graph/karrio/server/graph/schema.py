@@ -66,8 +66,13 @@ schema = strawberry.Schema(  # type: ignore
     # The dashboard sends the same few operation texts all day; parsing and
     # validating a 100-line document again on every request was a fixed cost
     # paid before any resolver ran. Both caches are per process and bounded.
+    # Instances, not factories: the pinned strawberry (requirements.txt) calls
+    # a factory as ext(execution_context=None), which these constructors do
+    # not accept, and every GraphQL POST then fails with a 500. The sync
+    # schema keeps one extension list per process, so the instances are
+    # exactly the shared caches wanted here.
     extensions=[
-        lambda: extensions.ParserCache(maxsize=256),
-        lambda: extensions.ValidationCache(maxsize=256),
+        extensions.ParserCache(maxsize=256),
+        extensions.ValidationCache(maxsize=256),
     ],
 )

@@ -5,6 +5,7 @@ from django.utils import timezone
 import karrio.lib as lib
 import karrio.server.serializers as serializers
 import karrio.server.core.utils as utils
+import karrio.server.core.warm_cache as warm_cache
 from karrio.server.core.logging import logger
 from karrio.server.core.gateway import Shipments, Connections
 from karrio.server.core.utils import create_carrier_snapshot, resolve_carrier
@@ -505,6 +506,9 @@ def bulk_save_trackers(
     if shipment_updates:
         models.Shipment.objects.bulk_update(shipment_updates, ["status"])
         logger.info("Bulk updated shipment statuses", count=len(shipment_updates))
+
+    # bulk_update fires no post_save: move the shipments list data version here.
+    warm_cache.data_changed()
 
 
 def _compute_shipment_status(tracker: models.Tracking) -> typing.Optional[str]:

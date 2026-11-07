@@ -358,7 +358,10 @@ def _statements(queries, table: str) -> list:
     return [q["sql"] for q in queries if f'FROM "{table}"' in q["sql"]]
 
 
-class TestShipmentsListCost(GraphTestCase):
+class ShipmentsListFixtures:
+    """The rows and requests of the dashboard board, shared with the warm
+    cache tests (test_shipments_warm_cache)."""
+
     @classmethod
     def setUpTestData(cls) -> None:
         super().setUpTestData()
@@ -422,6 +425,8 @@ class TestShipmentsListCost(GraphTestCase):
             {"filter": {"offset": 0, "first": first, "status": DASHBOARD_STATUSES}},
         )
 
+
+class TestShipmentsListCost(ShipmentsListFixtures, GraphTestCase):
     def capture(self, request) -> list:
         request()  # warm the per-process caches (auth, content types)
         with CaptureQueriesContext(connection) as context:

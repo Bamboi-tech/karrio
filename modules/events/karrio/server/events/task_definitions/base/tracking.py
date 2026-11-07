@@ -28,6 +28,7 @@ import karrio.lib as lib
 from karrio.api.gateway import Gateway
 
 import karrio.server.core.utils as utils
+import karrio.server.core.warm_cache as warm_cache
 from karrio.server.core.logging import logger
 from karrio.server.core.utils import resolve_carrier
 import karrio.server.manager.models as models
@@ -63,7 +64,7 @@ def _retire_aged_out_trackers(max_age_cutoff: datetime.datetime) -> int:
     Sets status='unknown' and delivered=None so they are excluded from the
     ``delivered=False`` filter on the next polling cycle.
     """
-    return models.Tracking.objects.filter(
+    retired = models.Tracking.objects.filter(
         delivered=False,
         is_archived=False,  # belt-and-suspenders: manager already excludes archived
         created_at__lt=max_age_cutoff,
@@ -72,6 +73,10 @@ def _retire_aged_out_trackers(max_age_cutoff: datetime.datetime) -> int:
         delivered=None,
         updated_at=timezone.now(),
     )
+    if retired:
+        warm_cache.data_changed()  # queryset.update fires no post_save
+
+    return retired
 
 
 def update_trackers(

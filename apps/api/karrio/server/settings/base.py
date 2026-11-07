@@ -212,6 +212,13 @@ AUDIT_LOGGING = importlib.util.find_spec(  # type:ignore
     "karrio.server.audit"
 ) is not None and config("AUDIT_LOGGING", default=True, cast=bool)
 PERSIST_SDK_TRACING = config("PERSIST_SDK_TRACING", default=True, cast=bool)
+# Emails of the users whose shipments board is answered from a warm response
+# cache (PRDs/SHIPMENTS_WARM_LIST_CACHE.md). Empty: the feature is off.
+SHIPMENTS_WARM_USERS = [
+    email.strip().lower()
+    for email in config("SHIPMENTS_WARM_USERS", default="").split(",")
+    if email.strip()
+]
 WORKFLOW_MANAGEMENT = (
     importlib.util.find_spec("karrio.server.automation") is not None  # type:ignore
 ) and config("WORKFLOW_MANAGEMENT", default=(True if DEBUG else False), cast=bool)

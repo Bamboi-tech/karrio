@@ -6,16 +6,19 @@ import pydoc
 import typing
 from django.urls import path
 from django.conf import settings
+from django.http import HttpResponse
 from rest_framework import exceptions
 from django.views.decorators.csrf import csrf_exempt
 import graphql.error.graphql_error as graphql
 import strawberry.django.views as views
 import strawberry.types as types
 import strawberry.http as http
+import strawberry
 
 import karrio.lib as lib
 import karrio.server.conf as conf
 import karrio.server.graph.schema as schema
+import karrio.server.graph.warm_cache as warm_cache
 from karrio.server.core.logging import logger
 ACCESS_METHOD = getattr(
     settings,
@@ -38,12 +41,36 @@ class GraphQLView(AccessMixin, views.GraphQLView):
 
         return super().dispatch(request, *args, **kwargs)
 
+    def run(self, request, context=strawberry.UNSET, root_value=strawberry.UNSET):
+        # The shipments board of a designated user is answered from the warm
+        # response cache before Strawberry parses or executes anything; a
+        # miss runs as usual and its body is kept for the next request.
+        entry = warm_cache.request_entry(request)
+        version = None
+
+        if entry is not None:
+            version, body = warm_cache.lookup(*entry)
+            if body is not None:
+                return HttpResponse(body, content_type="application/json")
+
+        response = super().run(request, context=context, root_value=root_value)
+
+        if (
+            version is not None
+            and response.status_code == 200
+            and not getattr(request, "_graphql_errors", False)
+        ):
+            warm_cache.store(*entry, version, response.content)
+
+        return response
+
     def process_result(
         self, request, result: types.ExecutionResult
     ) -> http.GraphQLHTTPResponse:
         data: http.GraphQLHTTPResponse = {"data": result.data}
 
         if result.errors:
+            request._graphql_errors = True
             data["errors"] = [self.format_graphql_error(err) for err in result.errors]
         if result.extensions:
             data["extensions"] = result.extensions

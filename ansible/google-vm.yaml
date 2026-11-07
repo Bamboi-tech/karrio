@@ -31,6 +31,16 @@
           -e karrio_tag=<tag>). Run the "Build Karrio Images" workflow and use
           the tag it prints (e.g. 2026.1.31-ab12cd3). Keep staging and
           production on the same tag.
+    - name: Require the ERP integration identity
+      ansible.builtin.assert:
+        that:
+          - erp_integration_user_id is defined
+          - erp_integration_user_id | string | length > 0
+        fail_msg: >-
+          erp_integration_user_id must be set in vars/<env>.yaml: the numeric
+          Karrio user ID owning the API token in the ERP's Karrio Settings.
+          Without it Karrio refuses every ERP draft with 403 erp_link_protected
+          (incident 2026-11-07), so the deploy stops here instead.
 
     # ============================================
     # Mount external data disk

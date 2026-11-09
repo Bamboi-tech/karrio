@@ -35,3 +35,14 @@ email_from_address: noreply@bamboi.eu
 # vault/env/production.yaml as erp_gate_token. Empty token = purchases on
 # ERP-linked shipments fail closed with a clear message.
 erp_gate_url: "https://erp.bamboi.eu"
+
+# Numeric Karrio user ID owning the API token in the ERP's Karrio Settings.
+# Empty = the deploy stops before touching the VM (google-vm.yaml): with it
+# unset Karrio refuses every ERP draft with 403 erp_link_protected
+# (incident 2026-11-07). Production is single-tenant.
+# 1 = the admin account (t.guntenaar@bamboi.eu), which owns the ERP's token
+# and the Monta carrier connection. Deviation from docs/bamboi/
+# ERP_AUTHORIZATION.md, accepted 2026-11-07; a dedicated service account
+# needs the carrier connections cloned and the ERP routes repointed first.
+erp_integration_user_id: "1"
+erp_organization_id: ""

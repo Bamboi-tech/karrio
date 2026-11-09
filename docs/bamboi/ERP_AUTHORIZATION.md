@@ -25,6 +25,20 @@ change these flags. Dashboard JWTs remain supported. The feature audit comment
 includes the originating Karrio user ID supplied by the server, not a request
 body field. Listing remains available to the owning organization's users.
 
+## Bamboi production (2026-11-07)
+
+Production sets `ERP_INTEGRATION_USER_ID` to the admin account (user 1), not a
+dedicated service account. Karrio OSS filters carrier connections by owning
+account (`core/gateway.py`), so a service account needs the Monta connection
+cloned to it, the ERP's Karrio routes repointed at the clone and the ERP's
+Karrio Settings token switched; staging did that with
+`ansible/scripts/provision_stage_erp.py` on `codex/p1-staging-erp-auth`. Until
+production follows, every API token owned by the admin account carries
+integration rights (two tokens on 2026-11-07, both the owner's). Dashboard
+sessions authenticate with JWTs and stay refused. The id lives in
+`ansible/vars/<env>.yaml`; `google-vm.yaml` refuses a deploy without it, which is
+what the 6 Nov deploys lacked.
+
 ## Paired rollout and validation
 
 Deploy the matching `karrio_shipping` API changes before this Karrio version,

@@ -1,0 +1,90 @@
+name: Tailnet (join VM)
+
+# Installs Tailscale on a VM and joins it to the tailnet (ansible/tailscale.yaml),
+# or checks the tailnet identity of a VM that already joined. Manual only: run
+# staging first. Order of the whole move: ansible/README.md, "SSH over the tailnet".
+#
+# A VM that has not joined needs the secret TAILSCALE_AUTHKEY on its GitHub
+# environment: a one-off, pre-approved key for tag:server. Delete the secret
+# after the run.
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: Target environment
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+
+permissions:
+  contents: read
+  id-token: write # tailnet login, .github/actions/tailnet
+
+jobs:
+  join:
+    name: Tailnet on ${{ inputs.env }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    defaults:
+      run:
+        working-directory: ansible
+    env:
+      # The VMs sometimes take over 10 seconds to answer an SSH handshake.
+      ANSIBLE_TIMEOUT: "60"
+      ANSIBLE_SSH_RETRIES: "3"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Ansible
+        run: pip install ansible
+
+      # ansible.cfg points at .vault_pass. This playbook reads no vault, so the
+      # job gets a placeholder instead of the real vault password.
+      - name: Placeholder vault password file
+        run: echo "unused" > .vault_pass
+
+      - name: Reach the VM over the tailnet
+        id: tailnet
+        uses: ./.github/actions/tailnet
+        with:
+          host: bamboi-karrio-${{ inputs.env }}-vm
+          enabled: ${{ contains(vars.TAILNET_SSH_ENVS, inputs.env) }}
+          client-id: ${{ vars.TS_OAUTH_CLIENT_ID }}
+          audience: ${{ vars.TS_AUDIENCE }}
+
+      - name: Install SSH key for Ansible
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: Run the tailscale playbook
+        shell: bash # pipefail, so a failed play is not hidden by tee
+        env:
+          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+        run: |
+          ansible-playbook tailscale.yaml \
+            --private-key ~/.ssh/id_ed25519 \
+            ${{ steps.tailnet.outputs.ansible_args }} \
+            -e env=${{ inputs.env }} | tee tailscale.log
+
+      - name: Write job summary
+        if: always()
+        run: |
+          {
+            echo "### Tailnet: ${{ inputs.env }}"
+            echo ""
+            echo '```'
+            grep -A12 "TASK \[Summary\]" tailscale.log || echo "No summary: the playbook failed, see the log."
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,15 @@
+---
+# Tailnet identity of the Karrio VMs (tailscale.yaml, README "SSH over the tailnet").
+
+# Machine name on the tailnet. The workflows look the VM up under this name
+# (.github/actions/tailnet gets host "bamboi-karrio-<env>-vm"), so change both together.
+tailscale_hostname: "bamboi-karrio-{{ env }}-vm"
+
+# The tailnet policy lets tag:ci and people reach tag:server on port 22 and
+# gives tag:server no way to start a connection itself.
+tailscale_tags:
+  - tag:server
+
+# One-off, pre-approved auth key for tag:server from the Tailscale admin
+# console. Only read for a VM that has not joined yet.
+tailscale_authkey: "{{ lookup('ansible.builtin.env', 'TAILSCALE_AUTHKEY') }}"

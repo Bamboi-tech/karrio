@@ -1,0 +1,111 @@
+---
+# Puts a VM on the Tailscale tailnet, so SSH can move off the public internet
+# (README, "SSH over the tailnet"). sshd, its keys and the public address stay as they
+# are: this adds a second way in and cannot lock anyone out.
+#
+#   cd ansible
+#   TAILSCALE_AUTHKEY=tskey-auth-... ansible-playbook tailscale.yaml -e env=staging
+#
+# The key is only needed for a VM that has not joined yet; a re-run without it
+# checks the state. GitHub Actions: workflow "Tailnet (join VM)".
+- name: Join the tailnet
+  hosts: "{{ env | default('staging') }}"
+  become: true
+  gather_facts: true
+  vars_files:
+    - vars/tailscale.yaml
+  tasks:
+    - name: Add the Tailscale apt signing key
+      ansible.builtin.get_url:
+        url: "https://pkgs.tailscale.com/stable/ubuntu/{{ ansible_distribution_release }}.noarmor.gpg"
+        dest: /usr/share/keyrings/tailscale-archive-keyring.gpg
+        mode: "0644"
+
+    - name: Add the Tailscale apt repository
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/tailscale.list
+        mode: "0644"
+        content: >
+          deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg]
+          https://pkgs.tailscale.com/stable/ubuntu {{ ansible_distribution_release }} main
+      register: tailscale_repo
+
+    # `present`, not `latest`: an upgrade restarts tailscaled, and that must
+    # not happen under a play that itself runs over the tailnet.
+    - name: Install Tailscale
+      ansible.builtin.apt:
+        name: tailscale
+        state: present
+        update_cache: "{{ tailscale_repo is changed }}"
+
+    - name: Start tailscaled
+      ansible.builtin.service:
+        name: tailscaled
+        state: started
+        enabled: true
+
+    - name: Read the tailnet state
+      ansible.builtin.command: tailscale status --json
+      register: tailscale_before
+      changed_when: false
+
+    - name: Decide whether the VM still has to join
+      ansible.builtin.set_fact:
+        tailscale_must_join: "{{ (tailscale_before.stdout | from_json).BackendState != 'Running' }}"
+
+    - name: Require an auth key for a VM that has not joined
+      ansible.builtin.assert:
+        that: tailscale_authkey | length > 0
+        fail_msg: >-
+          {{ inventory_hostname }} is not on the tailnet yet. Create a one-off, pre-approved
+          auth key for {{ tailscale_tags | join(',') }} in the Tailscale admin console and pass
+          it as TAILSCALE_AUTHKEY.
+      when: tailscale_must_join
+
+    # --accept-dns=false: the VM keeps its own resolver, so ERP and Chatwoot
+    # never depend on Tailscale for DNS. Tagged nodes have no key expiry.
+    - name: Join the tailnet
+      ansible.builtin.command:
+        argv:
+          - tailscale
+          - up
+          - "--auth-key={{ tailscale_authkey }}"
+          - "--hostname={{ tailscale_hostname }}"
+          - "--advertise-tags={{ tailscale_tags | join(',') }}"
+          - "--accept-dns=false"
+      no_log: true
+      changed_when: true
+      when: tailscale_must_join
+
+    - name: Read the tailnet state after joining
+      ansible.builtin.command: tailscale status --json
+      register: tailscale_after
+      changed_when: false
+
+    # The DNS name is what other nodes look up. It gets a "-1" suffix when an
+    # older node still holds the name, and CI would then find the stale node.
+    - name: Check the tailnet identity
+      vars:
+        state: "{{ tailscale_after.stdout | from_json }}"
+        machine_name: "{{ (tailscale_after.stdout | from_json).Self.DNSName.split('.') | first }}"
+      ansible.builtin.assert:
+        that:
+          - state.BackendState == 'Running'
+          - machine_name == tailscale_hostname
+          - tailscale_tags | difference(state.Self.Tags | default([])) | length == 0
+        fail_msg: >-
+          Unexpected tailnet identity: state {{ state.BackendState }}, machine name
+          '{{ machine_name }}', tags {{ state.Self.Tags | default([]) }}. Expected
+          '{{ tailscale_hostname }}' with {{ tailscale_tags }}. A name with a suffix means an
+          older node holds it: remove that node in the Tailscale admin console.
+
+    - name: Summary
+      vars:
+        state: "{{ tailscale_after.stdout | from_json }}"
+      ansible.builtin.debug:
+        msg:
+          machine_name: "{{ state.Self.DNSName.split('.') | first }}"
+          tags: "{{ state.Self.Tags }}"
+          tailnet_addresses: "{{ state.Self.TailscaleIPs }}"
+          version: "{{ state.Version }}"
+          joined_in_this_run: "{{ tailscale_must_join }}"

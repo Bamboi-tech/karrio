@@ -1,0 +1,72 @@
+name: Reach a VM over the tailnet
+description: >-
+  Joins the Tailscale tailnet as a short-lived tag:ci node and returns the
+  ansible-playbook argument that points the play at the VM's tailnet address.
+  Does nothing while `enabled` is not 'true', so each environment leaves the
+  public SSH port on its own. See ansible/README.md, "SSH over the tailnet".
+
+inputs:
+  host:
+    description: Tailnet machine name of the VM (bamboi-karrio-<env>-vm).
+    required: true
+  enabled:
+    description: "'true' when this environment is listed in the repository variable TAILNET_SSH_ENVS."
+    required: true
+  client-id:
+    description: Client ID of the Tailscale federated identity (repository variable TS_OAUTH_CLIENT_ID).
+    required: false
+    default: ""
+  audience:
+    description: Audience of the Tailscale federated identity (repository variable TS_AUDIENCE).
+    required: false
+    default: ""
+
+outputs:
+  ansible_args:
+    description: Extra ansible-playbook arguments. Empty while the environment still uses the public address.
+    value: ${{ steps.target.outputs.ansible_args }}
+  address:
+    description: Tailnet address of the VM, for steps that call ssh themselves. Empty while the environment still uses the public address.
+    value: ${{ steps.target.outputs.address }}
+
+runs:
+  using: composite
+  steps:
+    # Keyless: GitHub's OIDC token is exchanged for a tag:ci node key, so the
+    # calling job needs `permissions: id-token: write` and stores no secret.
+    - name: Join the tailnet
+      if: inputs.enabled == 'true'
+      uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c # v4.4.0
+      with:
+        oauth-client-id: ${{ inputs.client-id }}
+        audience: ${{ inputs.audience }}
+        tags: tag:ci
+
+    - name: Find the VM on the tailnet
+      id: target
+      if: inputs.enabled == 'true'
+      shell: bash
+      env:
+        HOST: ${{ inputs.host }}
+      run: |
+        # A new node's peers arrive a few seconds after `tailscale up` returns.
+        ip=""
+        for _ in $(seq 1 30); do
+          ip=$(tailscale ip -4 "$HOST" 2>/dev/null || true)
+          [ -n "$ip" ] && break
+          sleep 2
+        done
+        if [ -z "$ip" ]; then
+          echo "::error::$HOST is not visible on the tailnet. Has the VM joined (ansible/tailscale.yaml) and does the tailnet policy let tag:ci reach tag:server:22?"
+          exit 1
+        fi
+        # A relayed path is fine for Ansible, so do not wait for a direct one.
+        if ! tailscale ping --until-direct=false --c 5 --timeout 10s "$ip"; then
+          echo "::error::$HOST ($ip) does not answer on the tailnet."
+          exit 1
+        fi
+        {
+          echo "address=$ip"
+          echo "ansible_args=-e ansible_host=$ip"
+        } >> "$GITHUB_OUTPUT"
+        echo "Ansible reaches $HOST at $ip over the tailnet."

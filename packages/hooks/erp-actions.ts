@@ -399,21 +399,71 @@ export type PrintBatchOpened = {
   held: string[];
   // …and not held (not ERP-linked, already printed): these print one by one.
   unknown: string[];
+  // True only when the ERP really opened a pre-staged batch (it needs its
+  // btn_prestage_labels flag too). Absent from an ERP that predates it —
+  // which the popup treats exactly like false.
+  prestaged?: boolean;
 };
 
 export type PrintBatchStatus = { batch: string; status: string };
 
+// One batch as print_batch_status describes it (read-only, any flag state).
+export type PrintBatchDetail = {
+  batch: string;
+  // Open | Queued | Printing | Printed | Partially Printed | Failed, or
+  // Unknown for a name the ERP does not know.
+  status: string;
+  prestaged?: boolean;
+  row_label?: string | null;
+  opened_at?: string | null;
+  released_at?: string | null;
+  finished_at?: string | null;
+  // When the ERP's safety net releases a still-open batch by itself.
+  auto_release_at?: string | null;
+  // Shipments in the batch, and how many already have their label.
+  total?: number;
+  attached?: number;
+  items?: Array<{
+    karrio_shipment_id: string;
+    state: string;
+    label_attached: boolean;
+  }>;
+  error?: string | null;
+};
+
+export type PrintBatchOpenRequest = {
+  // In print order: the ERP merges the labels in this order.
+  shipment_ids: string[];
+  // Pre-staged ("Labels klaarzetten"): the ERP holds the labels until the
+  // row's own Print releases the batch, under this row name.
+  prestaged?: boolean;
+  row_label?: string | null;
+};
+
+// The open's request body. Without pre-staging it is exactly the body the
+// dashboard always sent — an ERP that predates the option, and the normal
+// Print path, see nothing new.
+export const printBatchOpenBody = ({
+  shipment_ids,
+  prestaged,
+  row_label,
+}: PrintBatchOpenRequest) =>
+  prestaged === true
+    ? { shipment_ids, prestaged: true, row_label: row_label ?? null }
+    : { shipment_ids };
+
 export function useERPPrintBatches() {
   const karrio = useKarrio();
 
-  const openPrintBatch = useMutation(
-    // shipment_ids in print order: the ERP merges the labels in this order.
-    ({ shipment_ids }: { shipment_ids: string[] }) =>
-      handleFailure(
-        karrio.axios
-          .post<PrintBatchOpened>("/v1/erp/print-batches", { shipment_ids })
-          .then(({ data }) => data),
-      ),
+  const openPrintBatch = useMutation((request: PrintBatchOpenRequest) =>
+    handleFailure(
+      karrio.axios
+        .post<PrintBatchOpened>(
+          "/v1/erp/print-batches",
+          printBatchOpenBody(request),
+        )
+        .then(({ data }) => data),
+    ),
   );
   // failed_ids: the purchases that failed, so the ERP stops waiting for
   // their labels. Idempotent, so callers may simply send it again. Release
@@ -441,5 +491,23 @@ export function useERPPrintBatches() {
     ),
   );
 
-  return { openPrintBatch, releasePrintBatch, retryPrintBatch };
+  // Where batches stand: named ones (the popup's rows, polled while labels
+  // are still arriving), or — batches null — the recent pre-staged ones, so
+  // the popup finds the rows it pre-staged before a reload. Read-only.
+  const printBatchStatus = useMutation(
+    ({ batches }: { batches: string[] | null }) =>
+      handleFailure(
+        karrio.axios
+          .post<{ batches?: PrintBatchDetail[] }>(
+            "/v1/erp/print-batches/status",
+            { batches },
+          )
+          // Never trust the shape blindly: no list reads as no batches.
+          .then(({ data }) => ({
+            batches: Array.isArray(data?.batches) ? data.batches : [],
+          })),
+      ),
+  );
+
+  return { openPrintBatch, releasePrintBatch, retryPrintBatch, printBatchStatus };
 }

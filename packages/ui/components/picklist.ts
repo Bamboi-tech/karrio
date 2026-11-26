@@ -55,14 +55,21 @@ export interface MixedOrder extends ShipmentSummary {
   lines: Array<{ sku: string; qty: number }>;
 }
 
-export interface Picklist {
+export interface PicklistSection {
   groups: SkuGroup[];
   mixed: MixedOrder[];
+}
+
+export interface Picklist extends PicklistSection {
   methods: string[];
   // Fail-visible: rows without order lines cannot be aggregated, and a pick
   // list that silently omits them would read as "nothing to pick" for
   // exactly the orders that need attention.
   shipmentsWithoutItems: number;
+  // Orders whose address review was resolved (see ADDRESS_RESOLVED_KEY):
+  // their own section, packed last, grouped by the same rules. Empty unless
+  // buildPicklist was asked to separate them.
+  resolved: PicklistSection;
 }
 
 export interface BuyResult {
@@ -73,6 +80,62 @@ export interface BuyResult {
   // or null/absent when they printed one by one on their purchase webhook —
   // the btn_print_batch flag is off, or opening the batch failed.
   printBatch?: string | null;
+  // Pre-staging only (BuyOptions.prestage): true when the ERP holds the
+  // row's labels in a pre-staged batch the page did NOT release — the row's
+  // own Print does that later. Anything else was released (or printed one
+  // by one) the moment the purchases were done, exactly as Print does.
+  prestaged?: boolean;
+  // Pre-staging only: the shipments a Stop left unbought.
+  notAttempted?: string[];
+}
+
+// What the page reports back while it runs one row's purchase: with ERP
+// print batches on, the row's picks are recorded upfront (picking) before
+// the sequential purchases start (buying). Without them it never calls.
+export type BuyPhase = "picking" | "buying";
+
+// Where a pre-staged row's purchases stand: reported after its batch opened
+// and after every purchase, so a Stop — or a run that breaks off — never
+// loses track of the batch (see interruptedRow).
+export interface PurchaseProgress {
+  batch: string | null;
+  bought: string[];
+  failedIds: string[];
+}
+
+// A row bought into a pre-staged ERP batch and not printed yet: the ERP holds
+// its labels until the row's Print releases the batch (or its own safety net
+// does, hours later). failedIds are purchases that failed, notAttempted the
+// ones a Stop never reached — both are what Retry buys into the same batch.
+export interface PrestagedRow {
+  batch: string;
+  bought: string[];
+  failedIds: string[];
+  notAttempted: string[];
+}
+
+// Pre-staging asks the page for a little more than a plain Print.
+export interface PrestageRequest {
+  // The row's name in the ERP batch: what the popup shows for it after a
+  // reload ("previously pre-staged").
+  rowLabel: string;
+  // Retry before Print: buy into this open pre-staged batch instead of
+  // picking and opening a new one.
+  batch?: string | null;
+  // Asked before every purchase. A Stop ends the row after the purchase in
+  // flight; what is left comes back as notAttempted.
+  shouldStop: () => boolean;
+  onProgress: (progress: PurchaseProgress) => void;
+}
+
+export interface BuyOptions {
+  // The row's ids in the order its labels should come out of the printer
+  // (rowPrintOrder) — used by the page only when it prints the row as one
+  // ERP print batch; the one-by-one path keeps the row's own order.
+  printOrder: string[];
+  onPhase: (phase: BuyPhase) => void;
+  // Absent: the row prints as soon as it is bought, as always.
+  prestage?: PrestageRequest;
 }
 
 export interface PrintConfirmation {
@@ -115,7 +178,39 @@ export const progressLabels = (
   };
 };
 
-export function buildPicklist(shipments: PicklistShipmentLike[]): Picklist {
+// Stamped by the ERP on the draft that replaced one whose address review was
+// resolved. Those orders turn up after the rest of the day's list was walked,
+// so with pre-staging on the popup packs them in a section of their own, last.
+export const ADDRESS_RESOLVED_KEY = "address_resolved_at";
+
+const isResolvedAddress = (shipment: PicklistShipmentLike): boolean =>
+  Boolean(metadataOf(shipment)[ADDRESS_RESOLVED_KEY]);
+
+export function buildPicklist(
+  shipments: PicklistShipmentLike[],
+  // separateResolved: pre-staging only. Off, every order is grouped together
+  // exactly as before the section existed.
+  { separateResolved = false }: { separateResolved?: boolean } = {},
+): Picklist {
+  const packedLast = (shipment: PicklistShipmentLike) =>
+    separateResolved && isResolvedAddress(shipment);
+  const main = groupSection(shipments.filter((shipment) => !packedLast(shipment)));
+  const late = groupSection(shipments.filter(packedLast));
+
+  return {
+    groups: main.groups,
+    mixed: main.mixed,
+    methods: Array.from(new Set([...main.methods, ...late.methods])).sort(
+      compareMethods,
+    ),
+    shipmentsWithoutItems: main.shipmentsWithoutItems + late.shipmentsWithoutItems,
+    resolved: { groups: late.groups, mixed: late.mixed },
+  };
+}
+
+function groupSection(
+  shipments: PicklistShipmentLike[],
+): PicklistSection & { methods: string[]; shipmentsWithoutItems: number } {
   const groups = new Map<string, SkuGroup>();
   const mixed: MixedOrder[] = [];
   const methods = new Set<string>();
@@ -191,9 +286,56 @@ export function buildPicklist(shipments: PicklistShipmentLike[]): Picklist {
       a.sku.localeCompare(b.sku),
     ),
     mixed: mixed.sort((a, b) => a.orderLabel.localeCompare(b.orderLabel)),
-    methods: Array.from(methods).sort(compareMethods),
+    methods: Array.from(methods),
     shipmentsWithoutItems,
   };
+}
+
+// One popup row as the dialog walks it, top to bottom.
+export interface PicklistRow {
+  key: string;
+  // The row's name in an ERP print batch: the stack's SKU or the order
+  // number — what the warehouse calls the row.
+  label: string;
+  // What Print buys: carrier shipments only (own delivery is pick-only).
+  targets: ShipmentSummary[];
+  // Boxes to pack for the row: every parcel, own delivery included.
+  boxes: number;
+  resolved: boolean;
+}
+
+// Frappe's Data field that keeps the row's name on the ERP batch.
+const ROW_LABEL_MAX_LENGTH = 140;
+
+export const stackKey = (sku: string, resolved = false): string =>
+  `${resolved ? "resolved:" : ""}sku:${sku}`;
+export const orderKey = (id: string, resolved = false): string =>
+  `${resolved ? "resolved:" : ""}order:${id}`;
+
+// The popup's rows in display order: SKU stacks, mixed orders, then the
+// resolved-address section (its stacks, then its orders). A "pre-stage
+// labels" run walks them in exactly this order.
+export function picklistRows(picklist: Picklist): PicklistRow[] {
+  const section = (
+    { groups, mixed }: PicklistSection,
+    resolved: boolean,
+  ): PicklistRow[] => [
+    ...groups.map((group) => ({
+      key: stackKey(group.sku, resolved),
+      label: group.sku.slice(0, ROW_LABEL_MAX_LENGTH),
+      targets: group.buyable,
+      boxes: labelCount(group.shipments),
+      resolved,
+    })),
+    ...mixed.map((order) => ({
+      key: orderKey(order.id, resolved),
+      label: order.orderLabel.slice(0, ROW_LABEL_MAX_LENGTH),
+      targets: order.own ? [] : [order],
+      boxes: order.labels,
+      resolved,
+    })),
+  ];
+  return [...section(picklist, false), ...section(picklist.resolved, true)];
 }
 
 // The popup's column order, shared with rowPrintOrder so a merged print comes
@@ -362,4 +504,325 @@ export async function awaitPrintConfirmation({
     await sleep(pollMs);
   }
   return { printed, unconfirmed: Array.from(pending) };
+}
+
+// --------------------------------------------------------------------------
+// Pre-staged rows ("Labels klaarzetten", flag btn_prestage_labels)
+//
+// A run buys the popup's rows one after the other into pre-staged ERP print
+// batches and prints nothing: the ERP holds every label until that row's
+// Print releases its batch, so the paper comes out in ~10 s next to the
+// stack it belongs to. The ERP's batch is the source of truth; the row states
+// below are the popup's own view of it, and a reload finds the batches again
+// through the ERP (print_batch_status in list mode).
+// --------------------------------------------------------------------------
+
+// Grey (idle) → [queued →] [picking →] buying → ready (pre-staged, held in
+// the ERP) → waiting for the printer → green (PrintNode confirmed) or red
+// (purchase failed / printer never confirmed). Red keeps a Retry over exactly
+// the shipments that still need a label, and — for a row printed as an ERP
+// print batch — a Print again that re-sends the merged job, with the ERP's
+// refusal (printError) shown in the row. While waiting, the row counts the
+// labels the printer confirmed so far.
+export type RowState =
+  | { phase: "idle" }
+  | { phase: "queued" }
+  | { phase: "picking" }
+  | { phase: "buying"; progress?: PurchaseProgress & { total: number } }
+  | ({ phase: "ready" } & PrestagedRow)
+  | { phase: "confirming"; labels: number; confirmedLabels: number }
+  | { phase: "printed"; labels: number }
+  | ({ phase: "failed"; printError?: string } & PrintFailure);
+
+const phaseOf = (state?: RowState) => (state ?? { phase: "idle" }).phase;
+
+// Purchases are strictly sequential (Monta's verification window, the ERP's
+// row locks): a row picking or buying — or a pre-stage run that will buy the
+// next queued row — blocks every other purchase. A ready row buys nothing.
+export const isPurchasing = (
+  states: Record<string, RowState>,
+  running: boolean,
+): boolean =>
+  running ||
+  Object.values(states).some((state) =>
+    ["queued", "picking", "buying"].includes(state.phase),
+  );
+
+// What keeps the popup open: a purchase, or a row waiting for the printer.
+export const isBusy = (
+  states: Record<string, RowState>,
+  running: boolean,
+): boolean =>
+  isPurchasing(states, running) ||
+  Object.values(states).some((state) => state.phase === "confirming");
+
+// The rows a run walks: every row with something to buy that nothing has
+// happened to yet, in display order.
+export const prestageQueue = (
+  rows: PicklistRow[],
+  states: Record<string, RowState>,
+): PicklistRow[] =>
+  rows.filter(
+    (row) => row.targets.length > 0 && phaseOf(states[row.key]) === "idle",
+  );
+
+export const queueRows = (
+  states: Record<string, RowState>,
+  keys: string[],
+): Record<string, RowState> => ({
+  ...states,
+  ...Object.fromEntries(keys.map((key) => [key, { phase: "queued" } as RowState])),
+});
+
+// Stop (and the end of every run): rows still waiting their turn go back to
+// grey. Whatever was bought stays bought.
+export const unqueueRows = (
+  states: Record<string, RowState>,
+): Record<string, RowState> =>
+  Object.fromEntries(
+    Object.entries(states).map(([key, state]) => [
+      key,
+      state.phase === "queued" ? ({ phase: "idle" } as RowState) : state,
+    ]),
+  );
+
+export const readyRows = (states: Record<string, RowState>): PrestagedRow[] =>
+  Object.values(states).flatMap((state) =>
+    state.phase === "ready"
+      ? [
+          {
+            batch: state.batch,
+            bought: state.bought,
+            failedIds: state.failedIds,
+            notAttempted: state.notAttempted,
+          },
+        ]
+      : [],
+  );
+
+export const prestagedRow = (
+  batch: string,
+  result: { purchased: string[]; failedIds: string[]; notAttempted?: string[] },
+  previous?: PrestagedRow,
+): PrestagedRow => ({
+  batch,
+  bought: Array.from(new Set([...(previous?.bought ?? []), ...result.purchased])),
+  failedIds: result.failedIds,
+  notAttempted: result.notAttempted ?? [],
+});
+
+// How a pre-stage purchase run ended for its row:
+// - ready: the ERP holds the labels in a pre-staged batch;
+// - stopped: Stop came before the batch was opened — nothing bought;
+// - degraded: the ERP did not pre-stage (an ERP that predates it, the flag
+//   off there, the open failed). The page already released the batch right
+//   after the purchases, so the row prints the normal way.
+export type PrestageOutcome =
+  | { kind: "ready"; row: PrestagedRow }
+  | { kind: "stopped" }
+  | { kind: "degraded" };
+
+export function prestageOutcome(
+  result: BuyResult,
+  previous?: PrestagedRow,
+): PrestageOutcome {
+  if (result.prestaged === true && result.printBatch) {
+    return {
+      kind: "ready",
+      row: prestagedRow(result.printBatch, result, previous),
+    };
+  }
+  const nothingHappened =
+    !result.printBatch &&
+    result.purchased.length === 0 &&
+    result.failedIds.length === 0 &&
+    (result.notAttempted ?? []).length > 0;
+  return nothingHappened ? { kind: "stopped" } : { kind: "degraded" };
+}
+
+// A pre-stage run that broke off with an exception still leaves its batch
+// open in the ERP. The last progress report names it, so the row turns ready
+// over it instead of being forgotten; null when no pre-staged batch opened.
+export function interruptedRow(
+  progress: PurchaseProgress | undefined,
+  targets: ShipmentSummary[],
+): PrestagedRow | null {
+  if (!progress?.batch) return null;
+  const attempted = new Set([...progress.bought, ...progress.failedIds]);
+  return {
+    batch: progress.batch,
+    bought: progress.bought,
+    failedIds: progress.failedIds,
+    notAttempted: targets
+      .map((target) => target.id)
+      .filter((id) => !attempted.has(id)),
+  };
+}
+
+// What the ERP must stop waiting for when a pre-staged row is printed — and
+// what Retry buys into the same batch before that.
+export const releaseFailedIds = (
+  row: Pick<PrestagedRow, "failedIds" | "notAttempted">,
+): string[] => Array.from(new Set([...row.failedIds, ...row.notAttempted]));
+
+// What a print_batch_status answer says about one batch, reduced to what
+// the popup reads.
+export interface BatchSnapshot {
+  batch: string;
+  status: string;
+  row_label?: string | null;
+  auto_release_at?: string | null;
+  total?: number;
+  attached?: number;
+  items?: Array<{
+    karrio_shipment_id: string;
+    label_attached: boolean;
+    // Waiting | Skipped | Printed | Late | Failed
+    state?: string;
+  }>;
+}
+
+// Snapshots by batch name: null when the last poll failed (status unknown),
+// absent before the first answer.
+export type BatchSnapshots = Record<string, BatchSnapshot | null | undefined>;
+
+export const attachedIds = (
+  snapshot: BatchSnapshot | null | undefined,
+): string[] | null =>
+  snapshot && snapshot.status !== "Unknown" && Array.isArray(snapshot.items)
+    ? snapshot.items
+        .filter((item) => item.label_attached)
+        .map((item) => item.karrio_shipment_id)
+    : null;
+
+// What of a ready row's purchases is ready to print: the labels the batch
+// holds attached, plus bought shipments the batch never held (not
+// ERP-linked, printed before — the ERP prints those on their own purchase,
+// so they wait for nothing). Null while the batch's status is unknown.
+export const readyIds = (
+  snapshot: BatchSnapshot | null | undefined,
+  bought: string[],
+): string[] | null => {
+  const attached = attachedIds(snapshot);
+  if (attached === null) return null;
+  const held = new Set(
+    (snapshot?.items ?? []).map((item) => item.karrio_shipment_id),
+  );
+  return bought.filter((id) => attached.includes(id) || !held.has(id));
+};
+
+// The ready row's "27/29": labels (boxes) the ERP already holds over the
+// labels bought; attachedLabels null while the ERP's status is unknown.
+export const readyLabels = (
+  targets: ShipmentSummary[],
+  bought: string[],
+  attached: string[] | null,
+): { labels: number; attachedLabels: number | null } => {
+  const boughtTargets = targets.filter((target) => bought.includes(target.id));
+  return {
+    labels: labelCount(boughtTargets),
+    attachedLabels:
+      attached === null
+        ? null
+        : labelCount(boughtTargets.filter((t) => attached.includes(t.id))),
+  };
+};
+
+// One status call covers every batch the ERP accepts in one request.
+const STATUS_MAX_BATCHES = 50;
+
+// The batches worth a status poll: rows being bought into a pre-staged
+// batch, ready rows whose labels are not all attached yet (or unknown), and
+// previously pre-staged batches still open and incomplete. Empty → no poll.
+export function batchesToPoll(
+  states: Record<string, RowState>,
+  snapshots: BatchSnapshots,
+  recovered: string[] = [],
+): string[] {
+  const rows = Object.values(states).flatMap((state) => {
+    if (state.phase === "buying") {
+      return state.progress?.batch ? [state.progress.batch] : [];
+    }
+    if (state.phase !== "ready") return [];
+    const done = readyIds(snapshots[state.batch], state.bought);
+    return done && done.length === state.bought.length ? [] : [state.batch];
+  });
+  const earlier = recovered.filter((name) => {
+    const snapshot = snapshots[name];
+    return (
+      snapshot?.status === "Open" && (snapshot.attached ?? 0) < (snapshot.total ?? 0)
+    );
+  });
+  return Array.from(new Set([...rows, ...earlier])).slice(0, STATUS_MAX_BATCHES);
+}
+
+// Print on a previously pre-staged batch: what has a label is printed, the
+// rest the ERP stops waiting for.
+export const recoveredRelease = (
+  snapshot: BatchSnapshot,
+): { bought: string[]; failedIds: string[] } => {
+  const items = snapshot.items ?? [];
+  return {
+    bought: items
+      .filter((item) => item.label_attached)
+      .map((item) => item.karrio_shipment_id),
+    failedIds: items
+      .filter((item) => !item.label_attached)
+      .map((item) => item.karrio_shipment_id),
+  };
+};
+
+// A batch found again after a reload has no rows on this list: the ERP names
+// its shipments, not their parcels, so each counts as one label.
+export const recoveredTargets = (snapshot: BatchSnapshot): ShipmentSummary[] =>
+  (snapshot.items ?? []).map((item) => ({
+    id: item.karrio_shipment_id,
+    orderLabel: item.karrio_shipment_id,
+    method: "",
+    own: false,
+    units: 1,
+    labels: 1,
+  }));
+
+// A batch found again that finished without printing everything it holds:
+// Print again (the ERP's retry) over the labels that did not come out.
+// Nothing for a batch that is open, on its way, printed or unknown.
+export function recoveredFailure(snapshot: BatchSnapshot): PrintFailure | null {
+  if (!["Failed", "Partially Printed"].includes(snapshot.status)) return null;
+  const unconfirmed = (snapshot.items ?? [])
+    .filter((item) => item.label_attached && item.state !== "Printed")
+    .map((item) => item.karrio_shipment_id);
+  return printFailure(recoveredTargets(snapshot), [], unconfirmed, snapshot.batch);
+}
+
+// When the ERP's safety net prints these batches by itself: the earliest of
+// their auto_release_at, or null when the ERP has not said.
+export const autoReleaseAt = (
+  batches: string[],
+  snapshots: BatchSnapshots,
+): string | null =>
+  batches
+    .map((batch) => snapshots[batch]?.auto_release_at)
+    .filter((at): at is string => Boolean(at))
+    .sort((a, b) => clockValue(a) - clockValue(b))[0] ?? null;
+
+// Frappe writes "2026-11-26 16:05:00"; not every browser parses the space.
+const parseTime = (iso: string): Date => new Date(iso.replace(" ", "T"));
+const clockValue = (iso: string): number => parseTime(iso).getTime();
+
+// "16:05". A time without an offset is the ERP's own local time — the
+// warehouse clock — and reads as such in the browser.
+export function clockTime(
+  iso: string | null | undefined,
+  timeZone?: string,
+): string | null {
+  if (!iso) return null;
+  const time = parseTime(iso);
+  if (Number.isNaN(time.getTime())) return null;
+  return new Intl.DateTimeFormat("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone,
+  }).format(time);
 }

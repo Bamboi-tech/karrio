@@ -5,16 +5,38 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  attachedIds,
+  autoReleaseAt,
   awaitPrintConfirmation,
+  batchesToPoll,
+  BatchSnapshot,
   buildPicklist,
   canPrintAgain,
+  clockTime,
+  interruptedRow,
+  isBusy,
+  isPurchasing,
   labelCount,
+  picklistRows,
+  prestagedRow,
+  prestageOutcome,
+  prestageQueue,
   printFailure,
   PRINTER_UNCONFIRMED_REASON,
   progressLabels,
+  queueRows,
+  readyLabels,
+  readyIds,
+  readyRows,
+  recoveredFailure,
+  recoveredRelease,
+  recoveredTargets,
+  releaseFailedIds,
   retrying,
   rowPrintOrder,
+  RowState,
   ShipmentSummary,
+  unqueueRows,
 } from "../components/picklist";
 
 // The ERP's Monta layout: one parcel per product unit, order lines riding on
@@ -585,5 +607,580 @@ describe("retrying", () => {
       retrying(call.fn, { retries: 2, delayMs: 0, sleep: async () => {} }),
     ).rejects.toThrow("attempt 3 failed");
     expect(call.calls()).toBe(3);
+  });
+});
+
+// "Labels klaarzetten" (btn_prestage_labels): a run buys the popup's rows into
+// pre-staged ERP batches without printing them; each row's own Print releases
+// its batch later. Everything the popup decides about such a run lives in
+// these helpers, so the dialog stays a thin shell around them.
+
+// A shipment the ERP rebuilt after its address review was resolved.
+const resolved = <T extends { metadata: Record<string, unknown> }>(
+  shipment: T,
+): T => ({
+  ...shipment,
+  metadata: { ...shipment.metadata, address_resolved_at: "2026-11-26T10:00:00" },
+});
+
+describe("buildPicklist with resolved addresses", () => {
+  const shipments = [
+    montaShipment("shp_1", "BAM-01", 1),
+    resolved(montaShipment("shp_2", "BAM-01", 1)),
+    resolved(directShipment("shp_3", "BAM-01", 2)),
+    resolved(montaShipment("shp_4", "BAM-02", 2, { shipping_method: "GLS" })),
+  ];
+
+  it("keeps resolved addresses out of the normal stacks, grouped by the same rules", () => {
+    const picklist = buildPicklist(shipments, { separateResolved: true });
+
+    expect(picklist.groups.map((g) => [g.sku, g.shipments.map((s) => s.id)])).toEqual([
+      ["BAM-01", ["shp_1"]],
+    ]);
+    expect(picklist.mixed).toEqual([]);
+    // The same stacking rule as above: a one-parcel box of two units is
+    // packed alone, never pooled into a stack where any label fits any box.
+    expect(
+      picklist.resolved.groups.map((g) => [g.sku, g.shipments.map((s) => s.id)]),
+    ).toEqual([
+      ["BAM-01", ["shp_2"]],
+      ["BAM-02", ["shp_4"]],
+    ]);
+    expect(picklist.resolved.mixed.map((m) => m.id)).toEqual(["shp_3"]);
+    // One set of carrier columns for both sections.
+    expect(picklist.methods).toEqual(["DHL", "GLS", "PostNL"]);
+  });
+
+  it("never pools a resolved address into a normal stack of the same SKU", () => {
+    const picklist = buildPicklist(shipments, { separateResolved: true });
+    const normalIds = [
+      ...picklist.groups.flatMap((g) => g.shipments),
+      ...picklist.mixed,
+    ].map((s) => s.id);
+
+    expect(normalIds).not.toContain("shp_2");
+    expect(normalIds).not.toContain("shp_3");
+    expect(normalIds).not.toContain("shp_4");
+  });
+
+  it("pools them like before when the section is not asked for (pre-staging off)", () => {
+    const picklist = buildPicklist(shipments);
+
+    expect(picklist.groups.map((g) => [g.sku, g.shipments.map((s) => s.id)])).toEqual([
+      ["BAM-01", ["shp_1", "shp_2"]],
+      ["BAM-02", ["shp_4"]],
+    ]);
+    expect(picklist.mixed.map((m) => m.id)).toEqual(["shp_3"]);
+    expect(picklist.resolved).toEqual({ groups: [], mixed: [] });
+  });
+
+  it("still reports resolved shipments without order lines", () => {
+    const picklist = buildPicklist(
+      [resolved({ id: "shp_5", metadata: {}, parcels: [{ items: [] }] })],
+      { separateResolved: true },
+    );
+
+    expect(picklist.shipmentsWithoutItems).toBe(1);
+  });
+});
+
+describe("picklistRows", () => {
+  const picklist = buildPicklist(
+    [
+      montaShipment("shp_1", "BAM-02", 2),
+      montaShipment("shp_2", "BAM-01", 1),
+      montaShipment("shp_3", "BAM-01", 3, { fulfilment_mode: "self_delivery" }),
+      directShipment("shp_4", "BAM-03", 3),
+      resolved(montaShipment("shp_5", "BAM-01", 1)),
+      resolved(directShipment("shp_6", "BAM-04", 2)),
+    ],
+    { separateResolved: true },
+  );
+
+  it("walks the popup top to bottom: stacks, mixed orders, then resolved addresses", () => {
+    expect(picklistRows(picklist).map((row) => row.key)).toEqual([
+      "sku:BAM-01",
+      "sku:BAM-02",
+      "order:shp_4",
+      "resolved:sku:BAM-01",
+      "resolved:order:shp_6",
+    ]);
+  });
+
+  it("names each row the way the warehouse does: the SKU, or the order number", () => {
+    // (These fixtures carry no Shopify order number, so the Karrio id stands
+    // in, exactly as in the popup.)
+    expect(picklistRows(picklist).map((row) => row.label)).toEqual([
+      "BAM-01",
+      "BAM-02",
+      "shp_4",
+      "BAM-01",
+      "shp_6",
+    ]);
+  });
+
+  it("counts boxes as parcels, own delivery included, and buys carrier boxes only", () => {
+    const [bam01, bam02, direct] = picklistRows(picklist);
+
+    // shp_2 is one box; shp_3 (own delivery, three per-unit parcels) adds
+    // three boxes to pack but buys no label.
+    expect(bam01.boxes).toBe(4);
+    expect(bam01.targets.map((t) => t.id)).toEqual(["shp_2"]);
+    expect(bam02.boxes).toBe(2);
+    // Three units in ONE direct-carrier parcel: one box.
+    expect(direct.boxes).toBe(1);
+  });
+});
+
+const idle: RowState = { phase: "idle" };
+const ready = (
+  batch: string,
+  bought: string[],
+  failedIds: string[] = [],
+  notAttempted: string[] = [],
+): RowState => ({ phase: "ready", batch, bought, failedIds, notAttempted });
+
+describe("a pre-stage run", () => {
+  const picklist = buildPicklist(
+    [
+      montaShipment("shp_1", "BAM-01", 1),
+      montaShipment("shp_2", "BAM-02", 1),
+      montaShipment("shp_3", "BAM-03", 1, { fulfilment_mode: "self_delivery" }),
+      directShipment("shp_4", "BAM-04", 2),
+      resolved(montaShipment("shp_5", "BAM-01", 1)),
+    ],
+    { separateResolved: true },
+  );
+  const rows = picklistRows(picklist);
+
+  it("queues every untouched row with something to buy, in display order", () => {
+    const states: Record<string, RowState> = {
+      "sku:BAM-02": ready("KPB-1", ["shp_2"]),
+    };
+
+    expect(prestageQueue(rows, states).map((row) => row.key)).toEqual([
+      "sku:BAM-01",
+      "order:shp_4",
+      "resolved:sku:BAM-01",
+    ]);
+  });
+
+  it("leaves rows that were printed, failed or are waiting for the printer alone", () => {
+    const states: Record<string, RowState> = {
+      "sku:BAM-01": { phase: "printed", labels: 1 },
+      "order:shp_4": { phase: "confirming", labels: 1, confirmedLabels: 0 },
+      "resolved:sku:BAM-01": {
+        phase: "failed",
+        reason: "Purchase failed",
+        retryIds: ["shp_5"],
+        retryLabels: 1,
+        printBatch: null,
+        unconfirmedIds: [],
+      },
+    };
+
+    expect(prestageQueue(rows, states).map((row) => row.key)).toEqual([
+      "sku:BAM-02",
+    ]);
+  });
+
+  it("marks the queue and hands it back to idle on Stop, touching nothing else", () => {
+    const before: Record<string, RowState> = {
+      "sku:BAM-02": ready("KPB-1", ["shp_2"]),
+    };
+    const queued = queueRows(before, ["sku:BAM-01", "order:shp_4"]);
+
+    expect(queued).toEqual({
+      "sku:BAM-02": ready("KPB-1", ["shp_2"]),
+      "sku:BAM-01": { phase: "queued" },
+      "order:shp_4": { phase: "queued" },
+    });
+    expect(
+      unqueueRows({ ...queued, "sku:BAM-01": { phase: "buying" } }),
+    ).toEqual({
+      "sku:BAM-02": ready("KPB-1", ["shp_2"]),
+      "sku:BAM-01": { phase: "buying" },
+      "order:shp_4": idle,
+    });
+    expect(before).toEqual({ "sku:BAM-02": ready("KPB-1", ["shp_2"]) });
+  });
+
+  it("counts as a purchase while it runs; a ready row locks nothing", () => {
+    const readyOnly = { "sku:BAM-01": ready("KPB-1", ["shp_1"]) };
+    const waiting: Record<string, RowState> = {
+      "sku:BAM-01": { phase: "confirming", labels: 1, confirmedLabels: 0 },
+    };
+
+    expect(isPurchasing({}, true)).toBe(true);
+    expect(isBusy({}, true)).toBe(true);
+    expect(isPurchasing(readyOnly, false)).toBe(false);
+    expect(isBusy(readyOnly, false)).toBe(false);
+    expect(isPurchasing({ x: { phase: "picking" } }, false)).toBe(true);
+    expect(isPurchasing({ x: { phase: "queued" } }, false)).toBe(true);
+    expect(isPurchasing(waiting, false)).toBe(false);
+    expect(isBusy(waiting, false)).toBe(true);
+  });
+});
+
+describe("prestageOutcome", () => {
+  it("is a ready row when the ERP answered prestaged", () => {
+    expect(
+      prestageOutcome({
+        purchased: ["shp_1", "shp_3"],
+        failures: ["#2: refused"],
+        failedIds: ["shp_2"],
+        printBatch: "KPB-1",
+        prestaged: true,
+        notAttempted: ["shp_4"],
+      }),
+    ).toEqual({
+      kind: "ready",
+      row: {
+        batch: "KPB-1",
+        bought: ["shp_1", "shp_3"],
+        failedIds: ["shp_2"],
+        notAttempted: ["shp_4"],
+      },
+    });
+  });
+
+  it("adds a retry into the same batch to what the row already bought", () => {
+    const previous = {
+      batch: "KPB-1",
+      bought: ["shp_1"],
+      failedIds: ["shp_2"],
+      notAttempted: ["shp_3"],
+    };
+
+    expect(
+      prestageOutcome(
+        {
+          purchased: ["shp_3"],
+          failures: ["#2: refused"],
+          failedIds: ["shp_2"],
+          printBatch: "KPB-1",
+          prestaged: true,
+          notAttempted: [],
+        },
+        previous,
+      ),
+    ).toEqual({
+      kind: "ready",
+      row: {
+        batch: "KPB-1",
+        bought: ["shp_1", "shp_3"],
+        failedIds: ["shp_2"],
+        notAttempted: [],
+      },
+    });
+  });
+
+  it("is a stopped row when the run stopped before anything was opened or bought", () => {
+    expect(
+      prestageOutcome({
+        purchased: [],
+        failures: [],
+        failedIds: [],
+        printBatch: null,
+        prestaged: false,
+        notAttempted: ["shp_1", "shp_2"],
+      }),
+    ).toEqual({ kind: "stopped" });
+  });
+
+  it("is a printed-the-normal-way row whenever the ERP did not say prestaged", () => {
+    // An ERP that predates pre-staging opens a plain batch (or none): the
+    // page released it right after the purchases, as Print always did.
+    for (const result of [
+      { purchased: ["shp_1"], failures: [], failedIds: [], printBatch: "KPB-1" },
+      {
+        purchased: ["shp_1"],
+        failures: [],
+        failedIds: [],
+        printBatch: "KPB-1",
+        prestaged: false,
+        notAttempted: [],
+      },
+      {
+        purchased: [],
+        failures: ["#1: refused"],
+        failedIds: ["shp_1"],
+        printBatch: null,
+        prestaged: false,
+        notAttempted: [],
+      },
+    ]) {
+      expect(prestageOutcome(result)).toEqual({ kind: "degraded" });
+    }
+  });
+});
+
+describe("prestagedRow / interruptedRow", () => {
+  const targets = [
+    summary("shp_1", "DHL", "#1"),
+    summary("shp_2", "DHL", "#2"),
+    summary("shp_3", "DHL", "#3"),
+  ];
+
+  it("never lists a shipment as bought twice", () => {
+    expect(
+      prestagedRow(
+        "KPB-1",
+        { purchased: ["shp_1", "shp_2"], failedIds: [] },
+        { batch: "KPB-1", bought: ["shp_1"], failedIds: [], notAttempted: [] },
+      ).bought,
+    ).toEqual(["shp_1", "shp_2"]);
+  });
+
+  it("keeps the batch of a row whose run broke off, with what is left to buy", () => {
+    // Never Open-and-forgotten: the row stays ready over its batch.
+    expect(
+      interruptedRow(
+        { batch: "KPB-1", bought: ["shp_1"], failedIds: ["shp_2"] },
+        targets,
+      ),
+    ).toEqual({
+      batch: "KPB-1",
+      bought: ["shp_1"],
+      failedIds: ["shp_2"],
+      notAttempted: ["shp_3"],
+    });
+    expect(interruptedRow(undefined, targets)).toBeNull();
+  });
+});
+
+describe("releaseFailedIds", () => {
+  it("tells the ERP to stop waiting for failed and never-attempted purchases", () => {
+    expect(
+      releaseFailedIds({
+        failedIds: ["shp_2", "shp_4"],
+        notAttempted: ["shp_4", "shp_5"],
+      }),
+    ).toEqual(["shp_2", "shp_4", "shp_5"]);
+    expect(releaseFailedIds({ failedIds: [], notAttempted: [] })).toEqual([]);
+  });
+});
+
+describe("readyLabels", () => {
+  const targets = [
+    summary("shp_1", "DHL", "#1", 2),
+    summary("shp_2", "DHL", "#2", 1),
+    summary("shp_3", "DHL", "#3", 3),
+  ];
+
+  it("counts attached labels (boxes) over the labels bought", () => {
+    expect(readyLabels(targets, ["shp_1", "shp_2"], ["shp_1"])).toEqual({
+      labels: 3,
+      attachedLabels: 2,
+    });
+  });
+
+  it("says unknown when the ERP's status could not be read", () => {
+    expect(readyLabels(targets, ["shp_1"], null)).toEqual({
+      labels: 2,
+      attachedLabels: null,
+    });
+  });
+});
+
+const snapshot = (
+  batch: string,
+  status: string,
+  items: Array<[string, boolean]> = [],
+  extra: Partial<BatchSnapshot> = {},
+): BatchSnapshot => ({
+  batch,
+  status,
+  total: items.length,
+  attached: items.filter(([, attached]) => attached).length,
+  items: items.map(([karrio_shipment_id, label_attached]) => ({
+    karrio_shipment_id,
+    label_attached,
+  })),
+  ...extra,
+});
+
+describe("attachedIds", () => {
+  it("lists the shipments whose label the ERP holds", () => {
+    expect(
+      attachedIds(snapshot("KPB-1", "Open", [["shp_1", true], ["shp_2", false]])),
+    ).toEqual(["shp_1"]);
+  });
+
+  it("is unknown for a failed poll, an unknown batch or no answer yet", () => {
+    expect(attachedIds(null)).toBeNull();
+    expect(attachedIds(undefined)).toBeNull();
+    expect(attachedIds(snapshot("KPB-1", "Unknown"))).toBeNull();
+  });
+});
+
+describe("readyIds", () => {
+  it("counts a bought label the batch does not hold as ready: it printed on its own", () => {
+    // The ERP leaves shipments it cannot hold (not ERP-linked, printed
+    // before) out of the batch; their labels print on their purchase.
+    expect(
+      readyIds(snapshot("KPB-1", "Open", [["shp_1", true], ["shp_2", false]]), [
+        "shp_1",
+        "shp_2",
+        "shp_3",
+      ]),
+    ).toEqual(["shp_1", "shp_3"]);
+  });
+
+  it("is unknown while the batch's status is", () => {
+    expect(readyIds(undefined, ["shp_1"])).toBeNull();
+    expect(readyIds(snapshot("KPB-1", "Unknown"), ["shp_1"])).toBeNull();
+  });
+});
+
+describe("batchesToPoll", () => {
+  it("polls rows being bought and ready rows still missing labels — nothing else", () => {
+    const states: Record<string, RowState> = {
+      a: {
+        phase: "buying",
+        progress: { batch: "KPB-1", bought: [], failedIds: [], total: 3 },
+      },
+      b: { phase: "buying" },
+      c: ready("KPB-2", ["shp_1", "shp_2"]),
+      d: ready("KPB-3", ["shp_3"]),
+      e: ready("KPB-4", ["shp_4"]),
+      f: { phase: "printed", labels: 1 },
+    };
+    const snapshots = {
+      "KPB-2": snapshot("KPB-2", "Open", [["shp_1", true], ["shp_2", false]]),
+      "KPB-3": snapshot("KPB-3", "Open", [["shp_3", true]]),
+      "KPB-4": null,
+    };
+
+    expect(batchesToPoll(states, snapshots)).toEqual(["KPB-1", "KPB-2", "KPB-4"]);
+  });
+
+  it("polls a previously pre-staged batch only while it is open and incomplete", () => {
+    const snapshots = {
+      "KPB-7": snapshot("KPB-7", "Open", [["shp_7", false]]),
+      "KPB-8": snapshot("KPB-8", "Open", [["shp_8", true]]),
+      "KPB-9": snapshot("KPB-9", "Queued", [["shp_9", false]]),
+    };
+
+    expect(batchesToPoll({}, snapshots, ["KPB-7", "KPB-8", "KPB-9"])).toEqual([
+      "KPB-7",
+    ]);
+  });
+
+  it("is empty when there is nothing to watch, so the poll stops", () => {
+    expect(batchesToPoll({ a: idle }, {})).toEqual([]);
+  });
+
+  it("stops polling a ready row once every label it holds is attached", () => {
+    // shp_9 was bought but never held (printed on its own): nothing to wait for.
+    const states = { a: ready("KPB-1", ["shp_1", "shp_9"]) };
+    const snapshots = { "KPB-1": snapshot("KPB-1", "Open", [["shp_1", true]]) };
+
+    expect(batchesToPoll(states, snapshots)).toEqual([]);
+  });
+});
+
+describe("recoveredRelease", () => {
+  it("prints what has a label and tells the ERP to stop waiting for the rest", () => {
+    expect(
+      recoveredRelease(
+        snapshot("KPB-1", "Open", [
+          ["shp_1", true],
+          ["shp_2", false],
+          ["shp_3", true],
+        ]),
+      ),
+    ).toEqual({ bought: ["shp_1", "shp_3"], failedIds: ["shp_2"] });
+  });
+});
+
+describe("recoveredTargets / recoveredFailure", () => {
+  it("counts a batch found again after a reload per shipment", () => {
+    // The ERP names shipments, not parcels: one label each is all the popup
+    // can say about rows that are no longer on its list.
+    expect(
+      recoveredTargets(snapshot("KPB-1", "Open", [["shp_1", true], ["shp_2", false]])),
+    ).toEqual([
+      { id: "shp_1", orderLabel: "shp_1", method: "", own: false, units: 1, labels: 1 },
+      { id: "shp_2", orderLabel: "shp_2", method: "", own: false, units: 1, labels: 1 },
+    ]);
+  });
+
+  it("offers Print again over the labels a finished batch did not print", () => {
+    const batch: BatchSnapshot = {
+      batch: "KPB-1",
+      status: "Partially Printed",
+      items: [
+        { karrio_shipment_id: "shp_1", label_attached: true, state: "Printed" },
+        { karrio_shipment_id: "shp_2", label_attached: true, state: "Failed" },
+        { karrio_shipment_id: "shp_3", label_attached: false, state: "Skipped" },
+      ],
+    };
+
+    expect(recoveredFailure(batch)).toEqual({
+      reason: PRINTER_UNCONFIRMED_REASON,
+      retryIds: [],
+      retryLabels: 0,
+      printBatch: "KPB-1",
+      unconfirmedIds: ["shp_2"],
+    });
+    expect(recoveredFailure({ ...batch, status: "Failed" })?.unconfirmedIds).toEqual([
+      "shp_2",
+    ]);
+  });
+
+  it("has no failure for a batch that is open, on its way or printed", () => {
+    for (const status of ["Open", "Queued", "Printing", "Printed", "Unknown"]) {
+      expect(
+        recoveredFailure(snapshot("KPB-1", status, [["shp_1", true]])),
+      ).toBeNull();
+    }
+  });
+});
+
+describe("closing over pre-staged rows", () => {
+  const states: Record<string, RowState> = {
+    a: ready("KPB-1", ["shp_1"]),
+    b: ready("KPB-2", ["shp_2"]),
+    c: { phase: "printed", labels: 1 },
+  };
+
+  it("names the ready rows", () => {
+    expect(readyRows(states).map((row) => row.batch)).toEqual(["KPB-1", "KPB-2"]);
+  });
+
+  it("gives the earliest automatic release among them", () => {
+    const snapshots = {
+      "KPB-1": snapshot("KPB-1", "Open", [], {
+        auto_release_at: "2026-11-26T16:40:00",
+      }),
+      "KPB-2": snapshot("KPB-2", "Open", [], {
+        auto_release_at: "2026-11-26T16:05:00",
+      }),
+      "KPB-3": snapshot("KPB-3", "Open", [], {
+        auto_release_at: "2026-11-26T15:00:00",
+      }),
+    };
+
+    expect(autoReleaseAt(["KPB-1", "KPB-2"], snapshots)).toBe(
+      "2026-11-26T16:05:00",
+    );
+    expect(autoReleaseAt(["KPB-1"], {})).toBeNull();
+  });
+});
+
+describe("clockTime", () => {
+  it("reads the ERP's local time as the warehouse clock", () => {
+    expect(clockTime("2026-11-26T16:05:00")).toBe("16:05");
+    expect(clockTime("2026-11-26 09:30:12")).toBe("09:30");
+  });
+
+  it("converts an instant with an offset to the given zone", () => {
+    expect(clockTime("2026-11-26T15:05:00Z", "Europe/Amsterdam")).toBe("16:05");
+  });
+
+  it("has nothing to say about a missing or broken time", () => {
+    expect(clockTime(null)).toBeNull();
+    expect(clockTime("soon")).toBeNull();
   });
 });

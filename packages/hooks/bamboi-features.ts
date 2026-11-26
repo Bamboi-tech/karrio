@@ -30,6 +30,11 @@ export const BAMBOI_FEATURE_DEFAULTS: Record<string, boolean> = {
   // Pick & Print: hold a row's labels in an ERP print batch and print them
   // as one merged job. OFF until the ERP side is rolled out and switched on.
   btn_print_batch: false,
+  // Pick & Print "Labels klaarzetten": buy every row into a pre-staged print
+  // batch first and print each row on its own Print later. Rides on
+  // btn_print_batch (the button needs both); OFF until the ERP side is
+  // rolled out and switched on — an ERP without the key leaves it off.
+  btn_prestage_labels: false,
   // Safety gates
   gate_shopify_hold_probe: true,
   gate_hold_block: true,

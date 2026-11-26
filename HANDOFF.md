@@ -1,3 +1,12 @@
+# Pick & Print: pre-staged labels — 2026-11-26 (CU-1248uf49kw6)
+
+"Labels klaarzetten": the Pick & Print popup can buy every row up front into pre-staged ERP print batches that print nothing yet; each row's own Print then only releases its batch, so the stack's labels come out in seconds. The ERP side (karrio_shipping, same ClickUp task) owns the batches and the safety net.
+
+- Added: `prestaged`/`row_label` forwarding on `POST /v1/erp/print-batches` (a plain open stays byte for byte the old payload), new read-only `POST /v1/erp/print-batches/status` (`erp-print-batch-status`), dashboard flag mirror `btn_prestage_labels`, the popup's run/Stop/Retry/ready-row Print, a "Pre-staged earlier" section and a "Pre-staged rows" button (Today, empty selection) for rows found again after a reload, and a "Resolved addresses" section (metadata `address_resolved_at`) packed last.
+- Flag `btn_prestage_labels` is OFF by default; the button needs `btn_print_batch` too. With it off every existing Print path behaves as before.
+- Release order: deploy the ERP (karrio_shipping, needs `migrate` for the new batch fields) BEFORE this Karrio change, then switch the flag on in the ERP. Against an older ERP the flag stays off; if an ERP does not answer `prestaged: true`, the row is released right after its purchases and the run stops.
+- Diagram status: **diagram nog bijwerken: Pick & Print**.
+
 # P1 handoff — 2026-11-03
 
 The authorization and coordinated reschedule changes require paired review and release across checkout, Shopify ERP, Karrio Shipping, and Karrio. The user authorized commits, pushes, and linked pull requests. No merge or deployment is authorized or performed.

@@ -113,7 +113,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .venv
-          key: server-venv-${{ runner.os }}-py${{ matrix.python-version }}-${{ hashFiles('requirements.server.dev.txt', 'requirements.sdk.dev.txt', 'modules/**/pyproject.toml', 'apps/**/pyproject.toml') }}
+          key: server-venv-${{ runner.os }}-py${{ matrix.python-version }}-${{ hashFiles('requirements.txt', 'requirements.server.dev.txt', 'requirements.sdk.dev.txt', 'modules/**/pyproject.toml', 'apps/**/pyproject.toml') }}
           restore-keys: |
             server-venv-${{ runner.os }}-py${{ matrix.python-version }}-
 

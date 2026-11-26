@@ -5,6 +5,8 @@
 - Added: `prestaged`/`row_label` forwarding on `POST /v1/erp/print-batches` (a plain open stays byte for byte the old payload), new read-only `POST /v1/erp/print-batches/status` (`erp-print-batch-status`), dashboard flag mirror `btn_prestage_labels`, the popup's run/Stop/Retry/ready-row Print, a "Pre-staged earlier" section and a "Pre-staged rows" button (Today, empty selection) for rows found again after a reload, and a "Resolved addresses" section (metadata `address_resolved_at`) packed last.
 - Flag `btn_prestage_labels` is OFF by default; the button needs `btn_print_batch` too. With it off every existing Print path behaves as before.
 - Release order: deploy the ERP (karrio_shipping, needs `migrate` for the new batch fields) BEFORE this Karrio change, then switch the flag on in the ERP. Against an older ERP the flag stays off; if an ERP does not answer `prestaged: true`, the row is released right after its purchases and the run stops.
+- Not everything waits for Print: shipments the ERP does not hold (not ERP-linked, printed before) print immediately on their purchase, also during a run. A row with only such shipments (`enabled` without a batch) prints right away and the run goes on to the next row.
+- A Stop before a row's first label releases its empty batch at once, and the row is grey again. The popup reads a purchase that timed out in the browser but whose label the ERP holds as bought (Print prints it, Retry does not buy it again). A batch whose status has not changed for two minutes is no longer polled until its row is acted on ("check again"); Print never depends on the poll.
 - Diagram status: **diagram nog bijwerken: Pick & Print**.
 
 # P1 handoff — 2026-11-03

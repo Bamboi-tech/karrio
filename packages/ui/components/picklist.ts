@@ -85,6 +85,11 @@ export interface BuyResult {
   // own Print does that later. Anything else was released (or printed one
   // by one) the moment the purchases were done, exactly as Print does.
   prestaged?: boolean;
+  // Pre-staging only: the ERP's print batches were on when the row's batch
+  // was asked for (its answer's `enabled`). Without a batch that means the
+  // ERP holds none of the row's shipments — they print on their purchase —
+  // not that pre-staging is unavailable (see prestageUnavailable).
+  printBatchEnabled?: boolean;
   // Pre-staging only: the shipments a Stop left unbought.
   notAttempted?: string[];
 }
@@ -611,33 +616,68 @@ export const prestagedRow = (
   notAttempted: result.notAttempted ?? [],
 });
 
+// Whether the ERP's answer to a pre-staged open means pre-staging is not
+// available: its print batches are off (or the open failed), or it opened a
+// batch that is not pre-staged (an ERP that predates it, its flag off). An
+// enabled answer WITHOUT a batch is not that: the ERP holds none of the
+// row's shipments (not ERP-linked, printed before), so there was nothing to
+// hold — their labels print on their purchase, as they always did.
+export const prestageUnavailable = (opened: {
+  enabled: boolean;
+  batch: string | null;
+  prestaged?: boolean;
+}): boolean =>
+  !opened.enabled || (Boolean(opened.batch) && opened.prestaged !== true);
+
 // How a pre-stage purchase run ended for its row:
 // - ready: the ERP holds the labels in a pre-staged batch;
+// - abandoned: a Stop left the pre-staged batch without a single label —
+//   release it over all its shipments as failed, so the ERP does not hold an
+//   empty batch for two hours, and the row goes back to grey;
 // - stopped: Stop came before the batch was opened — nothing bought;
-// - degraded: the ERP did not pre-stage (an ERP that predates it, the flag
-//   off there, the open failed). The page already released the batch right
-//   after the purchases, so the row prints the normal way.
+// - unheld: the ERP holds none of the row's shipments; their labels printed
+//   on their purchase, the row settles like a plain Print and the run goes on;
+// - degraded: the ERP did not pre-stage (prestageUnavailable). The page
+//   already released the batch right after the purchases, so the row prints
+//   the normal way.
 export type PrestageOutcome =
   | { kind: "ready"; row: PrestagedRow }
+  | { kind: "abandoned"; batch: string; failedIds: string[] }
   | { kind: "stopped" }
+  | { kind: "unheld" }
   | { kind: "degraded" };
 
 export function prestageOutcome(
   result: BuyResult,
   previous?: PrestagedRow,
 ): PrestageOutcome {
+  const notAttempted = result.notAttempted ?? [];
   if (result.prestaged === true && result.printBatch) {
-    return {
-      kind: "ready",
-      row: prestagedRow(result.printBatch, result, previous),
-    };
+    const row = prestagedRow(result.printBatch, result, previous);
+    if (row.bought.length === 0 && notAttempted.length > 0) {
+      return {
+        kind: "abandoned",
+        batch: row.batch,
+        failedIds: releaseFailedIds({
+          failedIds: [...(previous?.failedIds ?? []), ...row.failedIds],
+          notAttempted: [...(previous?.notAttempted ?? []), ...notAttempted],
+        }),
+      };
+    }
+    return { kind: "ready", row };
   }
   const nothingHappened =
     !result.printBatch &&
     result.purchased.length === 0 &&
     result.failedIds.length === 0 &&
-    (result.notAttempted ?? []).length > 0;
-  return nothingHappened ? { kind: "stopped" } : { kind: "degraded" };
+    notAttempted.length > 0;
+  if (nothingHappened) return { kind: "stopped" };
+  const unavailable = prestageUnavailable({
+    enabled: result.printBatchEnabled === true,
+    batch: result.printBatch ?? null,
+    prestaged: result.prestaged,
+  });
+  return unavailable ? { kind: "degraded" } : { kind: "unheld" };
 }
 
 // A pre-stage run that broke off with an exception still leaves its batch
@@ -686,6 +726,11 @@ export interface BatchSnapshot {
 // absent before the first answer.
 export type BatchSnapshots = Record<string, BatchSnapshot | null | undefined>;
 
+// The list of batches pre-staged earlier as the page already asked for it
+// (the empty-selection entry), so the popup does not ask again: the answer,
+// or that it could not be loaded.
+export type RecoveredPreload = { batches: BatchSnapshot[] } | { error: true };
+
 export const attachedIds = (
   snapshot: BatchSnapshot | null | undefined,
 ): string[] | null =>
@@ -694,6 +739,30 @@ export const attachedIds = (
         .filter((item) => item.label_attached)
         .map((item) => item.karrio_shipment_id)
     : null;
+
+// A ready row as the ERP's latest snapshot has it. A purchase the popup saw
+// fail — or never saw finish, the run having broken off — can still have
+// gone through at Karrio (a browser timeout, "already purchased"); once the
+// batch holds its label, that shipment is bought. Released as failed it
+// would be skipped and never printed, and a Retry would buy it twice. What
+// Print releases, what Retry buys and what the row counts all read the row
+// through this. Unchanged while the batch's status is unknown.
+export function reconcileRow(
+  row: PrestagedRow,
+  snapshot: BatchSnapshot | null | undefined,
+): PrestagedRow {
+  const attached = attachedIds(snapshot);
+  if (attached === null) return row;
+  const held = (id: string) => attached.includes(id);
+  return {
+    batch: row.batch,
+    bought: Array.from(
+      new Set([...row.bought, ...releaseFailedIds(row).filter(held)]),
+    ),
+    failedIds: row.failedIds.filter((id) => !held(id)),
+    notAttempted: row.notAttempted.filter((id) => !held(id)),
+  };
+}
 
 // What of a ready row's purchases is ready to print: the labels the batch
 // holds attached, plus bought shipments the batch never held (not
@@ -731,13 +800,74 @@ export const readyLabels = (
 // One status call covers every batch the ERP accepts in one request.
 const STATUS_MAX_BATCHES = 50;
 
+// One status poll for every watched batch, every few seconds.
+export const PRESTAGE_POLL_MS = 5_000;
+// A batch whose answer has not changed for two minutes is paused: labels
+// that have not arrived by then are not about to, and a popup left open
+// over lunch must not poll the ERP all afternoon. Any action on its row
+// resumes it (resumePoll); Print never waits for the poll.
+export const POLL_STALL_TICKS = 120_000 / PRESTAGE_POLL_MS;
+
+// Consecutive polls without news, per batch.
+export type PollStall = Record<string, number>;
+
+// What of a snapshot the popup reads: a change in any of it is news.
+const snapshotSignature = (snapshot: BatchSnapshot | null | undefined): string =>
+  JSON.stringify(
+    snapshot
+      ? [
+          snapshot.status,
+          snapshot.attached ?? null,
+          snapshot.total ?? null,
+          (snapshot.items ?? []).map((item) => [
+            item.karrio_shipment_id,
+            item.label_attached,
+            item.state ?? null,
+          ]),
+        ]
+      : null,
+  );
+
+// After a poll over `polled`: a batch whose snapshot changed starts over at
+// zero, one that did not — or whose poll failed (before === after) — counts
+// one more. Batches not polled keep their count.
+export function pollStall(
+  stall: PollStall,
+  polled: string[],
+  before: BatchSnapshots,
+  after: BatchSnapshots,
+): PollStall {
+  return {
+    ...stall,
+    ...Object.fromEntries(
+      polled.map((name) => [
+        name,
+        snapshotSignature(before[name]) === snapshotSignature(after[name])
+          ? (stall[name] ?? 0) + 1
+          : 0,
+      ]),
+    ),
+  };
+}
+
+export const resumePoll = (stall: PollStall, batch: string): PollStall => ({
+  ...stall,
+  [batch]: 0,
+});
+
+export const isPollPaused = (stall: PollStall, batch: string): boolean =>
+  (stall[batch] ?? 0) >= POLL_STALL_TICKS;
+
 // The batches worth a status poll: rows being bought into a pre-staged
 // batch, ready rows whose labels are not all attached yet (or unknown), and
-// previously pre-staged batches still open and incomplete. Empty → no poll.
+// previously pre-staged batches still open and incomplete or on their way to
+// the printer (Queued, Printing — until Printed or Failed). Paused batches
+// are left out (POLL_STALL_TICKS). Empty → no poll.
 export function batchesToPoll(
   states: Record<string, RowState>,
   snapshots: BatchSnapshots,
   recovered: string[] = [],
+  stall: PollStall = {},
 ): string[] {
   const rows = Object.values(states).flatMap((state) => {
     if (state.phase === "buying") {
@@ -749,28 +879,47 @@ export function batchesToPoll(
   });
   const earlier = recovered.filter((name) => {
     const snapshot = snapshots[name];
+    if (snapshot?.status === "Queued" || snapshot?.status === "Printing") {
+      return true;
+    }
     return (
       snapshot?.status === "Open" && (snapshot.attached ?? 0) < (snapshot.total ?? 0)
     );
   });
-  return Array.from(new Set([...rows, ...earlier])).slice(0, STATUS_MAX_BATCHES);
+  return Array.from(new Set([...rows, ...earlier]))
+    .filter((name) => !isPollPaused(stall, name))
+    .slice(0, STATUS_MAX_BATCHES);
 }
 
-// Print on a previously pre-staged batch: what has a label is printed, the
-// rest the ERP stops waiting for.
+// Print on a previously pre-staged batch: the same rule as a ready row's
+// Print (reconcileRow) over the whole batch — what has a label is printed,
+// the rest the ERP stops waiting for.
 export const recoveredRelease = (
   snapshot: BatchSnapshot,
 ): { bought: string[]; failedIds: string[] } => {
-  const items = snapshot.items ?? [];
-  return {
-    bought: items
-      .filter((item) => item.label_attached)
-      .map((item) => item.karrio_shipment_id),
-    failedIds: items
-      .filter((item) => !item.label_attached)
-      .map((item) => item.karrio_shipment_id),
-  };
+  const { bought, failedIds } = reconcileRow(
+    {
+      batch: snapshot.batch,
+      bought: [],
+      failedIds: (snapshot.items ?? []).map((item) => item.karrio_shipment_id),
+      notAttempted: [],
+    },
+    snapshot,
+  );
+  return { bought, failedIds };
 };
+
+// What the empty-selection entry finds among the batches pre-staged
+// earlier: rows waiting to be printed (Open — nothing else is), and finished
+// batches that did not print a label they hold (their Print again). Queued
+// and Printing are on their way and need nobody.
+export const prestagedEarlier = (
+  batches: BatchSnapshot[],
+): { waiting: number; unprinted: number } => ({
+  waiting: batches.filter((snapshot) => snapshot.status === "Open").length,
+  unprinted: batches.filter((snapshot) => recoveredFailure(snapshot) !== null)
+    .length,
+});
 
 // A batch found again after a reload has no rows on this list: the ERP names
 // its shipments, not their parcels, so each counts as one label.
@@ -825,4 +974,17 @@ export function clockTime(
     hour12: false,
     timeZone,
   }).format(time);
+}
+
+// When the ERP's safety net prints a held batch by itself, as the operator
+// reads it: "at 16:05" — or "any moment now" once that time has passed,
+// never a time in the past. Null when the ERP has not said.
+export function autoPrintWhen(
+  iso: string | null | undefined,
+  now: number,
+  timeZone?: string,
+): string | null {
+  const time = clockTime(iso, timeZone);
+  if (!iso || !time) return null;
+  return clockValue(iso) <= now ? "any moment now" : `at ${time}`;
 }

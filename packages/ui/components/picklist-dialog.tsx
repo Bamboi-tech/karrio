@@ -52,17 +52,19 @@ import {
 // only unlocks when everything is confirmed.
 
 import {
+  autoPrintWhen,
   autoReleaseAt,
   batchesToPoll,
   buildPicklist,
   canPrintAgain,
-  clockTime,
   interruptedRow,
   isBusy,
+  isPollPaused,
   isPurchasing,
   labelCount,
   orderKey,
   picklistRows,
+  pollStall,
   prestagedRow,
   prestageOutcome,
   prestageQueue,
@@ -72,10 +74,12 @@ import {
   readyIds,
   readyLabels,
   readyRows,
+  reconcileRow,
   recoveredFailure,
   recoveredRelease,
   recoveredTargets,
   releaseFailedIds,
+  resumePoll,
   rowPrintOrder,
   stackKey,
   unqueueRows,
@@ -87,10 +91,13 @@ import {
   Picklist,
   PicklistRow,
   PicklistShipmentLike,
+  PollStall,
   PrestagedRow,
+  PRESTAGE_POLL_MS,
   PrintConfirmation,
   PrintFailure,
   PurchaseProgress,
+  RecoveredPreload,
   RowState,
   ShipmentSummary,
   SkuGroup,
@@ -105,12 +112,13 @@ export {
   type Picklist,
   type PicklistShipmentLike,
   type PrintConfirmation,
+  type RecoveredPreload,
   type SkuGroup,
 };
 
-// One status poll for every batch the popup watches, while labels are still
-// arriving in the ERP (see batchesToPoll).
-const PRESTAGE_POLL_MS = 5_000;
+// A Retry before Print buys outside a run, so it has a stop flag of its own;
+// leaving the page raises it like the run's.
+type StopFlag = { stopped: boolean };
 
 const recoveredKey = (batch: string) => `batch:${batch}`;
 
@@ -126,6 +134,7 @@ export function PicklistDialog({
   prestage = false,
   onReleasePrintBatch,
   onPrintBatchStatus,
+  recoveredPreload = null,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -172,6 +181,9 @@ export function PicklistDialog({
   onPrintBatchStatus?: (
     batches: string[] | null,
   ) => Promise<{ batches: BatchSnapshot[] }>;
+  // That recent list, when the page already asked for it to decide whether
+  // to open the popup at all: used as is instead of asking again.
+  recoveredPreload?: RecoveredPreload | null;
 }) {
   const prestageOn = Boolean(prestage && onReleasePrintBatch && onPrintBatchStatus);
   const picklist = React.useMemo(
@@ -193,7 +205,15 @@ export function PicklistDialog({
   // The ERP's last word per batch, the batches whose last poll failed, and
   // the pre-staged batches found when the popup opened (null: not asked).
   const [snapshots, setSnapshots] = React.useState<Record<string, BatchSnapshot>>({});
+  const snapshotsRef = React.useRef(snapshots);
+  snapshotsRef.current = snapshots;
+  // Polls without news per batch: a batch quiet for two minutes is paused
+  // until the operator acts on its row (see POLL_STALL_TICKS).
+  const [stall, setStall] = React.useState<PollStall>({});
+  const resume = (batch: string) => setStall((current) => resumePoll(current, batch));
   const [statusUnknown, setStatusUnknown] = React.useState<string[]>([]);
+  // The stop flags of Retries in flight (see StopFlag).
+  const retryStops = React.useRef(new Set<StopFlag>());
   const [recovered, setRecovered] = React.useState<string[] | null>(null);
   const [recoveredError, setRecoveredError] = React.useState(false);
   const [closeIntent, setCloseIntent] = React.useState<
@@ -212,14 +232,19 @@ export function PicklistDialog({
   // Made in the effect, not at render — StrictMode's mount → unmount → mount
   // would otherwise hand every later poll an already aborted signal.
   const abortRef = React.useRef<AbortController | null>(null);
-  // Leaving mid-run stops the run too: no row may be bought into a held
-  // batch nobody is looking at (the purchase in flight still finishes).
+  // Leaving mid-run stops the run too, and any Retry: no row may be bought
+  // into a held batch nobody is looking at (the purchase in flight still
+  // finishes).
   React.useEffect(() => {
     const controller = new AbortController();
     abortRef.current = controller;
+    const stops = retryStops.current;
     return () => {
       controller.abort();
       stopRef.current = true;
+      stops.forEach((flag) => {
+        flag.stopped = true;
+      });
     };
   }, []);
 
@@ -230,6 +255,7 @@ export function PicklistDialog({
       setTicked([]);
       setRows({});
       setSnapshots({});
+      setStall({});
       setStatusUnknown([]);
       setRunNote(null);
       setCloseIntent(null);
@@ -241,23 +267,33 @@ export function PicklistDialog({
   // running across renders and read the latest one through this ref.
   const statusRef = React.useRef(onPrintBatchStatus);
   statusRef.current = onPrintBatchStatus;
+  const preloadRef = React.useRef(recoveredPreload);
+  preloadRef.current = recoveredPreload;
 
   // Rows pre-staged before a reload (or before the popup was last closed):
-  // the ERP still holds them, and the popup offers their Print again.
+  // the ERP still holds them, and the popup offers their Print again. A list
+  // that could not be loaded says so — it never reads as "nothing there".
   React.useEffect(() => {
     setRecovered(null);
     setRecoveredError(false);
     if (!open || !prestageOn) return;
     let cancelled = false;
+    const found = ({ batches }: { batches: BatchSnapshot[] }) => {
+      if (cancelled) return;
+      setRecovered(batches.map((snapshot) => snapshot.batch));
+      setSnapshots((current) => ({
+        ...current,
+        ...Object.fromEntries(batches.map((snapshot) => [snapshot.batch, snapshot])),
+      }));
+    };
+    const preload = preloadRef.current;
+    if (preload) {
+      if ("error" in preload) setRecoveredError(true);
+      else found(preload);
+      return;
+    }
     statusRef.current?.(null)
-      .then(({ batches }) => {
-        if (cancelled) return;
-        setRecovered(batches.map((snapshot) => snapshot.batch));
-        setSnapshots((current) => ({
-          ...current,
-          ...Object.fromEntries(batches.map((snapshot) => [snapshot.batch, snapshot])),
-        }));
-      })
+      .then(found)
       .catch(() => {
         if (!cancelled) setRecoveredError(true);
       });
@@ -267,11 +303,13 @@ export function PicklistDialog({
   }, [open, prestageOn]);
 
   // One status call for every watched batch, every few seconds, only while
-  // labels are still arriving (a row buying, a ready row not complete yet).
-  // A failed poll keeps the last known count and says "status unknown";
-  // Print never depends on it.
+  // labels are still arriving (a row buying, a ready row not complete yet)
+  // or an earlier batch is on its way to the printer — and not for a batch
+  // that has had nothing new for two minutes (paused until its row is acted
+  // on). A failed poll keeps the last known count and says "status
+  // unknown"; Print never depends on it.
   const pollKey = prestageOn
-    ? batchesToPoll(rows, snapshots, recovered ?? []).join("|")
+    ? batchesToPoll(rows, snapshots, recovered ?? [], stall).join("|")
     : "";
   React.useEffect(() => {
     if (!pollKey) return;
@@ -281,16 +319,21 @@ export function PicklistDialog({
     const tick = async () => {
       if (inFlight || !statusRef.current) return;
       inFlight = true;
+      const before = snapshotsRef.current;
       try {
         const { batches } = await statusRef.current(names);
         if (cancelled) return;
         // An "Unknown" answer never overwrites what the ERP said before.
-        const known = batches.filter((snapshot) => snapshot.status !== "Unknown");
-        const knownNames = known.map((snapshot) => snapshot.batch);
-        setSnapshots((current) => ({
-          ...current,
-          ...Object.fromEntries(known.map((snapshot) => [snapshot.batch, snapshot])),
-        }));
+        const known = Object.fromEntries(
+          batches
+            .filter((snapshot) => snapshot.status !== "Unknown")
+            .map((snapshot) => [snapshot.batch, snapshot]),
+        );
+        const knownNames = Object.keys(known);
+        setSnapshots((current) => ({ ...current, ...known }));
+        setStall((current) =>
+          pollStall(current, names, before, { ...before, ...known }),
+        );
         setStatusUnknown((current) =>
           Array.from(
             new Set([
@@ -302,6 +345,7 @@ export function PicklistDialog({
       } catch {
         if (!cancelled) {
           setStatusUnknown((current) => Array.from(new Set([...current, ...names])));
+          setStall((current) => pollStall(current, names, before, before));
         }
       } finally {
         inFlight = false;
@@ -400,15 +444,18 @@ export function PicklistDialog({
   // Buys one row into a pre-staged batch: picks, open, purchases — and no
   // release. `previous` is the ready row a Retry buys the missing labels
   // into (same batch, no new picks). Whatever happens, a batch the ERP
-  // opened pre-staged ends up on a ready row, never forgotten: if the ERP
-  // did not pre-stage, the page released the batch itself and the row
-  // prints the normal way (degraded).
+  // opened pre-staged ends up on a ready row, never forgotten — or, when a
+  // Stop left it without a single label, released at once (abandoned). If
+  // the ERP did not pre-stage, the page released the batch itself and the
+  // row prints the normal way (degraded); if it held none of the row's
+  // shipments, they printed on their purchase (unheld) and the run goes on.
+  // "failed": the purchase run broke off with an error.
   const prestageRow = async (
     row: PicklistRow,
     targets: ShipmentSummary[],
     previous: PrestagedRow | undefined,
     shouldStop: () => boolean,
-  ): Promise<"ready" | "stopped" | "degraded" | "failed"> => {
+  ): Promise<"ready" | "unheld" | "stopped" | "degraded" | "failed"> => {
     const { key } = row;
     const ids = targets.map((t) => t.id);
     progressRef.current[key] = {
@@ -436,23 +483,39 @@ export function PicklistDialog({
       });
       const outcome = prestageOutcome(result, previous);
       if (outcome.kind === "ready") {
+        // New labels in the batch: whatever paused its poll is over.
+        resume(outcome.row.batch);
         setRow(key, { phase: "ready", ...outcome.row });
         return "ready";
+      }
+      if (outcome.kind === "abandoned") {
+        // Not one label in it: the ERP must not hold an empty batch for two
+        // hours. A release it does not take changes nothing on paper — the
+        // row is back to grey either way.
+        await onReleasePrintBatch?.(
+          outcome.batch,
+          outcome.failedIds,
+          "It holds no labels; the ERP closes it by itself later.",
+        ).catch(() => false);
+        setRow(key, { phase: "idle" });
+        return "stopped";
       }
       if (outcome.kind === "stopped") {
         setRow(key, { phase: "idle" });
         return "stopped";
       }
-      // Not pre-staged: released already, so it prints like a plain Print.
-      // Not awaited — the printer wait is no purchase and must not hold the
-      // run's lock.
+      // Not held: released already (degraded) or never batched (unheld), so
+      // it prints like a plain Print. Not awaited — the printer wait is no
+      // purchase and must not hold the run's lock.
       void settle(key, targets, result).catch(() =>
         setRow(key, purchaseFailed(targets)),
       );
-      return "degraded";
+      return outcome.kind;
     } catch {
       const interrupted = interruptedRow(progressRef.current[key], targets);
       if (interrupted) {
+        // Never forgotten: the row is ready over its batch. The run stops
+        // all the same — something is wrong.
         setRow(key, {
           phase: "ready",
           ...prestagedRow(
@@ -465,7 +528,7 @@ export function PicklistDialog({
             previous,
           ),
         });
-        return "ready";
+        return "failed";
       }
       setRow(key, previous ? { phase: "ready", ...previous } : purchaseFailed(targets));
       return "failed";
@@ -497,7 +560,14 @@ export function PicklistDialog({
             "Pre-staging is not available — this row printed right away and the run stopped.",
           );
         }
-        if (outcome !== "ready") break;
+        if (outcome === "failed") {
+          setRunNote(
+            `The run stopped: buying ${row.label} broke off with an error. Ready rows can still be printed.`,
+          );
+        }
+        // Ready, or nothing to hold (its labels printed on their purchase):
+        // on to the next row. Anything else ends the run.
+        if (outcome !== "ready" && outcome !== "unheld") break;
       }
     } finally {
       setRows((current) => unqueueRows(current));
@@ -513,49 +583,66 @@ export function PicklistDialog({
 
   // A ready row's Print: release the held batch — telling the ERP which
   // purchases never happened — then wait for the printer as any batch row.
-  // A release the ERP did not take leaves the row ready, Print still there.
+  // What never happened is read against the ERP's latest snapshot
+  // (reconcileRow): a purchase that timed out here but whose label the
+  // batch holds is printed and waited for, never released as failed. Only
+  // the last known snapshot — Print never waits for a poll. A release the
+  // ERP did not take leaves the row ready, Print still there.
   const printReady = async (
     key: string,
     targets: ShipmentSummary[],
     state: PrestagedRow,
   ) => {
     if (!onReleasePrintBatch) return;
-    const failedIds = releaseFailedIds(state);
-    const at = clockTime(snapshots[state.batch]?.auto_release_at);
+    const latest = snapshots[state.batch];
+    const row = reconcileRow(state, latest);
+    const failedIds = releaseFailedIds(row);
+    const when = autoPrintWhen(latest?.auto_release_at, Date.now());
+    resume(state.batch);
     setRow(key, {
       phase: "confirming",
-      ...progressLabels(targets, state.bought, []),
+      ...progressLabels(targets, row.bought, []),
     });
     const released = await onReleasePrintBatch(
       state.batch,
       failedIds,
-      at
-        ? `Its labels print automatically at ${at}.`
+      when
+        ? `Its labels print automatically ${when}.`
         : "Its labels print automatically once the ERP releases the batch.",
     ).catch(() => false);
     if (!released) {
-      setRow(key, { phase: "ready", ...state });
+      setRow(key, { phase: "ready", ...row });
       return;
     }
     await settle(key, targets, {
-      purchased: state.bought,
+      purchased: row.bought,
       failures: [],
       failedIds,
       printBatch: state.batch,
     }).catch(() => setRow(key, purchaseFailed(targets)));
   };
 
-  // Retry before Print: buy what is missing into the same held batch.
+  // Retry before Print: buy what is missing into the same held batch — not
+  // what the batch turned out to hold after all (reconcileRow). It has a
+  // stop flag of its own, raised when the popup goes away.
   const retryReady = (key: string, targets: ShipmentSummary[], state: PrestagedRow) => {
     const row = rowByKey.get(key);
     if (!row || purchasing) return;
-    const missing = releaseFailedIds(state);
+    const current = reconcileRow(state, snapshots[state.batch]);
+    const missing = releaseFailedIds(current);
+    resume(state.batch);
+    if (missing.length === 0) {
+      setRow(key, { phase: "ready", ...current });
+      return;
+    }
+    const flag: StopFlag = { stopped: false };
+    retryStops.current.add(flag);
     void prestageRow(
       row,
       targets.filter((target) => missing.includes(target.id)),
-      state,
-      () => false,
-    );
+      current,
+      () => flag.stopped,
+    ).finally(() => retryStops.current.delete(flag));
   };
 
   // Print again: the ERP re-sends the row's merged job, and the row waits for
@@ -642,12 +729,27 @@ export function PicklistDialog({
     }
     finishClose(intent);
   };
-  const autoPrintAt = clockTime(
+  const autoPrint = autoPrintWhen(
     autoReleaseAt(
       unprinted.map((row) => row.batch),
       snapshots,
     ),
+    Date.now(),
   );
+
+  // A batch whose poll is paused says so, with the way to look again.
+  const pausedNote = (batch: string) =>
+    isPollPaused(stall, batch) && (
+      <Button
+        variant="link"
+        size="sm"
+        className="h-auto p-0 text-xs text-muted-foreground"
+        title="Nothing changed in the ERP for two minutes, so the popup stopped asking. Print works regardless."
+        onClick={() => resume(batch)}
+      >
+        check again
+      </Button>
+    );
 
   // One cell tells the row's whole story: grey button (nothing happened),
   // spinner (picking / buying / waiting for the printer, with its count so
@@ -692,12 +794,14 @@ export function PicklistDialog({
           </span>
         );
       case "ready": {
+        const latest = snapshots[state.batch];
+        const current = reconcileRow(state, latest);
         const count = readyLabels(
           targets,
-          state.bought,
-          readyIds(snapshots[state.batch], state.bought),
+          current.bought,
+          readyIds(latest, current.bought),
         );
-        const missing = releaseFailedIds(state);
+        const missing = releaseFailedIds(current);
         const missingLabels = labelCount(
           targets.filter((target) => missing.includes(target.id)),
         );
@@ -737,6 +841,7 @@ export function PicklistDialog({
                 status unknown
               </span>
             )}
+            {pausedNote(state.batch)}
           </span>
         );
       }
@@ -821,11 +926,13 @@ export function PicklistDialog({
     if (rows[key]) return statusCell(key, targets, false);
     if (snapshot.status === "Open") {
       const { bought, failedIds } = recoveredRelease(snapshot);
+      const when = autoPrintWhen(snapshot.auto_release_at, Date.now());
       return (
         <span className="inline-flex items-center gap-2">
-          {snapshot.auto_release_at && (
+          {pausedNote(snapshot.batch)}
+          {when && (
             <span className="text-xs text-muted-foreground">
-              prints automatically at {clockTime(snapshot.auto_release_at)}
+              prints automatically {when}
             </span>
           )}
           <Button
@@ -873,8 +980,22 @@ export function PicklistDialog({
         </span>
       );
     }
+    if (snapshot.status === "Printed") {
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
+          <CheckCircle2 className="h-3.5 w-3.5" /> Printed
+        </span>
+      );
+    }
+    // Queued or Printing: on its way, followed until it is done.
     return (
-      <span className="text-xs text-muted-foreground">{snapshot.status}</span>
+      <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+        {["Queued", "Printing"].includes(snapshot.status) && (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        )}
+        {snapshot.status}
+        {pausedNote(snapshot.batch)}
+      </span>
     );
   };
 
@@ -1070,10 +1191,17 @@ export function PicklistDialog({
         )}
 
         {rowKeys.length === 0 ? (
-          recoveredSnapshots.length === 0 && (
+          prestageOn && recovered === null && !recoveredError ? (
             <p className="py-6 text-center text-sm text-muted-foreground">
-              Nothing to pick in this selection.
+              Loading rows pre-staged earlier…
             </p>
+          ) : (
+            recoveredSnapshots.length === 0 &&
+            !recoveredError && (
+              <p className="py-6 text-center text-sm text-muted-foreground">
+                Nothing to pick in this selection.
+              </p>
+            )
           )
         ) : (
           <div className="max-h-[60vh] overflow-y-auto rounded-md border">
@@ -1146,8 +1274,8 @@ export function PicklistDialog({
           >
             <span className="flex-1">
               {unprinted.length} row{unprinted.length === 1 ? "" : "s"}{" "}
-              pre-staged, not printed — they print automatically
-              {autoPrintAt ? ` at ${autoPrintAt}` : " later"}.
+              pre-staged, not printed — they print automatically{" "}
+              {autoPrint ?? "later"}.
             </span>
             <Button variant="outline" size="sm" onClick={() => setCloseIntent(null)}>
               Keep open

@@ -114,9 +114,12 @@ import type {
   BuyResult,
   PicklistShipmentLike,
   PrintConfirmation,
+  RecoveredPreload,
 } from "@karrio/ui/components/picklist-dialog";
 import {
   awaitPrintConfirmation,
+  prestagedEarlier,
+  prestageUnavailable,
   retrying,
 } from "@karrio/ui/components/picklist";
 import { useKarrio } from "@karrio/hooks/karrio";
@@ -767,6 +770,10 @@ function ShipmentsBoard({ seed, view }: ShipmentsPageProps): JSX.Element {
   const picklistRowsRef = React.useRef<ReturnType<typeof selectedShipments>>(
     [],
   );
+  // The pre-staged batch list the empty-selection entry already asked the
+  // ERP for, handed to the popup so it does not ask again.
+  const [recoveredPreload, setRecoveredPreload] =
+    React.useState<RecoveredPreload | null>(null);
   const { previewShipment, prefetchShipment } = useContext(ShipmentPreviewSheetContext);
   // Everything the first paint of the table does not need waits until the
   // rows are on screen and the browser is idle: the list goes first, alone,
@@ -1184,23 +1191,33 @@ function ShipmentsBoard({ seed, view }: ShipmentsPageProps): JSX.Element {
   //
   // With pre-staging on, the popup also opens over an EMPTY selection when
   // the ERP still holds rows pre-staged earlier (a reload, a closed popup):
-  // their Print lives in there.
+  // their Print lives in there. Only Open batches wait to be printed (and a
+  // finished one that did not print a label it holds needs its Print
+  // again); a list that could not be loaded opens the popup all the same,
+  // which says so — never "nothing waiting" on a guess.
   const prestageEnabled =
     isEnabled("btn_print_batch") && isEnabled("btn_prestage_labels");
   const openPickAndPrint = async () => {
     const selected = selectedShipments();
+    let preload: RecoveredPreload | null = null;
     if (selected.length === 0) {
       if (!prestageEnabled) return;
-      const waiting = await printBatches.printBatchStatus
+      preload = await printBatches.printBatchStatus
         .mutateAsync({ batches: null })
-        .then(({ batches }) => batches.length)
-        .catch(() => 0);
-      if (waiting === 0) {
-        toast({ title: "No pre-staged rows waiting to be printed" });
-        return;
+        .then(
+          ({ batches }): RecoveredPreload => ({ batches }),
+          (): RecoveredPreload => ({ error: true }),
+        );
+      if ("batches" in preload) {
+        const { waiting, unprinted } = prestagedEarlier(preload.batches);
+        if (waiting + unprinted === 0) {
+          toast({ title: "No pre-staged rows waiting to be printed" });
+          return;
+        }
       }
     }
     picklistRowsRef.current = selected;
+    setRecoveredPreload(preload);
     setPicklistPurchasedIds([]);
     setPicklistShipments([...selected]);
   };
@@ -1213,19 +1230,23 @@ function ShipmentsBoard({ seed, view }: ShipmentsPageProps): JSX.Element {
   //
   // rowLabel asks for a PRE-STAGED batch, named after the popup row.
   // prestaged is true only when the ERP says so; without rowLabel the open is
-  // the exact call it always was.
+  // the exact call it always was. enabled is the ERP's own word (false when
+  // the call failed): enabled without a batch means it holds none of these
+  // shipments, not that batches are off.
   const openPrintBatch = async (
     targets: ListShipment[],
     rowLabel?: string,
-  ): Promise<{ batch: string | null; prestaged: boolean }> => {
+  ): Promise<{ enabled: boolean; batch: string | null; prestaged: boolean }> => {
     const shipment_ids = targets.map(({ id }) => id);
     try {
-      const { batch, prestaged } = await printBatches.openPrintBatch.mutateAsync(
-        rowLabel === undefined
-          ? { shipment_ids }
-          : { shipment_ids, prestaged: true, row_label: rowLabel },
-      );
+      const { enabled, batch, prestaged } =
+        await printBatches.openPrintBatch.mutateAsync(
+          rowLabel === undefined
+            ? { shipment_ids }
+            : { shipment_ids, prestaged: true, row_label: rowLabel },
+        );
       return {
+        enabled: enabled === true,
         batch: batch || null,
         prestaged: rowLabel !== undefined && prestaged === true && Boolean(batch),
       };
@@ -1234,7 +1255,7 @@ function ShipmentsBoard({ seed, view }: ShipmentsPageProps): JSX.Element {
         title: "Batch printing unavailable — labels print one by one",
         description: describeError(error),
       });
-      return { batch: null, prestaged: false };
+      return { enabled: false, batch: null, prestaged: false };
     }
   };
 
@@ -1334,6 +1355,7 @@ function ShipmentsBoard({ seed, view }: ShipmentsPageProps): JSX.Element {
     const unrecordedPicks: string[] = [];
     let printBatch: string | null = null;
     let prestaged = false;
+    let printBatchEnabled = false;
 
     failedBulkIds.current.clear();
     setBulkRows(Object.fromEntries(targets.map(({ id }) => [id, "Waiting"])));
@@ -1342,6 +1364,7 @@ function ShipmentsBoard({ seed, view }: ShipmentsPageProps): JSX.Element {
       // opened when it was pre-staged — buy what is missing into it.
       printBatch = prestage.batch;
       prestaged = true;
+      printBatchEnabled = true;
       options?.onPhase("buying");
     } else if (batched && targets.length > 0) {
       options?.onPhase("picking");
@@ -1371,7 +1394,11 @@ function ShipmentsBoard({ seed, view }: ShipmentsPageProps): JSX.Element {
         const opened = await openPrintBatch(targets, prestage?.rowLabel);
         printBatch = opened.batch;
         prestaged = opened.prestaged;
-        if (prestage && !prestaged) {
+        printBatchEnabled = opened.enabled;
+        // Enabled without a batch is no failure: the ERP holds none of the
+        // row's shipments, which print on their purchase as they always did,
+        // and the run goes on (see prestageUnavailable).
+        if (prestage && prestageUnavailable(opened)) {
           toast({
             title: "Pre-staging unavailable — this row prints right away",
             description:
@@ -1463,7 +1490,15 @@ function ShipmentsBoard({ seed, view }: ShipmentsPageProps): JSX.Element {
     }
     reportBulkFailures("Pick & Print", failures);
     if (prestage) {
-      return { purchased, failures, failedIds, printBatch, prestaged, notAttempted };
+      return {
+        purchased,
+        failures,
+        failedIds,
+        printBatch,
+        prestaged,
+        printBatchEnabled,
+        notAttempted,
+      };
     }
     return batched
       ? { purchased, failures, failedIds, printBatch }
@@ -2331,6 +2366,7 @@ function ShipmentsBoard({ seed, view }: ShipmentsPageProps): JSX.Element {
         prestage={prestageEnabled}
         onReleasePrintBatch={releasePrintBatch}
         onPrintBatchStatus={printBatchStatus}
+        recoveredPreload={recoveredPreload}
         onOpenLabels={
           picklistPurchasedIds.length > 0
             ? () =>

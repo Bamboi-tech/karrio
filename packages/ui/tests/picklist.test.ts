@@ -14,6 +14,8 @@ import {
   buildPicklist,
   canPrintAgain,
   clockTime,
+  freshSnapshot,
+  heldCounts,
   interruptedRow,
   isBusy,
   isPurchasing,
@@ -29,6 +31,7 @@ import {
   prestageUnavailable,
   printFailure,
   PRINTER_UNCONFIRMED_REASON,
+  printVerdict,
   progressLabels,
   queueRows,
   readyLabels,
@@ -314,6 +317,85 @@ describe("awaitPrintConfirmation", () => {
 
     expect(result).toEqual({ printed: ["shp_1"], unconfirmed: [] });
     expect(stream.now()).toBe(0);
+  });
+
+  describe("labels released as failed (a pre-staged row's Print)", () => {
+    // The ERP prints a label it holds even when the popup released it as
+    // failed (the purchase timed out in the browser, went through at
+    // Karrio). The row watches for those too — but they never hold it up.
+    const batch = { ...timing, idleTimeoutMs: 180_000, graceMs: 15_000 };
+
+    it("reports one that printed after all, from the same merged job", async () => {
+      const stream = printStream({ shp_1: 6_000, shp_2: 6_000 });
+
+      const result = await awaitPrintConfirmation({
+        ids: ["shp_1"],
+        alsoIds: ["shp_2"],
+        ...batch,
+        ...stream,
+      });
+
+      expect(result).toEqual({ printed: ["shp_1", "shp_2"], unconfirmed: [] });
+    });
+
+    it("waits only a short grace for one that does not print once the bought labels are confirmed", async () => {
+      const stream = printStream({ shp_1: 6_000 });
+
+      const result = await awaitPrintConfirmation({
+        ids: ["shp_1"],
+        alsoIds: ["shp_2"],
+        ...batch,
+        ...stream,
+      });
+
+      expect(result).toEqual({ printed: ["shp_1"], unconfirmed: [] });
+      // Not the 180 s idle window: the grace after the last bought label.
+      expect(stream.now()).toBeGreaterThanOrEqual(6_000 + 15_000);
+      expect(stream.now()).toBeLessThan(6_000 + 15_000 + 3_000);
+    });
+
+    it("catches one whose mirror trails the bought labels within the grace", async () => {
+      const stream = printStream({ shp_1: 6_000, shp_2: 12_000 });
+
+      const result = await awaitPrintConfirmation({
+        ids: ["shp_1"],
+        alsoIds: ["shp_2"],
+        ...batch,
+        ...stream,
+      });
+
+      expect(result.printed).toEqual(["shp_1", "shp_2"]);
+      expect(stream.now()).toBe(12_000);
+    });
+
+    it("never counts one of them as unconfirmed, and never waits for them alone past the grace", async () => {
+      const stream = printStream({});
+
+      const result = await awaitPrintConfirmation({
+        ids: [],
+        alsoIds: ["shp_2"],
+        ...batch,
+        ...stream,
+      });
+
+      expect(result).toEqual({ printed: [], unconfirmed: [] });
+      expect(stream.now()).toBeGreaterThanOrEqual(15_000);
+      expect(stream.now()).toBeLessThan(15_000 + 3_000);
+    });
+
+    it("still waits the idle window for a bought label the printer is silent about", async () => {
+      const stream = printStream({ shp_2: 3_000 });
+
+      const result = await awaitPrintConfirmation({
+        ids: ["shp_1"],
+        alsoIds: ["shp_2"],
+        ...batch,
+        ...stream,
+      });
+
+      expect(result).toEqual({ printed: ["shp_2"], unconfirmed: ["shp_1"] });
+      expect(stream.now()).toBeGreaterThanOrEqual(3_000 + 180_000);
+    });
   });
 
   it("keeps polling through transient read failures", async () => {
@@ -979,6 +1061,9 @@ describe("prestageOutcome", () => {
       kind: "abandoned",
       batch: "KPB-1",
       failedIds: ["shp_1", "shp_2", "shp_3"],
+      // Failed in the browser: it may still have gone through at Karrio,
+      // and then its label prints by itself — the operator hears so.
+      uncertain: ["shp_1"],
     });
   });
 
@@ -1000,6 +1085,7 @@ describe("prestageOutcome", () => {
       kind: "abandoned",
       batch: "KPB-1",
       failedIds: ["shp_1", "shp_2"],
+      uncertain: [],
     });
   });
 
@@ -1089,6 +1175,48 @@ describe("prestagedRow / interruptedRow", () => {
   });
 });
 
+describe("printVerdict", () => {
+  const targets = [
+    summary("shp_1", "DHL", "#1"),
+    summary("shp_2", "DHL", "#2"),
+    summary("shp_3", "DHL", "#3"),
+  ];
+
+  it("drops a purchase released as failed that printed after all: no Retry for a label that came out", () => {
+    expect(
+      printVerdict(
+        targets,
+        ["shp_2"],
+        { printed: ["shp_1", "shp_2"], unconfirmed: [] },
+        "KPB-1",
+      ),
+    ).toBeNull();
+  });
+
+  it("keeps a failed purchase that did not print on the Retry", () => {
+    expect(
+      printVerdict(
+        targets,
+        ["shp_2", "shp_3"],
+        { printed: ["shp_1", "shp_3"], unconfirmed: [] },
+        "KPB-1",
+      ),
+    ).toEqual({
+      reason: "1 purchase(s) failed",
+      retryIds: ["shp_2"],
+      retryLabels: 1,
+      printBatch: "KPB-1",
+      unconfirmedIds: [],
+    });
+  });
+
+  it("is the plain verdict when nothing failed", () => {
+    expect(
+      printVerdict(targets, [], { printed: ["shp_1"], unconfirmed: ["shp_3"] }, null),
+    ).toEqual(printFailure(targets, [], ["shp_3"], null));
+  });
+});
+
 describe("releaseFailedIds", () => {
   it("tells the ERP to stop waiting for failed and never-attempted purchases", () => {
     expect(
@@ -1140,6 +1268,19 @@ const snapshot = (
   ...extra,
 });
 
+// shp_2 moved on to another batch: Skipped here, though it has a label.
+const skippedBatch: BatchSnapshot = {
+  batch: "KPB-1",
+  status: "Open",
+  total: 3,
+  attached: 2,
+  items: [
+    { karrio_shipment_id: "shp_1", label_attached: true, state: "Waiting" },
+    { karrio_shipment_id: "shp_2", label_attached: true, state: "Skipped" },
+    { karrio_shipment_id: "shp_3", label_attached: false, state: "Waiting" },
+  ],
+};
+
 describe("attachedIds", () => {
   it("lists the shipments whose label the ERP holds", () => {
     expect(
@@ -1151,6 +1292,82 @@ describe("attachedIds", () => {
     expect(attachedIds(null)).toBeNull();
     expect(attachedIds(undefined)).toBeNull();
     expect(attachedIds(snapshot("KPB-1", "Unknown"))).toBeNull();
+  });
+
+  it("never counts a skipped item: its label is the shipment's, not this batch's", () => {
+    // Skipped = moved to another batch, cancelled or printed before; the
+    // label can exist all the same, and this batch will not print it.
+    expect(attachedIds(skippedBatch)).toEqual(["shp_1"]);
+  });
+});
+
+describe("heldCounts", () => {
+  it("counts held and attached items without the skipped ones", () => {
+    expect(heldCounts(skippedBatch)).toEqual({ attached: 1, total: 2 });
+  });
+
+  it("falls back on the ERP's own counts when it sent no items", () => {
+    expect(
+      heldCounts({ batch: "KPB-1", status: "Open", total: 4, attached: 3 }),
+    ).toEqual({ attached: 3, total: 4 });
+    expect(heldCounts({ batch: "KPB-1", status: "Open" })).toEqual({
+      attached: 0,
+      total: 0,
+    });
+  });
+});
+
+describe("freshSnapshot", () => {
+  const known = snapshot("KPB-1", "Open", [["shp_1", false]]);
+  const never = () => new Promise<{ batches: BatchSnapshot[] }>(() => undefined);
+  const instantly = () => Promise.resolve();
+  const later = () => new Promise<void>(() => undefined);
+
+  it("asks the ERP once for this one batch and reads its answer", async () => {
+    const fresh = snapshot("KPB-1", "Open", [["shp_1", true]]);
+    const asked: string[][] = [];
+
+    const result = await freshSnapshot({
+      batch: "KPB-1",
+      known,
+      fetchStatus: async (batches) => {
+        asked.push(batches);
+        return { batches: [fresh] };
+      },
+      timeoutMs: 3_000,
+      timeout: later,
+    });
+
+    expect(result).toBe(fresh);
+    expect(asked).toEqual([["KPB-1"]]);
+  });
+
+  it("falls back on what was known when the ERP fails, does not know the batch, or is slow", async () => {
+    for (const fetchStatus of [
+      () => Promise.reject(new Error("424")),
+      async () => ({ batches: [snapshot("KPB-1", "Unknown")] }),
+      async () => ({ batches: [] }),
+    ]) {
+      expect(
+        await freshSnapshot({
+          batch: "KPB-1",
+          known,
+          fetchStatus,
+          timeoutMs: 3_000,
+          timeout: later,
+        }),
+      ).toBe(known);
+    }
+    // Print must work without the status API: a hanging call times out.
+    expect(
+      await freshSnapshot({
+        batch: "KPB-1",
+        known,
+        fetchStatus: never,
+        timeoutMs: 3_000,
+        timeout: instantly,
+      }),
+    ).toBe(known);
   });
 });
 
@@ -1170,6 +1387,13 @@ describe("readyIds", () => {
   it("is unknown while the batch's status is", () => {
     expect(readyIds(undefined, ["shp_1"])).toBeNull();
     expect(readyIds(snapshot("KPB-1", "Unknown"), ["shp_1"])).toBeNull();
+  });
+
+  it("treats a skipped item as not held here: another batch prints it", () => {
+    expect(readyIds(skippedBatch, ["shp_1", "shp_2", "shp_3"])).toEqual([
+      "shp_1",
+      "shp_2",
+    ]);
   });
 });
 
@@ -1244,6 +1468,56 @@ describe("batchesToPoll", () => {
     const snapshots = { "KPB-1": snapshot("KPB-1", "Open", [["shp_1", true]]) };
 
     expect(batchesToPoll(states, snapshots)).toEqual([]);
+  });
+
+  it("keeps polling a ready row while a purchase it saw fail may still bring a label", () => {
+    // A timed-out purchase whose label lands late: seen only if polled, or
+    // Print releases it as failed and the row turns red over printed paper.
+    const states = {
+      a: ready("KPB-1", ["shp_1"], ["shp_2"]),
+      b: ready("KPB-2", ["shp_3"], [], ["shp_4"]),
+    };
+    const snapshots = {
+      "KPB-1": snapshot("KPB-1", "Open", [["shp_1", true], ["shp_2", false]]),
+      "KPB-2": snapshot("KPB-2", "Open", [["shp_3", true], ["shp_4", false]]),
+    };
+
+    expect(batchesToPoll(states, snapshots)).toEqual(["KPB-1", "KPB-2"]);
+  });
+
+  it("stops once that label arrived, or when the batch could never get it", () => {
+    const states = {
+      // Its label arrived: bought after all (reconcileRow).
+      a: ready("KPB-1", ["shp_1"], ["shp_2"]),
+      // Not held by the batch at all: no label of it ever lands here.
+      b: ready("KPB-2", ["shp_3"], ["shp_9"]),
+      // Skipped here: moved on to another batch.
+      c: ready("KPB-3", ["shp_1"], ["shp_2"]),
+    };
+    const snapshots = {
+      "KPB-1": snapshot("KPB-1", "Open", [["shp_1", true], ["shp_2", true]]),
+      "KPB-2": snapshot("KPB-2", "Open", [["shp_3", true]]),
+      "KPB-3": { ...skippedBatch, batch: "KPB-3", items: skippedBatch.items?.slice(0, 2) },
+    };
+
+    expect(batchesToPoll(states, snapshots)).toEqual([]);
+  });
+
+  it("does not keep a previously pre-staged batch polling over a skipped item", () => {
+    const snapshots = {
+      "KPB-7": {
+        batch: "KPB-7",
+        status: "Open",
+        total: 2,
+        attached: 1,
+        items: [
+          { karrio_shipment_id: "shp_7", label_attached: true, state: "Waiting" },
+          { karrio_shipment_id: "shp_8", label_attached: false, state: "Skipped" },
+        ],
+      },
+    };
+
+    expect(batchesToPoll({}, snapshots, ["KPB-7"])).toEqual([]);
   });
 });
 
@@ -1334,6 +1608,17 @@ describe("reconcileRow", () => {
     expect(reconcileRow(row, null)).toEqual(row);
     expect(reconcileRow(row, snapshot("KPB-1", "Unknown"))).toEqual(row);
   });
+
+  it("does not take a skipped item's label for one this batch holds", () => {
+    const row = {
+      batch: "KPB-1",
+      bought: ["shp_1"],
+      failedIds: ["shp_2", "shp_3"],
+      notAttempted: [],
+    };
+
+    expect(reconcileRow(row, skippedBatch)).toEqual(row);
+  });
 });
 
 describe("recoveredRelease", () => {
@@ -1347,6 +1632,13 @@ describe("recoveredRelease", () => {
         ]),
       ),
     ).toEqual({ bought: ["shp_1", "shp_3"], failedIds: ["shp_2"] });
+  });
+
+  it("leaves skipped items alone: neither printed here nor released as failed", () => {
+    expect(recoveredRelease(skippedBatch)).toEqual({
+      bought: ["shp_1"],
+      failedIds: ["shp_3"],
+    });
   });
 });
 
@@ -1383,6 +1675,24 @@ describe("recoveredTargets / recoveredFailure", () => {
     expect(recoveredFailure({ ...batch, status: "Failed" })?.unconfirmedIds).toEqual([
       "shp_2",
     ]);
+  });
+
+  it("counts only the items the batch holds, never a skipped one", () => {
+    expect(recoveredTargets(skippedBatch).map((target) => target.id)).toEqual([
+      "shp_1",
+      "shp_3",
+    ]);
+    // A skipped item with a label is not a label this batch failed to print.
+    expect(
+      recoveredFailure({
+        batch: "KPB-1",
+        status: "Partially Printed",
+        items: [
+          { karrio_shipment_id: "shp_1", label_attached: true, state: "Printed" },
+          { karrio_shipment_id: "shp_2", label_attached: true, state: "Skipped" },
+        ],
+      }),
+    ).toBeNull();
   });
 
   it("has no failure for a batch that is open, on its way or printed", () => {
@@ -1485,5 +1795,19 @@ describe("prestagedEarlier", () => {
 
   it("finds nothing in an empty list", () => {
     expect(prestagedEarlier([])).toEqual({ waiting: 0, unprinted: 0 });
+  });
+
+  it("does not call a finished batch unprinted over a skipped item", () => {
+    expect(
+      prestagedEarlier([
+        {
+          batch: "KPB-4",
+          status: "Failed",
+          items: [
+            { karrio_shipment_id: "shp_4", label_attached: true, state: "Skipped" },
+          ],
+        },
+      ]),
+    ).toEqual({ waiting: 0, unprinted: 0 });
   });
 });

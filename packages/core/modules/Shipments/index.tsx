@@ -374,6 +374,12 @@ const PRINT_CONFIRM_IDLE_MS = 90_000;
 const PRINT_CONFIRM_IDLE_MS_BATCH = 180_000;
 const PRINT_CONFIRM_MAX_MS = 15 * 60_000;
 const PRINT_CONFIRM_POLL_MS = 3_000;
+// A pre-staged row's Print also watches what it released as failed (a
+// purchase that timed out here can have printed all the same, in the same
+// merged job): once the bought labels are confirmed, those get this much
+// longer for their printed_at mirror to land — a few polls, never the idle
+// window.
+const PRINT_CONFIRM_GRACE_MS = 15_000;
 // Releasing a print batch is idempotent in the ERP, so a failed release is
 // sent again this many times, this far apart, before the operator hears that
 // the ERP's own fallback will print the row instead.
@@ -1540,9 +1546,14 @@ function ShipmentsBoard({ seed, view }: ShipmentsPageProps): JSX.Element {
     onProgress?: (printed: string[]) => void,
     signal?: AbortSignal,
     batched?: boolean,
+    alsoIds?: string[],
   ): Promise<PrintConfirmation> =>
     awaitPrintConfirmation({
       ids,
+      // Only a pre-staged row's Print passes these (see awaitPrintConfirmation).
+      ...(alsoIds?.length
+        ? { alsoIds, graceMs: PRINT_CONFIRM_GRACE_MS }
+        : {}),
       fetchPrinted,
       idleTimeoutMs: batched
         ? PRINT_CONFIRM_IDLE_MS_BATCH

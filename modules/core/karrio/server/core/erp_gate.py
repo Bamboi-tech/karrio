@@ -753,11 +753,13 @@ def run_erp_print_batch_status(names=None) -> dict:
     pre-staged batches instead — the popup's way back to rows it pre-staged
     before a reload. Read-only on the ERP side.
 
-    The popup polls this every few seconds while a row is being bought, so
-    it gets the feature listing's short read budget instead of the 30 s a
-    document method may take: on an API with two request slots a slow
-    Frappe must not park one of them behind a status poll. An answer that is
-    not an object reads as "no batches".
+    The popup polls named batches every few seconds while a row is being
+    bought, so that poll gets the feature listing's short read budget instead
+    of the 30 s a document method may take: on an API with two request slots
+    a slow Frappe must not park one of them behind a status poll. The list is
+    asked once, when the popup opens, and keeps the full read budget: a slow
+    ERP must not read as "nothing pre-staged". An answer that is not an
+    object reads as "no batches".
     """
     if names is not None and (
         not isinstance(names, list) or len(names) > PRINT_BATCH_STATUS_MAX_NAMES
@@ -772,6 +774,6 @@ def run_erp_print_batch_status(names=None) -> dict:
         PRINT_BATCH_STATUS_PATH,
         {"batches": batches or None},
         "print batch status",
-        timeout=_features_timeout(),
+        timeout=_features_timeout() if batches else None,
     )
     return message if isinstance(message, dict) else {"batches": []}

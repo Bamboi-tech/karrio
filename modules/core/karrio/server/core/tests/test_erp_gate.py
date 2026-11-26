@@ -788,6 +788,9 @@ class TestPrintBatchRelay(TestCase):
                     result = erp_gate.run_erp_print_batch_status(names)
                 self.assertEqual(result, {"batches": []})
                 self.assertEqual(post.call_args[1]["json"], {"batches": None})
+                # Asked once when the popup opens, not polled: the full read
+                # budget, so a slow ERP does not read as "nothing pre-staged".
+                self.assertEqual(post.call_args[1]["timeout"], (5, 30))
 
     def test_a_non_object_status_answer_reads_as_no_batches(self):
         for message in (None, [], "Open"):

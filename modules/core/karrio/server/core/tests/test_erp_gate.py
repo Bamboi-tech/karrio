@@ -662,6 +662,194 @@ class TestPrintBatchRelay(TestCase):
         self.assertEqual(kwargs["headers"]["Authorization"], "token key:secret")
         self.assertEqual(kwargs["timeout"], (5, 30))
 
+    def test_open_without_prestage_sends_exactly_the_old_payload(self):
+        # A row that is not pre-staged must reach the ERP byte for byte as
+        # before the option existed — an old ERP and the normal Print path
+        # see nothing new.
+        for kwargs in (
+            {},
+            {"prestaged": False},
+            {"prestaged": False, "row_label": "BAM-01"},
+        ):
+            with self.subTest(kwargs=kwargs):
+                with mock.patch.object(
+                    erp_gate.requests,
+                    "post",
+                    return_value=_response(payload={"message": {}}),
+                ) as post:
+                    erp_gate.run_erp_print_batch_open(["shp_b", "shp_a"], **kwargs)
+                self.assertEqual(
+                    json.dumps(post.call_args[1]["json"]),
+                    json.dumps({"karrio_ids": ["shp_b", "shp_a"]}),
+                )
+
+    def test_open_pre_staged_asks_for_it_and_names_the_row(self):
+        answer = {
+            "enabled": True,
+            "batch": "KPB-2026-00012",
+            "held": ["shp_b", "shp_a"],
+            "unknown": [],
+            "prestaged": True,
+        }
+        with mock.patch.object(
+            erp_gate.requests,
+            "post",
+            return_value=_response(payload={"message": answer}),
+        ) as post:
+            result = erp_gate.run_erp_print_batch_open(
+                ["shp_b", "shp_a"], prestaged=True, row_label="  BAM-01 "
+            )
+        self.assertEqual(result, answer)
+        args, kwargs = post.call_args
+        self.assertEqual(args[0], "https://erp.test" + erp_gate.PRINT_BATCH_OPEN_PATH)
+        self.assertEqual(
+            kwargs["json"],
+            {
+                "karrio_ids": ["shp_b", "shp_a"],
+                "prestaged": True,
+                "row_label": "BAM-01",
+            },
+        )
+
+    def test_open_pre_staged_without_a_row_label_sends_none(self):
+        with mock.patch.object(
+            erp_gate.requests, "post", return_value=_response(payload={"message": {}})
+        ) as post:
+            erp_gate.run_erp_print_batch_open(["shp_a"], prestaged=True)
+        self.assertEqual(
+            post.call_args[1]["json"],
+            {"karrio_ids": ["shp_a"], "prestaged": True, "row_label": None},
+        )
+
+    def test_malformed_prestage_options_never_reach_erp(self):
+        for kwargs in (
+            {"prestaged": "true"},
+            {"prestaged": 1},
+            {"prestaged": None},
+            {"prestaged": True, "row_label": 5},
+            {"prestaged": True, "row_label": ["BAM-01"]},
+            {
+                "prestaged": True,
+                "row_label": "x" * (erp_gate.PRINT_BATCH_ROW_LABEL_MAX_LENGTH + 1),
+            },
+        ):
+            with self.subTest(kwargs=repr(kwargs)[:60]):
+                with mock.patch.object(erp_gate.requests, "post") as post:
+                    with self.assertRaises(APIException) as caught:
+                        erp_gate.run_erp_print_batch_open(["shp_a"], **kwargs)
+                post.assert_not_called()
+                self.assertEqual(caught.exception.status_code, 400)
+                self.assertEqual(caught.exception.code, "erp_print_batch_invalid")
+
+    def test_the_longest_row_label_passes(self):
+        label = "x" * erp_gate.PRINT_BATCH_ROW_LABEL_MAX_LENGTH
+        with mock.patch.object(
+            erp_gate.requests, "post", return_value=_response(payload={"message": {}})
+        ) as post:
+            erp_gate.run_erp_print_batch_open(
+                ["shp_a"], prestaged=True, row_label=label
+            )
+        self.assertEqual(post.call_args[1]["json"]["row_label"], label)
+
+    def test_status_names_the_batches_in_order_and_returns_the_answer(self):
+        answer = {
+            "batches": [
+                {"batch": "KPB-2026-00012", "status": "Open", "prestaged": True},
+                {"batch": "KPB-2026-00011", "status": "Unknown"},
+            ]
+        }
+        with mock.patch.object(
+            erp_gate.requests,
+            "post",
+            return_value=_response(payload={"message": answer}),
+        ) as post:
+            result = erp_gate.run_erp_print_batch_status(
+                ["KPB-2026-00012", " KPB-2026-00011 "]
+            )
+        self.assertEqual(result, answer)
+        args, kwargs = post.call_args
+        self.assertEqual(args[0], "https://erp.test" + erp_gate.PRINT_BATCH_STATUS_PATH)
+        self.assertEqual(
+            kwargs["json"], {"batches": ["KPB-2026-00012", "KPB-2026-00011"]}
+        )
+        self.assertEqual(kwargs["headers"]["Authorization"], "token key:secret")
+        # A poll on the dashboard's read path: it may not hold one of the
+        # API's two request slots for the full 30 s read budget.
+        self.assertEqual(kwargs["timeout"], (5, 3))
+
+    def test_status_without_names_asks_for_the_recent_pre_staged_batches(self):
+        for names in (None, []):
+            with self.subTest(names=names):
+                with mock.patch.object(
+                    erp_gate.requests,
+                    "post",
+                    return_value=_response(payload={"message": {"batches": []}}),
+                ) as post:
+                    result = erp_gate.run_erp_print_batch_status(names)
+                self.assertEqual(result, {"batches": []})
+                self.assertEqual(post.call_args[1]["json"], {"batches": None})
+
+    def test_a_non_object_status_answer_reads_as_no_batches(self):
+        for message in (None, [], "Open"):
+            with self.subTest(message=message):
+                with mock.patch.object(
+                    erp_gate.requests,
+                    "post",
+                    return_value=_response(payload={"message": message}),
+                ):
+                    self.assertEqual(
+                        erp_gate.run_erp_print_batch_status(["KPB-2026-00001"]),
+                        {"batches": []},
+                    )
+
+    def test_malformed_status_names_never_reach_erp(self):
+        for names in (
+            "KPB-2026-00001",
+            {"batch": "KPB-2026-00001"},
+            [""],
+            ["   "],
+            [None],
+            [5],
+            ["x" * (erp_gate.PRINT_BATCH_NAME_MAX_LENGTH + 1)],
+            [
+                f"KPB-2026-{index:05d}"
+                for index in range(erp_gate.PRINT_BATCH_STATUS_MAX_NAMES + 1)
+            ],
+        ):
+            with self.subTest(names=repr(names)[:40]):
+                with mock.patch.object(erp_gate.requests, "post") as post:
+                    with self.assertRaises(APIException) as caught:
+                        erp_gate.run_erp_print_batch_status(names)
+                post.assert_not_called()
+                self.assertEqual(caught.exception.status_code, 400)
+                self.assertEqual(caught.exception.code, "erp_print_batch_invalid")
+
+    def test_the_largest_status_request_passes(self):
+        names = [
+            f"KPB-2026-{index:05d}"
+            for index in range(erp_gate.PRINT_BATCH_STATUS_MAX_NAMES)
+        ]
+        with mock.patch.object(
+            erp_gate.requests, "post", return_value=_response(payload={"message": {}})
+        ) as post:
+            erp_gate.run_erp_print_batch_status(names)
+        self.assertEqual(post.call_args[1]["json"]["batches"], names)
+
+    def test_status_refusal_surfaces_as_conflict(self):
+        body = {
+            "exception": "frappe.exceptions.ValidationError: bad batches",
+            "_server_messages": '["{\\"message\\": \\"Expected a list of print batch names.\\"}"]',
+        }
+        with mock.patch.object(
+            erp_gate.requests, "post", return_value=_response(417, payload=body)
+        ):
+            with self.assertRaises(erp_gate.ERPRefusal) as caught:
+                erp_gate.run_erp_print_batch_status(["KPB-2026-00001"])
+        self.assertEqual(caught.exception.status_code, 409)
+        self.assertEqual(
+            str(caught.exception.detail), "Expected a list of print batch names."
+        )
+
     def test_open_while_the_flag_is_off_hands_back_no_batch(self):
         answer = {"enabled": False, "batch": None, "held": [], "unknown": []}
         with mock.patch.object(
@@ -779,6 +967,7 @@ class TestPrintBatchRelay(TestCase):
             lambda: erp_gate.run_erp_print_batch_open(["shp_a"]),
             lambda: erp_gate.run_erp_print_batch_release("KPB-2026-00001", []),
             lambda: erp_gate.run_erp_print_batch_retry("KPB-2026-00001"),
+            lambda: erp_gate.run_erp_print_batch_status(["KPB-2026-00001"]),
         )
         for index, call in enumerate(calls):
             with self.subTest(call=index):
@@ -902,6 +1091,14 @@ class TestRefusalDetailIsSerializable(TestCase):
         collect(
             "print batch name invalid",
             lambda: erp_gate.run_erp_print_batch_retry(""),
+        )
+        collect(
+            "print batch prestage option invalid",
+            lambda: erp_gate.run_erp_print_batch_open(["shp_a"], prestaged="yes"),
+        )
+        collect(
+            "print batch status names invalid",
+            lambda: erp_gate.run_erp_print_batch_status([""]),
         )
         collect(
             "print batch retry refused without a server message",

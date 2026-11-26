@@ -413,7 +413,11 @@ class ERPPrintBatches(APIView):
         if any(shipment_id not in accessible for shipment_id in shipment_ids):
             raise models.Shipment.DoesNotExist()
 
-        return Response(run_erp_print_batch_open(shipment_ids))
+        # Pre-staging ("Labels klaarzetten") is opt-in per call: only the keys
+        # the dashboard sent travel on, so a plain open stays the exact call
+        # it was. The relay validates them before anything reaches the ERP.
+        options = {key: data[key] for key in ("prestaged", "row_label") if key in data}
+        return Response(run_erp_print_batch_open(shipment_ids, **options))
 
 
 class ERPPrintBatchRelease(APIView):
@@ -447,6 +451,31 @@ class ERPPrintBatchRetry(APIView):
         from karrio.server.core.erp_gate import run_erp_print_batch_retry
 
         return Response(run_erp_print_batch_retry(name))
+
+
+class ERPPrintBatchStatus(APIView):
+    """Bamboi fork: where the Pick & Print popup's print batches are.
+
+    ``{"batches": [names]}`` asks about those batches (labels attached so far,
+    when the ERP releases them by itself); ``{"batches": null}`` lists the
+    recent pre-staged batches, which is how the popup finds the rows it
+    pre-staged before a reload. Read-only on the ERP side.
+    """
+
+    throttle_scope = "carrier_request"
+
+    @openapi.extend_schema(exclude=True)
+    def post(self, request: Request):
+        from karrio.server.core.erp_gate import (
+            assert_erp_organization,
+            run_erp_print_batch_status,
+        )
+
+        # The list mode names batches of every row the ERP holds, not just
+        # the caller's own shipments: only the ERP's organization may ask.
+        assert_erp_organization(request)
+        data = request.data if isinstance(request.data, dict) else {}
+        return Response(run_erp_print_batch_status(data.get("batches")))
 
 
 class ShipmentDocs(AccessMixin, VirtualDownloadView):
@@ -610,6 +639,13 @@ router.urls.append(
         "erp/print-batches",
         ERPPrintBatches.as_view(),
         name="erp-print-batches",
+    )
+)
+router.urls.append(
+    path(
+        "erp/print-batches/status",
+        ERPPrintBatchStatus.as_view(),
+        name="erp-print-batch-status",
     )
 )
 router.urls.append(

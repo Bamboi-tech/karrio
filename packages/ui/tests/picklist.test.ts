@@ -368,7 +368,26 @@ describe("awaitPrintConfirmation", () => {
       expect(stream.now()).toBe(12_000);
     });
 
-    it("never counts one of them as unconfirmed, and never waits for them alone past the grace", async () => {
+    it("gives a row whose every purchase failed here the whole idle window: its paper may be on its way", async () => {
+      // A one-order row whose purchase timed out in the browser but went
+      // through: the merged job takes longer than any grace, and a red row
+      // with Retry over printing paper is the way to a second label.
+      const stream = printStream({ shp_2: 40_000 });
+
+      const result = await awaitPrintConfirmation({
+        ids: [],
+        alsoIds: ["shp_2"],
+        ...batch,
+        ...stream,
+      });
+
+      expect(result).toEqual({ printed: ["shp_2"], unconfirmed: [] });
+      // Done as soon as it printed, not at the end of the window.
+      expect(stream.now()).toBeGreaterThanOrEqual(40_000);
+      expect(stream.now()).toBeLessThan(40_000 + 3_000);
+    });
+
+    it("never counts one of them as unconfirmed, and ends at the idle window when none prints", async () => {
       const stream = printStream({});
 
       const result = await awaitPrintConfirmation({
@@ -379,8 +398,8 @@ describe("awaitPrintConfirmation", () => {
       });
 
       expect(result).toEqual({ printed: [], unconfirmed: [] });
-      expect(stream.now()).toBeGreaterThanOrEqual(15_000);
-      expect(stream.now()).toBeLessThan(15_000 + 3_000);
+      expect(stream.now()).toBeGreaterThanOrEqual(180_000);
+      expect(stream.now()).toBeLessThan(180_000 + 3_000);
     });
 
     it("still waits the idle window for a bought label the printer is silent about", async () => {

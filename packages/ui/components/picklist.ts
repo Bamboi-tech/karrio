@@ -478,10 +478,14 @@ export async function retrying<T>(
 // alsoIds (a pre-staged row's Print): shipments released as failed that may
 // print all the same — a purchase that timed out in the browser but went
 // through at Karrio, whose label the ERP holds and prints in the same job.
-// They are watched and reported in `printed` when they come out, but never
-// awaited for their own sake: once every one of `ids` is confirmed the wait
-// goes on for at most graceMs (their mirror may trail the job's by a few
-// seconds), never for the idle window, and they are never `unconfirmed`.
+// They are watched and reported in `printed` when they come out, and never
+// `unconfirmed`. Once every one of `ids` is confirmed the wait goes on for
+// at most graceMs (their mirror may trail the job's by a few seconds), never
+// for the idle window. With no `ids` at all — every purchase of the row
+// failed here — nothing tells how far the job is, so they get the normal
+// idle window (and hard stop), ending as soon as all of them printed: a
+// one-order row whose purchase went through after all must not turn red
+// with a Retry while its paper is on its way.
 export async function awaitPrintConfirmation({
   ids,
   alsoIds = [],
@@ -545,7 +549,9 @@ export async function awaitPrintConfirmation({
       // Keep polling until the (idle) deadline.
     }
     const time = now();
-    if (pending.size === 0 && graceEnd === null) graceEnd = time + graceMs;
+    if (ids.length > 0 && pending.size === 0 && graceEnd === null) {
+      graceEnd = time + graceMs;
+    }
     if (pending.size === 0 && extra.size === 0) break;
     if (time >= hardStop) break;
     if (graceEnd !== null ? time >= graceEnd : time >= deadline) break;

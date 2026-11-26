@@ -2334,6 +2334,132 @@ class TestERPPrintBatches(TestShipmentFixture):
         self.assertDictEqual(response.data, answer)
         run_open.assert_called_once_with([self.shipment.pk])
 
+    def test_open_forwards_the_prestage_request_and_the_row_label(self):
+        answer = {
+            "enabled": True,
+            "batch": "KPB-2026-00012",
+            "held": [self.shipment.pk],
+            "unknown": [],
+            "prestaged": True,
+        }
+        with patch("karrio.server.core.erp_gate.run_erp_print_batch_open") as run_open:
+            run_open.return_value = answer
+            response = self.client.post(
+                reverse("karrio.server.manager:erp-print-batches"),
+                data=dict(
+                    shipment_ids=[self.shipment.pk],
+                    prestaged=True,
+                    row_label="BAM-01",
+                ),
+                format="json",
+            )
+
+        self.assertResponseNoErrors(response)
+        self.assertDictEqual(response.data, answer)
+        run_open.assert_called_once_with(
+            [self.shipment.pk], prestaged=True, row_label="BAM-01"
+        )
+
+    def test_open_without_prestage_reaches_the_erp_exactly_as_before(self):
+        with patch("karrio.server.core.erp_gate.requests.post") as transport:
+            transport.return_value.status_code = 200
+            transport.return_value.json.return_value = {"message": {}}
+            with self.settings(ERP_GATE_URL="https://erp.test", ERP_GATE_TOKEN="t"):
+                response = self.client.post(
+                    reverse("karrio.server.manager:erp-print-batches"),
+                    data=dict(shipment_ids=[self.shipment.pk], prestaged=False),
+                    format="json",
+                )
+
+        self.assertResponseNoErrors(response)
+        self.assertEqual(
+            transport.call_args.kwargs["json"], {"karrio_ids": [self.shipment.pk]}
+        )
+
+    def test_open_with_a_malformed_prestage_option_is_a_bad_request(self):
+        for extra in (
+            dict(prestaged="yes"),
+            dict(prestaged=True, row_label="x" * 141),
+        ):
+            with self.subTest(extra=extra):
+                with patch("karrio.server.core.erp_gate.requests.post") as transport:
+                    response = self.client.post(
+                        reverse("karrio.server.manager:erp-print-batches"),
+                        data=dict(shipment_ids=[self.shipment.pk], **extra),
+                        format="json",
+                    )
+
+                self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+                transport.assert_not_called()
+
+    def test_status_relays_the_named_batches_and_returns_the_erp_answer(self):
+        answer = {
+            "batches": [
+                {"batch": "KPB-2026-00012", "status": "Open", "total": 2, "attached": 1}
+            ]
+        }
+        with patch(
+            "karrio.server.core.erp_gate.run_erp_print_batch_status"
+        ) as run_status:
+            run_status.return_value = answer
+            response = self.client.post(
+                reverse("karrio.server.manager:erp-print-batch-status"),
+                data=dict(batches=["KPB-2026-00012"]),
+                format="json",
+            )
+
+        self.assertResponseNoErrors(response)
+        self.assertDictEqual(response.data, answer)
+        run_status.assert_called_once_with(["KPB-2026-00012"])
+
+    def test_status_without_names_asks_for_the_list(self):
+        for body in ({}, dict(batches=None)):
+            with self.subTest(body=body):
+                with patch(
+                    "karrio.server.core.erp_gate.run_erp_print_batch_status"
+                ) as run_status:
+                    run_status.return_value = {"batches": []}
+                    response = self.client.post(
+                        reverse("karrio.server.manager:erp-print-batch-status"),
+                        data=body,
+                        format="json",
+                    )
+
+                self.assertResponseNoErrors(response)
+                self.assertDictEqual(response.data, {"batches": []})
+                run_status.assert_called_once_with(None)
+
+    def test_status_with_a_malformed_body_is_a_bad_request(self):
+        for batches in ("KPB-2026-00012", [""], [5]):
+            with self.subTest(batches=batches):
+                with patch("karrio.server.core.erp_gate.requests.post") as transport:
+                    response = self.client.post(
+                        reverse("karrio.server.manager:erp-print-batch-status"),
+                        data=dict(batches=batches),
+                        format="json",
+                    )
+
+                self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+                transport.assert_not_called()
+
+    def test_status_refuses_a_caller_outside_the_erp_organization(self):
+        from types import SimpleNamespace
+
+        other_org = SimpleNamespace(id="org_other", is_active=True)
+        with patch(
+            "karrio.server.core.authentication.get_request_org",
+            return_value=other_org,
+        ), patch("karrio.server.core.erp_gate.requests.post") as transport:
+            with self.settings(MULTI_ORGANIZATIONS=True, ERP_ORGANIZATION_ID="org_erp"):
+                response = self.client.post(
+                    reverse("karrio.server.manager:erp-print-batch-status"),
+                    data=dict(batches=["KPB-2026-00012"]),
+                    format="json",
+                )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        transport.assert_not_called()
+
     def test_open_refuses_a_shipment_the_caller_cannot_see(self):
         with patch("karrio.server.core.erp_gate.run_erp_print_batch_open") as run_open:
             response = self.client.post(

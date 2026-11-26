@@ -438,10 +438,11 @@ def _features_cache_ttl() -> int:
 
 
 def _features_timeout():
-    """``(connect, read)`` for the feature listing only.
+    """``(connect, read)`` for the feature listing and the print-batch poll.
 
-    The listing sits on the dashboard's read path, so it may not wait the
-    30 s a document method is allowed: a slow Frappe answers from cache.
+    Both sit on the dashboard's read path, so they may not wait the 30 s a
+    document method is allowed: a slow Frappe answers the listing from cache
+    and simply misses one status poll.
     """
     connect, _ = _erp_timeout()
     return (
@@ -604,11 +605,20 @@ PRINT_BATCH_RELEASE_PATH = (
     "/api/method/karrio_shipping.api.printing.release_print_batch"
 )
 PRINT_BATCH_RETRY_PATH = "/api/method/karrio_shipping.api.printing.retry_print_batch"
+# Read-only: where the popup's batches are (labels attached so far, when the
+# ERP's safety net releases them). Named batches, or — without names — the
+# recent pre-staged ones, which is how the popup finds them after a reload.
+PRINT_BATCH_STATUS_PATH = "/api/method/karrio_shipping.api.printing.print_batch_status"
 # A popup row is one SKU stack or one mixed order — a few dozen boxes on a
 # busy day. The cap only keeps a runaway payload from reaching Frappe.
 PRINT_BATCH_MAX_SHIPMENTS = 500
 # Frappe's own limit on a document name.
 PRINT_BATCH_NAME_MAX_LENGTH = 140
+# A pre-staged batch carries the popup row's name (a SKU, an order number)
+# in a Data field of the ERP's batch, which holds at most this much.
+PRINT_BATCH_ROW_LABEL_MAX_LENGTH = 140
+# One status poll covers every batch the popup is watching: one per row.
+PRINT_BATCH_STATUS_MAX_NAMES = 50
 
 
 def validate_print_batch_ids(value, field: str, allow_empty: bool = False) -> list:
@@ -648,17 +658,53 @@ def _print_batch_name(name) -> str:
     return name.strip()
 
 
-def run_erp_print_batch_open(shipment_ids) -> dict:
+def _print_batch_invalid(message: str) -> APIException:
+    return APIException(message, code="erp_print_batch_invalid", status_code=400)
+
+
+def _row_label(value) -> str | None:
+    if value is None:
+        return None
+    if (
+        not isinstance(value, str)
+        or len(value.strip()) > PRINT_BATCH_ROW_LABEL_MAX_LENGTH
+    ):
+        raise _print_batch_invalid(
+            f"'row_label' must be a string of at most "
+            f"{PRINT_BATCH_ROW_LABEL_MAX_LENGTH} characters."
+        )
+    return value.strip() or None
+
+
+def run_erp_print_batch_open(
+    shipment_ids, prestaged: bool = False, row_label: str | None = None
+) -> dict:
     """Ask the ERP to hold the labels of these shipments for one merged print.
 
     Returns the ERP's answer untouched: ``{"enabled", "batch", "held",
-    "unknown"}``. ``batch`` is None while the ERP's print-batch flag is off;
-    ids in ``unknown`` (not ERP-linked, already printed) are not held and
-    keep printing one by one on their purchase webhook, as before.
+    "unknown"}`` (plus ``"prestaged"`` from an ERP that knows it). ``batch``
+    is None while the ERP's print-batch flag is off; ids in ``unknown`` (not
+    ERP-linked, already printed) are not held and keep printing one by one
+    on their purchase webhook, as before.
+
+    ``prestaged`` asks for a batch the popup releases later, on its own
+    Print ("Labels klaarzetten"), named ``row_label``. Only then do the two
+    keys travel: without it the payload is exactly what it was before the
+    option existed, so an ERP that predates it sees nothing new. Whether the
+    batch really is pre-staged is the ERP's answer (``prestaged: true``),
+    never this request.
     """
+    ids = validate_print_batch_ids(shipment_ids, "shipment_ids")
+    if not isinstance(prestaged, bool):
+        raise _print_batch_invalid("'prestaged' must be a boolean.")
+    label = _row_label(row_label)
+
     message = _post_erp_method(
         PRINT_BATCH_OPEN_PATH,
-        {"karrio_ids": validate_print_batch_ids(shipment_ids, "shipment_ids")},
+        {
+            "karrio_ids": ids,
+            **({"prestaged": True, "row_label": label} if prestaged else {}),
+        },
         "print batch open",
     )
     return message if isinstance(message, dict) else {}
@@ -697,3 +743,37 @@ def run_erp_print_batch_retry(name) -> dict:
         "print batch retry",
     )
     return message if isinstance(message, dict) else {}
+
+
+def run_erp_print_batch_status(names=None) -> dict:
+    """Where the popup's print batches are: ``{"batches": [...]}``.
+
+    ``names`` (up to PRINT_BATCH_STATUS_MAX_NAMES batch names) asks about
+    those batches, in that order; None or an empty list asks for the recent
+    pre-staged batches instead — the popup's way back to rows it pre-staged
+    before a reload. Read-only on the ERP side.
+
+    The popup polls named batches every few seconds while a row is being
+    bought, so that poll gets the feature listing's short read budget instead
+    of the 30 s a document method may take: on an API with two request slots
+    a slow Frappe must not park one of them behind a status poll. The list is
+    asked once, when the popup opens, and keeps the full read budget: a slow
+    ERP must not read as "nothing pre-staged". An answer that is not an
+    object reads as "no batches".
+    """
+    if names is not None and (
+        not isinstance(names, list) or len(names) > PRINT_BATCH_STATUS_MAX_NAMES
+    ):
+        raise _print_batch_invalid(
+            f"'batches' must be a list of at most {PRINT_BATCH_STATUS_MAX_NAMES} "
+            "print batch names, or null."
+        )
+    batches = [_print_batch_name(name) for name in names or []]
+
+    message = _post_erp_method(
+        PRINT_BATCH_STATUS_PATH,
+        {"batches": batches or None},
+        "print batch status",
+        timeout=_features_timeout() if batches else None,
+    )
+    return message if isinstance(message, dict) else {"batches": []}
